@@ -2,12 +2,12 @@ import './style.less';
 
 import { Button, Tooltip } from 'tdesign-react';
 import { MoonIcon, SunnyIcon } from 'tdesign-icons-react';
+import { applyThemeMode, getThemeMode } from '../../theme';
+import { checkAuthenticated, setCachedAuthStatus } from '../../router/auth';
 import { useEffect, useState } from 'react';
 
-import { checkAuthenticated, setCachedAuthStatus } from '../../router/auth';
-import { startLogin } from '../../api/login';
-import { applyThemeMode, getThemeMode } from '../../theme';
 import BrandComponent from '../../components/brand';
+import { startLogin } from '../../api/login';
 
 const Login = () => {
   const [loading, setLoading] = useState(false);

@@ -5,7 +5,11 @@ import { ChatBot } from '@tdesign-react/chat';
 import { AddIcon } from 'tdesign-icons-react';
 import { Button, Empty, Menu, Space } from 'tdesign-react';
 import { useMemo, useRef, useState } from 'react';
-import type { ChatMessagesData } from 'tdesign-web-components/lib/chat-engine/type';
+import type {
+  ChatMessagesData,
+  ChatRequestParams,
+  SSEChunkData,
+} from 'tdesign-web-components/lib/chat-engine/type';
 
 type ChatBotProps = React.ComponentProps<typeof ChatBot>;
 type MessageChangeEvent = Parameters<NonNullable<ChatBotProps['onMessageChange']>>[0];
@@ -332,7 +336,7 @@ const AIAgent = () => {
           chatServiceConfig={{
             endpoint: '/api/Chat/ChatStructured',
             stream: true,
-            onRequest: ({ prompt, ...rest }) => ({
+            onRequest: ({ prompt, ...rest }: ChatRequestParams) => ({
               ...rest,
               method: 'POST',
               headers: {
@@ -344,7 +348,7 @@ const AIAgent = () => {
                 sessionId: activeSession.id,
               }),
             }),
-            onMessage: (chunk) => {
+            onMessage: (chunk: SSEChunkData) => {
               const event = parseStructuredEvent(chunk);
               if (!event) {
                 return null;

@@ -1,18 +1,20 @@
 -- ============================================================
 -- NexusAuth production schema initialization
 -- 说明：
--- 1) 本脚本只用于空的 nexusauth 数据库；不会创建、切换或删除数据库。
+-- 1) 本脚本使用当前登录用户创建 nexusauth 数据库（如果不存在）并切换到该数据库。
 -- 2) 本脚本定义当前最终 schema，不包含任何历史兼容 DDL。
 -- 3) This script is the single source of truth for a fresh database.
 -- 4) 本脚本不写入 demo 用户或初始管理员；初始管理员由 SSO BootstrapAdmin 配置创建。
--- 5) 推荐执行：psql --dbname=nexusauth --file=production-init.sql
+-- 5) 本脚本使用 psql 元命令，必须通过 psql 执行，不能在 DBeaver SQL 编辑器中直接执行。
+-- 6) 执行：psql --username=postgres --dbname=postgres --file=production-init.sql
 -- ============================================================
 
 BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-CREATE SCHEMA IF NOT EXISTS nexusauth;
+CREATE SCHEMA IF NOT EXISTS nexusauth AUTHORIZATION CURRENT_USER;
+
 SET search_path TO nexusauth;
 
 -- ============================================================
