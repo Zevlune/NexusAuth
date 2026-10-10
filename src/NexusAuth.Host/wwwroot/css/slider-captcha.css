@@ -1,0 +1,13 @@
+.slider-captcha-dialog .captcha-card { width:min(100%,400px); padding:22px; border-radius:16px; }
+.slider-captcha-dialog .captcha-header { margin-bottom:18px; }
+.slider-captcha-dialog .captcha-header h2 { font-family:inherit; font-size:19px; }
+.slider-captcha-dialog .captcha-header p { font-size:13px; }
+.slider-captcha-dialog .slider-captcha-scene { height:auto; aspect-ratio:600/360; border:0; border-radius:10px; background:#29394a; }
+.slider-captcha-dialog .slider-captcha-piece { left:0; border:0; border-radius:0; background:transparent; box-shadow:none; backdrop-filter:none; filter:drop-shadow(0 2px 3px #0008); will-change:transform; }
+.slider-captcha-dialog .captcha-track { margin-top:16px; border:1px solid #8390a52e; border-radius:10px; }
+.slider-captcha-dialog .captcha-handle { border-radius:9px; }
+.slider-captcha-dialog .captcha-tools { display:flex; justify-content:space-between; align-items:center; margin-top:14px; color:var(--form-muted,var(--muted)); font-size:12px; }
+.slider-captcha-dialog .captcha-tools button { padding:5px 8px; border:0; border-radius:5px; color:var(--brand-blue,var(--blue)); background:transparent; font:inherit; cursor:pointer; }
+.slider-captcha-dialog .captcha-tools button:hover { background:#8390a51a; }
+.slider-captcha-dialog .captcha-status { margin-top:6px; font-size:12px; }
+.slider-captcha-dialog button:focus-visible { outline:2px solid var(--brand-blue,var(--blue)); outline-offset:2px; }

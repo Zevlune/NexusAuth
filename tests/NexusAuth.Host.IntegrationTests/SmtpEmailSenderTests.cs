@@ -1,7 +1,10 @@
+using NexusAuth.Shared.Email;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using MimeKit;
-using NexusAuth.Host.Email;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using NexusAuth.Application.Services.Email;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -40,7 +43,8 @@ public sealed class SmtpEmailSenderTests(ITestOutputHelper output)
     {
         var options = ValidOptions(587, "StartTls");
         var transport = new RecordingTransport();
-        var sender = new SmtpEmailSender(Options.Create(options), transport);
+        var logger = new RecordingLogger<SmtpEmailSender>();
+        var sender = new SmtpEmailSender(Options.Create(options), transport, logger);
 
         await sender.SendAsync("recipient@example.test", "Test subject", "Test body");
 
@@ -52,17 +56,65 @@ public sealed class SmtpEmailSenderTests(ITestOutputHelper output)
         Assert.Equal("recipient@example.test", Assert.Single(message.To.Mailboxes).Address);
         Assert.Equal("Test subject", message.Subject);
         Assert.Equal("Test body", message.TextBody);
+        var log = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Information, log.Level);
+        Assert.Contains("accepted", log.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(options.Password, log.Combined);
+        Assert.DoesNotContain("Test body", log.Combined);
     }
 
     [Fact]
     public async Task Disabled_smtp_does_not_invoke_transport()
     {
         var transport = new RecordingTransport();
-        var sender = new SmtpEmailSender(Options.Create(new SmtpOptions { Enabled = false }), transport);
+        var sender = new SmtpEmailSender(Options.Create(new SmtpOptions { Enabled = false }), transport, NullLogger<SmtpEmailSender>.Instance);
 
         await Assert.ThrowsAnyAsync<Exception>(() => sender.SendAsync("recipient@example.test", "Subject", "Body"));
 
         Assert.Null(transport.Message);
+    }
+
+    [Fact]
+    public async Task Transport_failure_logs_structured_context_and_rethrows_original_exception_without_secrets()
+    {
+        var options = ValidOptions(465, "SslOnConnect");
+        const string verificationCode = "482731";
+        const string emailBody = "验证码 482731";
+        var failure = new InvalidOperationException("SMTP authentication failed");
+        failure.Data["SmtpStage"] = "Authentication";
+        var transport = new FailingTransport(failure);
+        var logger = new RecordingLogger<SmtpEmailSender>();
+        var sender = new SmtpEmailSender(Options.Create(options), transport, logger);
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sender.SendAsync("recipient@example.test", "验证码", emailBody));
+
+        Assert.Same(failure, thrown);
+        var log = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Error, log.Level);
+        Assert.Same(failure, log.Exception);
+        Assert.True(log.HasProperty("Host", options.Host));
+        Assert.True(log.HasProperty("Port", options.Port));
+        Assert.True(log.HasProperty("Security", options.Security));
+        Assert.True(log.HasProperty("Stage", "Authentication"));
+        Assert.DoesNotContain(options.Password, log.Combined);
+        Assert.DoesNotContain(verificationCode, log.Combined);
+        Assert.DoesNotContain(emailBody, log.Combined);
+    }
+
+    [Fact]
+    public async Task Cancellation_does_not_log_transport_error()
+    {
+        var transport = new CanceledTransport();
+        var logger = new RecordingLogger<SmtpEmailSender>();
+        var sender = new SmtpEmailSender(Options.Create(ValidOptions(465, "SslOnConnect")), transport, logger);
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            sender.SendAsync("recipient@example.test", "Subject", "Body", cancellation.Token));
+
+        Assert.DoesNotContain(logger.Entries, entry => entry.Level == LogLevel.Error);
     }
 
     [Fact]
@@ -99,7 +151,9 @@ public sealed class SmtpEmailSenderTests(ITestOutputHelper output)
         var validation = new SmtpOptionsValidator().Validate(null, options);
         Assert.False(validation.Failed, string.Join("; ", validation.Failures ?? []));
 
-        var sender = new SmtpEmailSender(Options.Create(options), new MailKitSmtpTransport());
+        var sender = new SmtpEmailSender(Options.Create(options),
+            new MailKitSmtpTransport(NullLogger<MailKitSmtpTransport>.Instance),
+            NullLogger<SmtpEmailSender>.Instance);
         await sender.SendAsync("18790997531@163.com", "NexusAuth QQ SMTP test", "NexusAuth QQ SMTP delivery test.");
         output.WriteLine("QQ SMTP 已完成发送，收件人：18790997531@163.com。");
     }
@@ -129,5 +183,45 @@ public sealed class SmtpEmailSenderTests(ITestOutputHelper output)
             Message = message;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FailingTransport(Exception failure) : ISmtpTransport
+    {
+        public Task SendAsync(SmtpOptions options, MimeMessage message, CancellationToken ct = default) =>
+            Task.FromException(failure);
+    }
+
+    private sealed class CanceledTransport : ISmtpTransport
+    {
+        public Task SendAsync(SmtpOptions options, MimeMessage message, CancellationToken ct = default) =>
+            Task.FromCanceled(ct);
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<LogEntry> Entries { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var properties = state is IEnumerable<KeyValuePair<string, object?>> pairs
+                ? pairs.ToArray()
+                : [];
+            Entries.Add(new LogEntry(logLevel, formatter(state, exception), exception, properties));
+        }
+    }
+
+    private sealed record LogEntry(
+        LogLevel Level,
+        string Message,
+        Exception? Exception,
+        KeyValuePair<string, object?>[] Properties)
+    {
+        public string Combined => $"{Message} {Exception} {string.Join(' ', Properties.Select(property => $"{property.Key}={property.Value}"))}";
+
+        public bool HasProperty(string name, object? value) => Properties.Any(property =>
+            property.Key == name && Equals(property.Value, value));
     }
 }

@@ -176,6 +176,24 @@ public sealed class LoginFlowTests
     }
 
     [Fact]
+    public void Slider_captcha_rotates_images_and_returns_a_transparent_puzzle_piece()
+    {
+        var protector = new SliderCaptchaChallengeProtector(new EphemeralDataProtectionProvider());
+        var challenges = Enumerable.Range(0, 6).Select(_ => protector.CreateChallenge()).ToArray();
+        Assert.Equal(6, challenges.Select(c => c.ImageDataUrl).Distinct().Count());
+        Assert.Equal(6, challenges.Select(c => c.Token).Distinct().Count());
+        foreach (var challenge in challenges)
+        {
+            var piece = Convert.FromBase64String(challenge.PieceDataUrl.Split(',')[1]);
+            Assert.Equal(6, piece[25]); // PNG RGBA, rather than an opaque placeholder.
+            Assert.InRange(challenge.PieceTop, 0, challenge.Height - challenge.PieceSize);
+            Assert.True(protector.TryUnprotect(challenge.Token, out var secret));
+            Assert.True(protector.TryValidate(challenge.Token, secret!.TargetOffsetPixels));
+            Assert.False(protector.TryValidate(challenge.Token, secret.TargetOffsetPixels));
+        }
+    }
+
+    [Fact]
     public void Slider_captcha_rejects_a_tampered_token_or_an_offset_outside_tolerance()
     {
         var protector = new SliderCaptchaChallengeProtector(new EphemeralDataProtectionProvider());

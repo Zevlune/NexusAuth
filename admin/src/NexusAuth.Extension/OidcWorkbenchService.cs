@@ -22,6 +22,9 @@ public class OidcWorkbenchService(
     IFlowStateStore flowStateStore,
     IOptions<WorkbenchAuthOptions> authOptions) : IOidcWorkbenchService
 {
+    /// <summary>The named HTTP client configured for OIDC provider backchannel traffic.</summary>
+    public const string HttpClientName = "NexusAuth.OidcBackchannel";
+
     private readonly FrontendOptions _frontendOptions = new();
     private readonly WorkbenchAuthOptions _options = authOptions.Value;
 
@@ -61,7 +64,7 @@ public class OidcWorkbenchService(
     /// <inheritdoc />
     public async Task<DiscoveryDocument> FetchDiscoveryAsync(CancellationToken ct)
     {
-        var client = httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient(HttpClientName);
         var response = await client.GetAsync($"{Authority.TrimEnd('/')}/.well-known/openid-configuration", ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<DiscoveryDocument>(cancellationToken: ct)
@@ -86,7 +89,7 @@ public class OidcWorkbenchService(
         if (!string.Equals(discovery.Issuer.TrimEnd('/'), expectedIssuer, StringComparison.Ordinal))
             throw new SecurityTokenInvalidIssuerException("Provider issuer does not match the configured authority.");
 
-        var client = httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient(HttpClientName);
         var jwksResponse = await client.GetAsync(
             new Uri(discovery.JwksUri, UriKind.Absolute),
             ct);
@@ -175,7 +178,7 @@ public class OidcWorkbenchService(
     {
         var discovery = await FetchDiscoveryAsync(ct);
 
-        var client = httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient(HttpClientName);
         await ApplyClientAuthenticationAsync(client);
 
         var form = new Dictionary<string, string>
@@ -204,7 +207,7 @@ public class OidcWorkbenchService(
 
         var discovery = await FetchDiscoveryAsync(ct);
 
-        var client = httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient(HttpClientName);
         await ApplyClientAuthenticationAsync(client);
 
         var form = new Dictionary<string, string>
@@ -232,7 +235,7 @@ public class OidcWorkbenchService(
         if (string.IsNullOrWhiteSpace(discovery.IntrospectionEndpoint))
             throw new InvalidOperationException("The Provider discovery document does not contain an introspection endpoint.");
 
-        var client = httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient(HttpClientName);
         await ApplyClientAuthenticationAsync(client);
         var response = await client.PostAsync(
             new Uri(discovery.IntrospectionEndpoint, UriKind.Absolute),

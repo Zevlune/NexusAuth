@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Tokens;
@@ -48,6 +49,18 @@ public sealed class WorkbenchGatewayModeTests
         Assert.NotNull(scope.ServiceProvider.GetService<IOidcWorkbenchService>());
         Assert.NotNull(scope.ServiceProvider.GetService<IFlowStateStore>());
         Assert.NotNull(scope.ServiceProvider.GetService<WorkbenchCookieAuthenticationEvents>());
+    }
+
+    [Fact]
+    public void Backchannel_changes_jwt_metadata_transport_without_changing_public_issuer()
+    {
+        using var factory = CreateFactory(true, builder => builder.UseSetting("Auth:BackchannelAuthority", "http://sso:8080"));
+        var options = factory.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.BearerScheme);
+
+        Assert.Equal(Authority, options.Authority);
+        Assert.Equal($"{Authority}/.well-known/openid-configuration", options.MetadataAddress);
+        Assert.IsType<OidcBackchannelHandler>(options.BackchannelHttpHandler);
     }
 
     [Theory]

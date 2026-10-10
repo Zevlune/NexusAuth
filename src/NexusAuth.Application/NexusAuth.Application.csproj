@@ -9,6 +9,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\NexusAuth.Domain\NexusAuth.Domain.csproj" />
+        <ProjectReference Include="..\NexusAuth.Shared\NexusAuth.Shared.csproj" />
     </ItemGroup>
 
 </Project>

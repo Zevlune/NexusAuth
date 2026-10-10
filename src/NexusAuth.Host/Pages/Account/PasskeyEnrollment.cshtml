@@ -23,6 +23,8 @@
         @Html.AntiForgeryToken()
         <h1>创建你的 Passkey</h1>
         <p>使用设备的指纹、面容或屏幕锁定方式完成创建。Passkey 不会将你的生物识别信息发送给 NexusAuth。</p>
+        <label for="passkey-name">凭据名称</label>
+        <input id="passkey-name" maxlength="128" value="Passkey" style="width:100%;box-sizing:border-box;margin:8px 0 16px;padding:12px;font:inherit" />
         <button id="create-passkey" type="button">创建 Passkey</button>
         <a class="skip" href="@Model.SkipUrl">暂时跳过</a>
         <p id="error" class="error" role="alert"></p>
@@ -78,7 +80,7 @@
             try {
                 const start = await post('/account/PasskeyEnrollment?handler=Options', { enrollmentToken });
                 const credential = await navigator.credentials.create({ publicKey: createOptions(start.publicKey) });
-                const complete = await post('/account/PasskeyEnrollment?handler=Verify', { flowToken: start.flowToken, credential: serializeCreation(credential), displayName: 'Passkey' });
+                const complete = await post('/account/PasskeyEnrollment?handler=Verify', { flowToken: start.flowToken, credential: serializeCreation(credential), displayName: document.getElementById('passkey-name').value.trim() || 'Passkey' });
                 window.location.assign(complete.redirectUrl);
             } catch (exception) {
                 error.textContent = exception.message || '无法创建 Passkey。'; error.style.display = 'block'; button.disabled = false;

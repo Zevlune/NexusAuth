@@ -1,17 +1,13 @@
+using Microsoft.Extensions.Logging;
 using System.Net.Mail;
 using Microsoft.Extensions.Options;
 using MimeKit;
 
-namespace NexusAuth.Host.Email;
+namespace NexusAuth.Shared.Email;
 
-public interface IEmailSender
+public sealed class SmtpEmailSender(IOptions<SmtpOptions> options, ISmtpTransport transport, ILogger<SmtpEmailSender> logger) : IEmailSender
 {
-    Task SendAsync(string to, string subject, string textBody, CancellationToken ct = default);
-}
-
-public sealed class SmtpEmailSender(IOptions<SmtpOptions> options, ISmtpTransport transport) : IEmailSender
-{
-    public Task SendAsync(string to, string subject, string textBody, CancellationToken ct = default)
+    public async Task SendAsync(string to, string subject, string textBody, CancellationToken ct = default)
     {
         var smtp = options.Value;
         if (!smtp.Enabled)
@@ -30,6 +26,19 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> options, ISmtpTranspor
         message.To.Add(new MailboxAddress("", recipient.Address));
         message.Subject = subject;
         message.Body = new TextPart("plain") { Text = textBody };
-        return transport.SendAsync(smtp, message, ct);
+        try
+        {
+            await transport.SendAsync(smtp, message, ct);
+            logger.LogInformation("SMTP server accepted email. Host={Host} Port={Port} Security={Security}",
+                smtp.Host, smtp.Port, smtp.Security);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception exception)
+        {
+            logger.LogError(exception,
+                "SMTP email delivery failed. Stage={Stage} Host={Host} Port={Port} Security={Security}",
+                exception.Data["SmtpStage"] ?? "transport", smtp.Host, smtp.Port, smtp.Security);
+            throw;
+        }
     }
 }

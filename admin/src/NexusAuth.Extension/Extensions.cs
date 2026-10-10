@@ -24,7 +24,9 @@ public static class OidcWorkbenchExtensions
         services.Configure(configure);
         services.AddSingleton<ValidatedWorkbenchAuthOptions>();
 
-        services.AddHttpClient();
+        services.AddTransient<OidcBackchannelHandler>();
+        services.AddHttpClient(OidcWorkbenchService.HttpClientName)
+            .AddHttpMessageHandler<OidcBackchannelHandler>();
         services.AddSingleton<IFlowStateStore, InMemoryFlowStateStore>();
         services.AddScoped<IOidcWorkbenchService, OidcWorkbenchService>();
 
@@ -58,6 +60,14 @@ public class ValidatedWorkbenchAuthOptions
             errors.Add("PostLogoutRedirectUri is required.");
         if (string.IsNullOrWhiteSpace(opts.Scope))
             errors.Add("Scope is required.");
+        try
+        {
+            OidcBackchannelHandler.ValidateBackchannelAuthority(opts.BackchannelAuthority);
+        }
+        catch (ArgumentException exception)
+        {
+            errors.Add(exception.Message);
+        }
 
         if (errors.Count > 0)
             throw new InvalidOperationException(string.Join(" ", errors));

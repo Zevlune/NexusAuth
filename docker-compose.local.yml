@@ -1,0 +1,8 @@
+# Optional local preview data. Does not replace or clear existing volumes.
+services:
+  sso:
+    environment:
+      NEXUSAUTH_SLIDER_CAPTCHA_ENABLED: "true"
+  db:
+    volumes:
+      - ./docker/local-demo-seed.sql:/docker-entrypoint-initdb.d/010-local-demo.sql:ro

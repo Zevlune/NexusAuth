@@ -67,6 +67,15 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     }
 
     [Fact]
+    public async Task Passkey_management_requires_an_authenticated_provider_session()
+    {
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var response = await client.GetAsync("/account/passkeys");
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/account/login", response.Headers.Location?.AbsolutePath);
+    }
+
+    [Fact]
     public async Task Registration_page_returns_not_found_when_self_registration_is_disabled()
     {
         using var client = factory.CreateClient();
@@ -237,6 +246,25 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
         Assert.Contains("data:image/png;base64,", loginPage);
         Assert.DoesNotContain("data-target=", loginPage);
         Assert.DoesNotContain("dataset.target", loginPage);
+    }
+
+    [Theory]
+    [InlineData("/account/login")]
+    [InlineData("/account/register")]
+    public async Task Captcha_refresh_returns_new_images_without_the_answer(string path)
+    {
+        using var enabledFactory = factory.WithWebHostBuilder(builder => builder
+            .UseSetting("SliderCaptcha:Enabled", "true")
+            .UseSetting("SelfRegistration:Enabled", "true"));
+        using var client = enabledFactory.CreateClient();
+        var first = await client.GetAsync(path + "?handler=Captcha");
+        var second = await client.GetAsync(path + "?handler=Captcha");
+        first.EnsureSuccessStatusCode(); second.EnsureSuccessStatusCode();
+        var json = await first.Content.ReadAsStringAsync();
+        Assert.Contains("pieceDataUrl", json);
+        Assert.Contains("no-store", first.Headers.CacheControl!.ToString());
+        Assert.DoesNotContain("targetOffset", json, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual(json, await second.Content.ReadAsStringAsync());
     }
 
     [Fact]

@@ -13,6 +13,7 @@ using NexusAuth.Host.Authentication;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Application.Services.Email;
 
 namespace NexusAuth.Host.Pages.Account;
 
@@ -32,7 +33,8 @@ public class LoginModel(
     IOptions<SelfRegistrationOptions> selfRegistrationOptions,
     Fido2 fido2,
     IWebAuthnService webAuthnService,
-    IOptions<WebAuthnOptions> webAuthnOptions) : PageModel
+    IOptions<WebAuthnOptions> webAuthnOptions,
+    EmailAccountService emailAccounts) : PageModel
 {
     private readonly LoginFlowOptions _flowOptions = flowOptions.Value;
     private readonly SliderCaptchaOptions _sliderCaptchaOptions = sliderCaptchaOptions.Value;
@@ -53,6 +55,15 @@ public class LoginModel(
 
     [BindProperty]
     public string Password { get; set; } = string.Empty;
+
+    [BindProperty(SupportsGet = true)]
+    public string? Mode { get; set; }
+    [BindProperty] public string EmailCode { get; set; } = string.Empty;
+    public bool EmailLogin => Mode == "email";
+    public string? StatusMessage { get; set; }
+    public int SendCooldownSeconds { get; private set; }
+    public int ConfiguredSendCooldownSeconds => emailAccounts.CooldownSeconds;
+    public int CodeLifetimeMinutes => emailAccounts.LifetimeMinutes;
 
     [BindProperty]
     public bool RememberMe { get; set; }
@@ -86,6 +97,14 @@ public class LoginModel(
     public int SliderCaptchaTolerancePixels => _sliderCaptchaOptions.TolerancePixels;
 
     public string SliderCaptchaImageDataUrl { get; private set; } = string.Empty;
+    public SliderCaptchaChallengeTicket? SliderCaptchaImages { get; private set; }
+
+    public IActionResult OnGetCaptcha()
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (!SliderCaptchaEnabled) return NotFound();
+        return new JsonResult(sliderCaptchaChallengeProtector.CreateChallenge());
+    }
 
     /// <summary>
     /// 渲染登录页，并清理已有外部认证 Cookie。
@@ -126,7 +145,7 @@ public class LoginModel(
             return Page();
         }
 
-        if (string.IsNullOrWhiteSpace(Username) || string.IsNullOrWhiteSpace(Password))
+        if (string.IsNullOrWhiteSpace(Username) || (!EmailLogin && string.IsNullOrWhiteSpace(Password)))
         {
             await RecordLoginAsync(null, false, "MissingCredentials");
             ErrorMessage = "Username and password are required.";
@@ -135,7 +154,9 @@ public class LoginModel(
             return Page();
         }
 
-        var user = await userService.ValidateCredentialsAsync(Username, Password);
+        var user = EmailLogin
+            ? await emailAccounts.AuthenticateAsync(Username, EmailCode, HttpContext.RequestAborted)
+            : await userService.ValidateCredentialsAsync(Username, Password);
         if (user is null)
         {
             await RecordLoginAsync(null, false, "InvalidCredentials");
@@ -181,7 +202,8 @@ public class LoginModel(
                         user.Username,
                         ReturnUrl,
                         _flowOptions.AllowRememberMe && RememberMe,
-                        DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        EmailLogin ? "email" : "pwd"),
                     TimeSpan.FromMinutes(_flowOptions.PendingStateLifetimeMinutes));
                 Password = string.Empty;
                 await TryExtractClientNameAsync();
@@ -189,7 +211,28 @@ public class LoginModel(
             }
         }
 
-        return await CompleteLoginAsync(user, RememberMe, DateTimeOffset.UtcNow, "pwd");
+        return await CompleteLoginAsync(user, RememberMe, DateTimeOffset.UtcNow, EmailLogin ? "email" : "pwd");
+    }
+
+    public async Task<IActionResult> OnPostSendEmailCodeAsync()
+    {
+        Mode = "email";
+        if (SliderCaptchaEnabled && !sliderCaptchaChallengeProtector.TryValidate(SliderCaptchaToken, SliderCaptchaOffset))
+            ErrorMessage = "Please complete the slider verification.";
+        else
+        {
+            try
+            {
+                await emailAccounts.SendPublicAsync(Username, "login", HttpContext.RequestAborted);
+                StatusMessage = $"如果邮箱已绑定且账号可用，验证码已发送或存在有效的验证码，请使用已收到的验证码（{CodeLifetimeMinutes} 分钟内有效），不会重复发送。";
+                SendCooldownSeconds = emailAccounts.CooldownSeconds;
+            }
+            catch (Exception e) when (e is InvalidOperationException or ArgumentException)
+            { ErrorMessage = e.Message; }
+        }
+        RefreshSliderCaptchaChallenge();
+        await TryExtractClientNameAsync();
+        return Page();
     }
 
     public async Task<IActionResult> OnPostTotpAsync()
@@ -233,7 +276,7 @@ public class LoginModel(
         }
 
         var authenticatedAt = DateTimeOffset.FromUnixTimeSeconds(flowState.AuthenticatedAtUnixSeconds);
-        return await CompleteLoginAsync(user, flowState.RememberMe, authenticatedAt, "pwd otp");
+        return await CompleteLoginAsync(user, flowState.RememberMe, authenticatedAt, (flowState.AuthenticationMethods ?? "pwd") + " otp");
     }
 
     public async Task<IActionResult> OnPostPasskeyOptionsAsync(
@@ -395,7 +438,7 @@ public class LoginModel(
             clientId,
             isSuccessful,
             failureReason,
-            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            ClientIpConfiguration.GetAddress(HttpContext),
             HttpContext.Request.Headers.UserAgent.ToString()), HttpContext.RequestAborted);
     }
 
@@ -412,6 +455,7 @@ public class LoginModel(
         }
 
         var challenge = sliderCaptchaChallengeProtector.CreateChallenge();
+        SliderCaptchaImages = challenge;
         SliderCaptchaToken = challenge.Token;
         SliderCaptchaImageDataUrl = challenge.ImageDataUrl;
         SliderCaptchaOffset = null;

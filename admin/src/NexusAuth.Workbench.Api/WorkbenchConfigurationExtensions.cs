@@ -7,9 +7,20 @@ public static class WorkbenchConfigurationExtensions
     private static readonly IReadOnlyDictionary<string, string> SingleUnderscoreEnvironmentVariables =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["NEXUSAUTH_SMTP_ENABLED"] = "Smtp:Enabled",
+            ["NEXUSAUTH_SMTP_HOST"] = "Smtp:Host",
+            ["NEXUSAUTH_SMTP_PORT"] = "Smtp:Port",
+            ["NEXUSAUTH_SMTP_SECURITY"] = "Smtp:Security",
+            ["NEXUSAUTH_SMTP_USERNAME"] = "Smtp:Username",
+            ["NEXUSAUTH_SMTP_PASSWORD"] = "Smtp:Password",
+            ["NEXUSAUTH_SMTP_FROM_ADDRESS"] = "Smtp:FromAddress",
+            ["NEXUSAUTH_SMTP_FROM_NAME"] = "Smtp:FromName",
+            ["NEXUSAUTH_SMTP_VERIFICATION_CODE_COOLDOWN_SECONDS"] = "Smtp:VerificationCodeCooldownSeconds",
+            ["NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES"] = "Smtp:VerificationCodeLifetimeMinutes",
             ["NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED"] = "Gateway:Enabled",
             ["NEXUSAUTH_WORKBENCH_CONNECTION_STRINGS_DEFAULT"] = "ConnectionStrings:Default",
             ["NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY"] = "Auth:Authority",
+            ["NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY"] = "Auth:BackchannelAuthority",
             ["NEXUSAUTH_WORKBENCH_AUTH_CLIENT_ID"] = "Auth:ClientId",
             ["NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET"] = "Auth:ClientSecret",
             ["NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI"] = "Auth:RedirectUri",

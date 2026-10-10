@@ -9,7 +9,8 @@ public sealed record PendingLoginFlowState(
     string Username,
     string? ReturnUrl,
     bool RememberMe,
-    long AuthenticatedAtUnixSeconds);
+    long AuthenticatedAtUnixSeconds,
+    string AuthenticationMethods = "pwd");
 
 public sealed class LoginFlowStateProtector
 {

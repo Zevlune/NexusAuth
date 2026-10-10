@@ -2,7 +2,6 @@
 
     <ItemGroup>
         <PackageReference Include="Fido2" />
-        <PackageReference Include="MailKit" />
         <PackageReference Include="Luck.AutoDependencyInjection" />
         <PackageReference Include="Luck.AspNetCore" />
     </ItemGroup>

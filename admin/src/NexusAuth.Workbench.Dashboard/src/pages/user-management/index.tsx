@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
-import { Button, Dialog, Drawer, Form, Input, MessagePlugin, Pagination, Select, Space, Switch, Table, Tag, type TableProps } from 'tdesign-react';
+import { Button, Dialog, Drawer, Empty, Form, Input, MessagePlugin, Pagination, Select, Space, Switch, Table, Tag, Textarea, type TableProps } from 'tdesign-react';
 import { EditIcon, KeyIcon, RefreshIcon, SearchIcon } from 'tdesign-icons-react';
-import { getUsers, resetUserPassword, updateUser, updateUserStatus, type ManagedUser, type ResetManagedUserPasswordRequest, type UpdateManagedUserRequest } from '../../api/user';
+import { getUser, getUserPasskeys, getUsers, resetUserPassword, revokeUserPasskey, updateUser, updateUserStatus, type ManagedUser, type ResetManagedUserPasswordRequest, type UpdateManagedUserRequest, type WebAuthnCredentialSummary } from '../../api/user';
 import './style.less';
 
 type FilterState = {
@@ -114,6 +114,15 @@ const UserManagementPage = () => {
   const [resetPasswordFormData, setResetPasswordFormData] = useState<ResetPasswordFormData>(defaultResetPasswordFormData);
   const [resetPasswordSubmitting, setResetPasswordSubmitting] = useState(false);
   const resetPasswordFormRef = useRef<any>(null);
+  const [detailVisible, setDetailVisible] = useState(false);
+  const [detailUser, setDetailUser] = useState<ManagedUser | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [passkeys, setPasskeys] = useState<WebAuthnCredentialSummary[]>([]);
+  const [revokeTarget, setRevokeTarget] = useState<WebAuthnCredentialSummary | null>(null);
+  const [revokeReason, setRevokeReason] = useState('');
+  const [revoking, setRevoking] = useState(false);
+  const detailRequestId = useRef(0);
 
   const fetchData = useCallback(async () => {
     try {
@@ -301,6 +310,68 @@ const UserManagementPage = () => {
     }
   };
 
+  const handleShowDetails = async (user: ManagedUser) => {
+    const requestId = ++detailRequestId.current;
+    setDetailVisible(true);
+    setDetailUser(null);
+    setPasskeys([]);
+    setDetailError(null);
+    setDetailLoading(true);
+    setRevokeTarget(null);
+    setRevokeReason('');
+    setRevoking(false);
+    try {
+      const [loadedUser, loadedPasskeys] = await Promise.all([getUser(user.id), getUserPasskeys(user.id)]);
+      if (detailRequestId.current !== requestId) return;
+      setDetailUser(loadedUser);
+      setPasskeys(loadedPasskeys);
+    } catch (error) {
+      if (detailRequestId.current !== requestId) return;
+      setDetailError(getRequestErrorMessage(error, '加载用户详情失败'));
+    } finally {
+      if (detailRequestId.current === requestId) setDetailLoading(false);
+    }
+  };
+
+  const handleCloseDetails = () => {
+    detailRequestId.current++;
+    setDetailVisible(false);
+    setDetailUser(null);
+    setPasskeys([]);
+    setDetailError(null);
+    setDetailLoading(false);
+    setRevokeTarget(null);
+    setRevokeReason('');
+    setRevoking(false);
+  };
+
+  const handleRevokePasskey = async () => {
+    if (!detailUser || !revokeTarget || !revokeReason.trim()) {
+      MessagePlugin.warning('请填写撤销原因');
+      return;
+    }
+    const userId = detailUser.id;
+    const credentialId = revokeTarget.id;
+    const requestId = detailRequestId.current;
+    try {
+      setRevoking(true);
+      await revokeUserPasskey(userId, credentialId, revokeReason.trim());
+      if (detailRequestId.current !== requestId) return;
+      setPasskeys((previous) => previous.map((item) => item.id === credentialId
+        ? { ...item, disabledAt: new Date().toISOString() }
+        : item));
+      setRevokeTarget(null);
+      setRevokeReason('');
+      MessagePlugin.success('Passkey 已撤销');
+    } catch (error) {
+      if (detailRequestId.current === requestId) {
+        MessagePlugin.error(getRequestErrorMessage(error, '撤销 Passkey 失败'));
+      }
+    } finally {
+      if (detailRequestId.current === requestId) setRevoking(false);
+    }
+  };
+
   const columns: TableProps<ManagedUser>['columns'] = useMemo(
     () => [
       { colKey: 'username', title: '用户名', width: 150, ellipsis: true },
@@ -344,18 +415,25 @@ const UserManagementPage = () => {
         title: '操作',
         width: 160,
         fixed: 'right',
-        cell: ({ row }) => row.isSystemAccount
-          ? <Tag theme="default" variant="light-outline">系统账号受保护</Tag>
-          : (
-            <Space direction="vertical" size={4} style={{ alignItems: 'flex-start' }}>
-              <Button variant="text" theme="primary" icon={<EditIcon />} onClick={() => handleEdit(row)}>
-                编辑
-              </Button>
-              <Button variant="text" theme="danger" icon={<KeyIcon />} onClick={() => handleShowResetPassword(row)}>
-                重置密码
-              </Button>
-            </Space>
-          ),
+        cell: ({ row }) => (
+          <Space direction="vertical" size={4} style={{ alignItems: 'flex-start' }}>
+            <Button variant="text" theme="primary" onClick={() => void handleShowDetails(row)}>
+              用户详情
+            </Button>
+            {row.isSystemAccount ? (
+              <Tag theme="default" variant="light-outline">系统账号受保护</Tag>
+            ) : (
+              <>
+                <Button variant="text" theme="primary" icon={<EditIcon />} onClick={() => handleEdit(row)}>
+                  编辑
+                </Button>
+                <Button variant="text" theme="danger" icon={<KeyIcon />} onClick={() => handleShowResetPassword(row)}>
+                  重置密码
+                </Button>
+              </>
+            )}
+          </Space>
+        ),
       },
     ],
     [togglingId],
@@ -428,6 +506,106 @@ const UserManagementPage = () => {
           </Form>
         )}
       </Dialog>
+
+      <Dialog
+        visible={Boolean(revokeTarget)}
+        header="撤销 Passkey"
+        width="min(480px, calc(100vw - 32px))"
+        confirmBtn="确认撤销"
+        cancelBtn="取消"
+        confirmLoading={revoking}
+        onClose={() => {
+          if (!revoking) {
+            setRevokeTarget(null);
+            setRevokeReason('');
+          }
+        }}
+        onConfirm={() => void handleRevokePasskey()}
+      >
+        <div className="user-management-revoke__target">
+          将撤销 <strong>{revokeTarget?.displayName || 'Passkey'}</strong>，该凭据之后不能再用于登录，并退出该用户所有设备、撤销现有令牌。请填写单行原因。
+        </div>
+        <Textarea
+          value={revokeReason}
+          maxlength={500}
+          placeholder="请输入撤销原因"
+          autosize={{ minRows: 3, maxRows: 6 }}
+          onChange={setRevokeReason}
+        />
+      </Dialog>
+
+      <Drawer
+        visible={detailVisible}
+        className="user-management-detail-drawer"
+        header="用户详情"
+        onClose={handleCloseDetails}
+        footer={false}
+        size="min(760px, 100vw)"
+        destroyOnClose
+      >
+        {detailLoading ? (
+          <div className="user-management-detail-state">正在加载用户详情…</div>
+        ) : detailError ? (
+          <div className="user-management-detail-state user-management-detail-state--error" role="alert">{detailError}</div>
+        ) : detailUser ? (
+          <>
+            <section className="user-management-detail-section" aria-labelledby="user-detail-profile-title">
+              <h3 id="user-detail-profile-title">基本资料</h3>
+              <dl className="user-management-detail-grid">
+                <div><dt>用户名</dt><dd>{detailUser.username}</dd></div>
+                <div><dt>昵称</dt><dd>{detailUser.nickname || '-'}</dd></div>
+                <div><dt>邮箱</dt><dd>{detailUser.email || '-'}</dd></div>
+                <div><dt>手机号</dt><dd>{detailUser.phoneNumber || '-'}</dd></div>
+                <div><dt>姓名</dt><dd>{[detailUser.familyName, detailUser.givenName].filter(Boolean).join(' ') || '-'}</dd></div>
+                <div><dt>职务</dt><dd>{detailUser.title || '-'}</dd></div>
+                <div><dt>用户类型</dt><dd>{detailUser.userType || '-'}</dd></div>
+                <div><dt>状态</dt><dd><Tag theme={detailUser.isActive ? 'success' : 'default'}>{detailUser.isActive ? '启用' : '禁用'}</Tag></dd></div>
+                <div><dt>创建时间</dt><dd>{formatDateTime(detailUser.createdAt)}</dd></div>
+                <div><dt>更新时间</dt><dd>{formatDateTime(detailUser.updatedAt)}</dd></div>
+                <div><dt>SCIM External ID</dt><dd>{detailUser.externalId || '-'}</dd></div>
+                <div><dt>时区</dt><dd>{detailUser.timezone || '-'}</dd></div>
+              </dl>
+            </section>
+            <section className="user-management-detail-section" aria-labelledby="user-detail-passkeys-title">
+              <h3 id="user-detail-passkeys-title">Passkey 凭据</h3>
+              {passkeys.length === 0 ? <Empty description="该用户暂无 Passkey 凭据" /> : (
+                <div className="user-management-passkeys">
+                  {passkeys.map((credential) => (
+                    <article className="user-management-passkey" key={credential.id}>
+                      <div className="user-management-passkey__heading">
+                        <strong>{credential.displayName || 'Passkey'}</strong>
+                        {credential.disabledAt
+                          ? <Tag theme="default" variant="outline">已撤销</Tag>
+                          : <Tag theme="success" variant="outline">启用</Tag>}
+                      </div>
+                      <dl className="user-management-detail-grid user-management-detail-grid--compact">
+                        <div><dt>创建时间</dt><dd>{formatDateTime(credential.createdAt)}</dd></div>
+                        <div><dt>最近使用</dt><dd>{formatDateTime(credential.lastUsedAt)}</dd></div>
+                        <div><dt>撤销时间</dt><dd>{formatDateTime(credential.disabledAt)}</dd></div>
+                        <div><dt>备份资格</dt><dd>{credential.isBackupEligible ? '支持' : '不支持'}</dd></div>
+                        <div><dt>已备份</dt><dd>{credential.isBackedUp ? '是' : '否'}</dd></div>
+                      </dl>
+                      {!credential.disabledAt && (
+                        <Button
+                          size="small"
+                          variant="text"
+                          theme="danger"
+                          onClick={() => {
+                            setRevokeTarget(credential);
+                            setRevokeReason('');
+                          }}
+                        >
+                          撤销凭据
+                        </Button>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
+        ) : null}
+      </Drawer>
 
       <Drawer
         visible={editorVisible}

@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
 using NexusAuth.Persistence;
+using NexusAuth.Shared.Email;
+using NexusAuth.Application.Services.Email;
 
 namespace NexusAuth.Workbench.Api;
 
@@ -20,9 +22,11 @@ public class WorkbenchApiModule : LuckAppModule
     {
         var services = context.Services;
         var configuration = services.GetConfiguration();
+        services.AddNexusAuthEmail(configuration);
         var gatewayEnabled = configuration.IsWorkbenchGatewayEnabled();
 
         var authority = configuration["Auth:Authority"];
+        var backchannelAuthority = configuration["Auth:BackchannelAuthority"];
         var clientId = configuration["Auth:ClientId"];
         var clientSecret = configuration["Auth:ClientSecret"];
         var redirectUri = configuration["Auth:RedirectUri"];
@@ -37,6 +41,7 @@ public class WorkbenchApiModule : LuckAppModule
             && parsedRequireHttpsMetadata;
         var requiredAuthConfiguration = RequireAuthConfiguration(
             authority,
+            backchannelAuthority,
             clientId,
             clientSecret,
             redirectUri,
@@ -50,6 +55,7 @@ public class WorkbenchApiModule : LuckAppModule
             services.AddNexusAuth(options =>
             {
                 options.Authority = requiredAuthConfiguration.Authority;
+                options.BackchannelAuthority = requiredAuthConfiguration.BackchannelAuthority;
                 options.ClientId = requiredAuthConfiguration.ClientId;
                 options.ClientSecret = requiredAuthConfiguration.ClientSecret;
                 options.RedirectUri = requiredAuthConfiguration.RedirectUri;
@@ -98,6 +104,15 @@ public class WorkbenchApiModule : LuckAppModule
                 options.Authority = normalizedAuthority;
                 options.RequireHttpsMetadata = requireHttpsMetadata;
                 options.MetadataAddress = $"{normalizedAuthority}/.well-known/openid-configuration";
+                if (requiredAuthConfiguration.BackchannelAuthority is not null)
+                {
+                    options.BackchannelHttpHandler = new OidcBackchannelHandler(
+                        normalizedAuthority,
+                        requiredAuthConfiguration.BackchannelAuthority)
+                    {
+                        InnerHandler = new HttpClientHandler(),
+                    };
+                }
                 options.MapInboundClaims = false;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
@@ -133,6 +148,7 @@ public class WorkbenchApiModule : LuckAppModule
 
     private static RequiredAuthConfiguration RequireAuthConfiguration(
         string? authority,
+        string? backchannelAuthority,
         string? clientId,
         string? clientSecret,
         string? redirectUri,
@@ -159,12 +175,21 @@ public class WorkbenchApiModule : LuckAppModule
         if (!Uri.TryCreate(authority, UriKind.Absolute, out var authorityUri)
             || (authorityUri.Scheme != Uri.UriSchemeHttp && authorityUri.Scheme != Uri.UriSchemeHttps))
             errors.Add("Auth:Authority (NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY) must be an absolute HTTP(S) URI.");
+        try
+        {
+            OidcBackchannelHandler.ValidateBackchannelAuthority(backchannelAuthority);
+        }
+        catch (ArgumentException exception)
+        {
+            errors.Add($"Auth:BackchannelAuthority (NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY): {exception.Message}");
+        }
 
         if (errors.Count > 0)
             throw new InvalidOperationException(string.Join(" ", errors));
 
         return new RequiredAuthConfiguration(
             authority ?? throw new InvalidOperationException("Authority is required."),
+            backchannelAuthority,
             clientId ?? throw new InvalidOperationException("ClientId is required."),
             clientSecret ?? throw new InvalidOperationException("ClientSecret is required."),
             redirectUri ?? string.Empty,
@@ -188,6 +213,7 @@ public class WorkbenchApiModule : LuckAppModule
 
     private sealed record RequiredAuthConfiguration(
         string Authority,
+        string? BackchannelAuthority,
         string ClientId,
         string ClientSecret,
         string RedirectUri,

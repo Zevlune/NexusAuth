@@ -6,7 +6,8 @@ namespace NexusAuth.Application.Services.WebAuthn;
 /// </summary>
 public sealed class WebAuthnService(
     IWebAuthnChallengeRepository challengeRepository,
-    IWebAuthnCredentialRepository credentialRepository) : IWebAuthnService
+    IWebAuthnCredentialRepository credentialRepository,
+    ILogger<WebAuthnService> logger) : IWebAuthnService
 {
     public Task<IReadOnlyList<WebAuthnCredential>> GetEnabledCredentialsAsync(
         Guid userId,
@@ -60,11 +61,13 @@ public sealed class WebAuthnService(
         CancellationToken ct = default) =>
         credentialRepository.FindByCredentialIdAsync(credentialId, ct);
 
-    public Task RegisterCredentialAsync(
+    public async Task RegisterCredentialAsync(
         WebAuthnCredentialRegistration registration,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(registration);
+        if (registration.DisplayName?.Trim().Length > 128)
+            throw new ArgumentException("Passkey 名称不能超过 128 个字符。", nameof(registration));
 
         // 这里只保存服务端已验证的公钥材料，认证器私钥和生物信息不会进入 NexusAuth。
         var credential = WebAuthnCredential.Create(
@@ -78,7 +81,8 @@ public sealed class WebAuthnService(
             registration.IsBackedUp,
             registration.DisplayName);
 
-        return credentialRepository.AddAsync(credential, ct);
+        await credentialRepository.AddAsync(credential, ct);
+        logger.LogInformation("Passkey registered. UserId={UserId} CredentialId={CredentialId}", registration.UserId, credential.Id);
     }
 
     public async Task CompleteAuthenticationAsync(

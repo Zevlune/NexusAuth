@@ -201,7 +201,8 @@ public class User : AggregateRootWithIdentity<Guid>
         Nickname = nickname.Trim();
         IsActive = isActive;
         ExternalId = NormalizeNullable(externalId);
-        Email = NormalizeNullable(email)?.ToLowerInvariant();
+        var nextEmail = NormalizeNullable(email)?.ToLowerInvariant();
+        Email = nextEmail;
         PhoneNumber = NormalizeNullable(phoneNumber);
         GivenName = NormalizeNullable(givenName);
         FamilyName = NormalizeNullable(familyName);
@@ -220,6 +221,19 @@ public class User : AggregateRootWithIdentity<Guid>
     public void MarkAsSystemAccount()
     {
         IsSystemAccount = true;
+        UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    public void BindEmail(string email)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+        Email = email.Trim().ToLowerInvariant();
+        UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    public void UnbindEmail()
+    {
+        Email = null;
         UpdatedAt = DateTimeOffset.UtcNow;
     }
 

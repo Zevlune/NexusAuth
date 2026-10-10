@@ -142,6 +142,8 @@
             .utility-row { top: 28px; } .login-content { padding-top: 120px; } .hero-copy { top: 28%; } .stats { bottom: 14%; } .panel-footer { bottom: 4%; }
         }
     </style>
+    <link rel="stylesheet" href="/css/slider-captcha.css" asp-append-version="true" />
+    <link rel="stylesheet" href="/css/email-code.css" asp-append-version="true" />
 </head>
 <body>
     <div class="auth-shell">
@@ -176,14 +178,24 @@
                 else
                 {
                     <form id="login-form" class="login-form" method="post">
-                        <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+                        <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" /><input type="hidden" name="Mode" value="@Model.Mode" />
                         @if (Model.SliderCaptchaEnabled)
                         {
                             <input id="slider-captcha-token" type="hidden" asp-for="SliderCaptchaToken" />
                             <input id="slider-captcha-offset" type="hidden" asp-for="SliderCaptchaOffset" />
                         }
-                        <div class="form-field"><label class="field-label" for="username">Username or Email</label><div class="input-wrap"><span class="input-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/></svg></span><input class="login-input" id="username" name="Username" autocomplete="username" placeholder="admin@nexusauth.local" required type="text" value="@Model.Username" autofocus /></div></div>
+                        <div class="form-field"><label class="field-label" for="username">Username or Email</label><div class="input-wrap"><span class="input-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/></svg></span><input class="login-input" id="username" name="Username" autocomplete="username" placeholder="admin@nexusauth.local" required type="text" value="@Model.Username" autofocus data-email-validate="@(Model.EmailLogin ? "true" : "false")" aria-describedby="Username-error" aria-invalid="false" /></div>@if (Model.EmailLogin) { <span id="Username-error" class="field-validation-message" data-email-field-error="Username" role="alert"></span> }</div>
+                        @if (Model.EmailLogin)
+                        {
+                            <div class="form-field email-code-field"><label for="EmailCode">邮箱验证码</label><div class="email-code-row">
+                                <input class="login-input" name="EmailCode" id="EmailCode" placeholder="请输入邮箱验证码" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
+                                <button class="login-submit" type="submit" asp-page-handler="SendEmailCode" formnovalidate data-email-send data-send-cooldown="@Model.ConfiguredSendCooldownSeconds" data-email-input="[name=Username]" data-cooldown-seconds="@Model.SendCooldownSeconds">发送验证码</button>
+                            </div></div>
+                        }
+                        else
+                        {
                         <div class="form-field"><div class="field-label-row"><label for="password">Password</label><span class="field-meta">安全接入</span></div><div class="input-wrap"><span class="input-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span><input class="login-input" id="password" name="Password" autocomplete="current-password" placeholder="••••••••" required type="password" /><button class="password-toggle" type="button" id="password-toggle" aria-label="显示密码"><span id="password-toggle-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></span></button></div></div>
+                        }
                         @if (Model.ShowRememberMe)
                         {
                             <div class="remember-row"><label class="remember-label"><input asp-for="RememberMe" type="checkbox" />@Model.RememberMeLifetimeDays 天内免登录</label></div>
@@ -196,14 +208,16 @@
                             <p id="passkey-error" class="auth-error" style="display:none;margin:0;" role="alert"></p>
                         }
                     </form>
+                    @if (!string.IsNullOrEmpty(Model.StatusMessage)) { <p role="status">@Model.StatusMessage</p> }
+                    <p class="register-prompt"><a asp-page="/Account/Login" asp-route-mode="@(Model.EmailLogin ? null : "email")" asp-route-returnUrl="@Model.ReturnUrl">@(Model.EmailLogin ? "使用密码登录" : "使用邮箱验证码登录")</a> · <a href="/account/forgot-password">忘记密码</a></p>
                     @if (Model.SelfRegistrationEnabled)
                     {
                         <p class="register-prompt">还没有账号？<a asp-page="/Account/Register" asp-route-returnUrl="@Model.ReturnUrl">创建账号</a></p>
                     }
                     @if (Model.SliderCaptchaEnabled)
                     {
-                        <div id="slider-captcha-dialog" class="slider-captcha-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="slider-captcha-title">
-                            <div class="captcha-card"><div class="captcha-header"><div><h2 id="slider-captcha-title">安全验证</h2><p>拖动滑块，将拼图移动到缺口位置。</p></div><button id="slider-captcha-close" type="button" class="captcha-close" aria-label="关闭验证">&times;</button></div><div id="slider-captcha-scene" class="slider-captcha-scene" data-track-width="@Model.SliderCaptchaTrackWidthPixels"><img class="captcha-image" src="@Model.SliderCaptchaImageDataUrl" alt="滑块验证码背景" draggable="false" /><div id="slider-captcha-piece" class="slider-captcha-piece" aria-hidden="true"></div></div><div id="slider-captcha-track" class="captcha-track" aria-label="拖动完成安全验证"><div id="slider-captcha-progress" class="captcha-progress"></div><span class="captcha-instruction">按住滑块向右拖动</span><button id="slider-captcha-handle" type="button" class="captcha-handle" aria-label="拖动滑块"><span aria-hidden="true">&raquo;</span></button></div><p id="slider-captcha-status" class="captcha-status" aria-live="polite"></p></div>
+                        <div id="slider-captcha-dialog" data-retry="@(Model.ErrorMessage == "Please complete the slider verification." ? "true" : "false")" class="slider-captcha-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="slider-captcha-title">
+                            <div class="captcha-card"><div class="captcha-header"><div><h2 id="slider-captcha-title">安全验证</h2><p>拖动滑块，将拼图移动到缺口位置。</p></div><button id="slider-captcha-close" type="button" class="captcha-close" aria-label="关闭验证">&times;</button></div><div id="slider-captcha-scene" class="slider-captcha-scene" data-track-width="@Model.SliderCaptchaTrackWidthPixels"><img class="captcha-image" src="@Model.SliderCaptchaImageDataUrl" alt="滑块验证码背景" draggable="false" /><img id="slider-captcha-piece" class="slider-captcha-piece" src="@Model.SliderCaptchaImages?.PieceDataUrl" data-size="@Model.SliderCaptchaImages?.PieceSize" data-top="@Model.SliderCaptchaImages?.PieceTop" data-width="@Model.SliderCaptchaImages?.Width" data-height="@Model.SliderCaptchaImages?.Height" alt="" draggable="false" /></div><div id="slider-captcha-track" class="captcha-track" aria-label="拖动完成安全验证"><div id="slider-captcha-progress" class="captcha-progress"></div><span class="captcha-instruction">按住滑块向右拖动</span><button id="slider-captcha-handle" type="button" class="captcha-handle" aria-label="拖动滑块"><span aria-hidden="true">&raquo;</span></button></div><div class="captcha-tools"><span>完成拼图以继续</span><button id="slider-captcha-refresh" type="button">↻ 换一张</button></div><p id="slider-captcha-status" class="captcha-status" aria-live="polite"></p></div>
                         </div>
                     }
                 }
@@ -238,48 +252,6 @@
                     ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>'
                     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m3 3 18 18"/><path d="M10.6 6.1A12 12 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-2.3 3.1M6.2 6.2C3.5 8 2 12 2 12s3.5 6 10 6c1.4 0 2.6-.3 3.7-.7"/></svg>';
             });
-            const form = document.getElementById('login-form');
-            const dialog = document.getElementById('slider-captcha-dialog');
-            if (!form || !dialog) return;
-            document.body.appendChild(dialog);
-            const scene = document.getElementById('slider-captcha-scene');
-            const piece = document.getElementById('slider-captcha-piece');
-            const track = document.getElementById('slider-captcha-track');
-            const handle = document.getElementById('slider-captcha-handle');
-            const progress = document.getElementById('slider-captcha-progress');
-            const offsetInput = document.getElementById('slider-captcha-offset');
-            const status = document.getElementById('slider-captcha-status');
-            const close = document.getElementById('slider-captcha-close');
-            let verified = false, dragging = false, startX = 0, currentOffset = 0;
-            let trackTravel = 0, sceneTravel = 0, handleWidth = 0, pendingOffset = 0, animationFrame = 0;
-            function measure() { handleWidth = handle.clientWidth; trackTravel = Math.max(0, track.clientWidth - handleWidth); sceneTravel = Math.max(0, scene.clientWidth - piece.clientWidth); progress.style.width = `${track.clientWidth}px`; }
-            function setPosition(offset) {
-                currentOffset = Math.max(0, Math.min(trackTravel, offset));
-                const configuredWidth = Number(scene.dataset.trackWidth);
-                const normalizedOffset = trackTravel === 0 ? 0 : Math.round(currentOffset / trackTravel * configuredWidth);
-                const ratio = trackTravel === 0 ? 0 : currentOffset / trackTravel;
-                handle.style.transform = `translate3d(${currentOffset}px, 0, 0)`;
-                progress.style.transform = `scaleX(${Math.min(1, (currentOffset + handleWidth) / Math.max(1, track.clientWidth))})`;
-                piece.style.transform = `translate3d(${ratio * sceneTravel}px, 0, 0)`;
-                offsetInput.value = normalizedOffset;
-            }
-            function queuePosition(offset) { pendingOffset = offset; if (animationFrame) return; animationFrame = window.requestAnimationFrame(function () { animationFrame = 0; setPosition(pendingOffset); }); }
-            function prepare() {
-                verified = false; offsetInput.value = ''; status.textContent = ''; measure(); piece.style.left = '0px'; setPosition(0);
-            }
-            function openDialog() { dialog.classList.remove('hidden'); window.requestAnimationFrame(function () { prepare(); handle.focus(); }); }
-            function closeDialog() { dialog.classList.add('hidden'); }
-            form.addEventListener('submit', function (event) { if (!verified) { event.preventDefault(); openDialog(); } });
-            handle.addEventListener('pointerdown', function (event) { dragging = true; startX = event.clientX - currentOffset; handle.setPointerCapture(event.pointerId); });
-            handle.addEventListener('pointermove', function (event) { if (dragging) queuePosition(event.clientX - startX); });
-            handle.addEventListener('pointerup', function (event) {
-                if (!dragging) return; dragging = false; handle.releasePointerCapture(event.pointerId);
-                if (animationFrame) { window.cancelAnimationFrame(animationFrame); animationFrame = 0; }
-                setPosition(event.clientX - startX);
-                verified = true; status.textContent = '正在验证...'; window.setTimeout(function () { closeDialog(); form.requestSubmit(); }, 180);
-            });
-            close.addEventListener('click', closeDialog);
-            window.addEventListener('resize', function () { if (!dialog.classList.contains('hidden')) prepare(); });
         })();
     </script>
     <script>
@@ -340,5 +312,7 @@
             });
         })();
     </script>
+    <script src="/js/slider-captcha.js" asp-append-version="true" defer></script>
+    <script src="/js/email-code.js" asp-append-version="true" defer></script>
 </body>
 </html>

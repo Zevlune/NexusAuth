@@ -8,7 +8,11 @@
 **/dist/
 **/.vite/
 **/.cache/
+**/.npm-cache/
 logs/
+.env
+.env.*
+**/smtp.qq.local.json
 
 *.user
 *.suo

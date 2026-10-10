@@ -33,7 +33,26 @@ public sealed class WebAuthnCredentialRepository(IUnitOfWork unitOfWork)
 
     public async Task UpdateAsync(WebAuthnCredential credential, CancellationToken ct = default)
     {
-        _dbContext.Update(credential);
-        await _unitOfWork.CommitAsync(ct);
+        // Authentication must never write a stale DisabledAt/DisplayName back
+        // over an administrator's revocation or the owner's rename.
+        var changed = await FindAll(item => item.Id == credential.Id && item.UserId == credential.UserId && item.DisabledAt == null)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(item => item.SignatureCounter, credential.SignatureCounter)
+                .SetProperty(item => item.IsBackedUp, credential.IsBackedUp)
+                .SetProperty(item => item.LastUsedAt, credential.LastUsedAt), ct);
+        if (changed != 1)
+            throw new InvalidOperationException("The passkey was revoked during authentication.");
     }
+
+    public async Task<IReadOnlyList<WebAuthnCredential>> GetForUserAsync(Guid userId, CancellationToken ct = default) =>
+        await FindAll(credential => credential.UserId == userId).AsNoTracking()
+            .OrderByDescending(credential => credential.CreatedAt).ToListAsync(ct);
+
+    public async Task<bool> RenameAsync(Guid userId, Guid id, string displayName, CancellationToken ct = default) =>
+        await FindAll(credential => credential.UserId == userId && credential.Id == id && credential.DisabledAt == null)
+            .ExecuteUpdateAsync(update => update.SetProperty(credential => credential.DisplayName, displayName), ct) == 1;
+
+    public async Task<bool> DisableAsync(Guid userId, Guid id, DateTimeOffset now, CancellationToken ct = default) =>
+        await FindAll(credential => credential.UserId == userId && credential.Id == id && credential.DisabledAt == null)
+            .ExecuteUpdateAsync(update => update.SetProperty(credential => credential.DisabledAt, now), ct) == 1;
 }

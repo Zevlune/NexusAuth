@@ -1,7 +1,7 @@
 using System.Net.Mail;
 using Microsoft.Extensions.Options;
 
-namespace NexusAuth.Host.Email;
+namespace NexusAuth.Shared.Email;
 
 public sealed class SmtpOptions
 {
@@ -15,6 +15,8 @@ public sealed class SmtpOptions
     public string Password { get; set; } = "";
     public string FromAddress { get; set; } = "";
     public string FromName { get; set; } = "NexusAuth";
+    public int VerificationCodeCooldownSeconds { get; set; } = 60;
+    public int VerificationCodeLifetimeMinutes { get; set; } = 5;
 }
 
 public sealed class SmtpOptionsValidator : IValidateOptions<SmtpOptions>
@@ -25,6 +27,12 @@ public sealed class SmtpOptionsValidator : IValidateOptions<SmtpOptions>
             return ValidateOptionsResult.Success;
 
         var errors = new List<string>();
+        if (options.VerificationCodeCooldownSeconds is < 1 or > 3600)
+            errors.Add("Smtp:VerificationCodeCooldownSeconds must be between 1 and 3600.");
+        if (options.VerificationCodeLifetimeMinutes is < 1 or > 60)
+            errors.Add("Smtp:VerificationCodeLifetimeMinutes must be between 1 and 60.");
+        if (options.VerificationCodeCooldownSeconds > options.VerificationCodeLifetimeMinutes * 60)
+            errors.Add("SMTP verification code cooldown must not exceed its lifetime.");
         if (string.IsNullOrWhiteSpace(options.Host))
             errors.Add("Smtp:Host is required.");
         if (options.Port is < 1 or > 65535)

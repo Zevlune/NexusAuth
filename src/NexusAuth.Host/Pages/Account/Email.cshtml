@@ -1,0 +1,61 @@
+@page "/account/email"
+@model NexusAuth.Host.Pages.Account.EmailModel
+@{ Layout = "_AccountLayout"; ViewData["Title"] = "绑定邮箱"; var changing = Model.Bound && Model.Mode == "change"; var unbinding = Model.Bound && Model.Mode == "unbind"; }
+<section class="panel password-panel">
+    <div class="section-heading"><div><h1>@(unbinding ? "解绑邮箱" : changing ? "更换邮箱" : "绑定邮箱")</h1><p>邮箱可用于验证码登录和找回密码。</p></div><span class="status-chip">@(Model.Bound ? "已绑定" : "未绑定")</span></div>
+    @if (Model.Message != null) { <p class="message success" role="status">@Model.Message</p> }
+    @if (Model.Error != null) { <p class="message error" role="alert">@Model.Error</p> }
+    @if (Model.Bound && !changing && !unbinding)
+    {
+        <div class="email-bound-summary">
+            <div class="email-bound-icon" aria-hidden="true">✉</div>
+            <h2>已绑定邮箱 <span>@Model.MaskedEmail</span></h2>
+            <p>邮箱是您身份的重要凭证，可用于登录和找回密码。请确保邮箱由您本人使用。</p>
+            <div class="email-bound-actions">
+                <a class="primary-button" asp-page="/Account/Email" asp-route-mode="change">更换邮箱</a>
+                <a class="email-secondary-button" asp-page="/Account/Email" asp-route-mode="unbind">解绑邮箱</a>
+            </div>
+        </div>
+    }
+    else
+    {
+    <p class="message hidden" data-email-send-status role="status" aria-live="polite"></p>
+    <form method="post" class="password-form">
+        <input type="hidden" asp-for="Mode" />
+        @if (unbinding)
+        {
+            <p class="email-unbind-notice">即将解绑 @Model.MaskedEmail。解绑后无法使用此邮箱登录或找回密码，所有设备将退出登录。请验证当前密码后确认。</p>
+        }
+        else
+        {
+        <label>@(changing ? "新邮箱地址" : "邮箱地址")<input class="password-input" asp-for="EmailAddress" type="email" autocomplete="email" maxlength="254" required data-email-validate aria-describedby="EmailAddress-error" aria-invalid="false" /></label>
+        <span id="EmailAddress-error" class="field-validation-message" data-email-field-error="EmailAddress" role="alert"></span>
+        }
+        <div class="email-password-field">
+            <label asp-for="CurrentPassword">当前密码</label>
+            <input class="password-input @(Model.PasswordError is not null ? "field-invalid" : "")" asp-for="CurrentPassword" type="password" autocomplete="current-password" aria-describedby="CurrentPassword-error" aria-invalid="@(Model.PasswordError is not null ? "true" : "false")" />
+            <span id="CurrentPassword-error" class="field-validation-message" data-email-field-error="CurrentPassword" role="alert">@Model.PasswordError</span>
+        </div>
+        @if (Model.TotpEnabled)
+        {
+            <label>身份验证器动态码<input class="password-input" asp-for="TotpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /></label>
+        }
+        @if (!unbinding)
+        {
+        <div class="email-code-field">
+            <label asp-for="Code">邮箱验证码</label>
+            <div class="email-code-row">
+                <input class="password-input" asp-for="Code" aria-label="邮箱验证码" placeholder="请输入邮箱验证码" inputmode="numeric" autocomplete="one-time-code" maxlength="6" />
+                <button class="primary-button" asp-page-handler="Send" type="submit" data-email-send data-email-ajax="true" data-password-input="[name=CurrentPassword]" data-send-cooldown="@Model.ConfiguredSendCooldownSeconds" data-email-input="[name=EmailAddress]" data-cooldown-seconds="@Model.SendCooldownSeconds">发送验证码</button>
+            </div>
+        </div>
+        <button class="primary-button" asp-page-handler="Verify" type="submit">@(changing ? "确认更换邮箱" : "验证并保存邮箱")</button>
+        }
+        else
+        {
+            <button class="primary-button email-danger-button" asp-page-handler="Unbind" type="submit" data-password-input="[name=CurrentPassword]">确认解绑邮箱</button>
+        }
+        @if (Model.Bound) { <a class="email-cancel-link" asp-page="/Account/Email">取消</a> }
+    </form>
+    }
+</section>

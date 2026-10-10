@@ -1,3 +1,4 @@
+using NexusAuth.Shared.Email;
 using Luck.AppModule;
 using Luck.AutoDependencyInjection;
 using Luck.Framework.Infrastructure;
@@ -11,7 +12,7 @@ using Microsoft.Extensions.Options;
 using NexusAuth.Application.Users;
 using System.Threading.RateLimiting;
 using Fido2NetLib;
-using NexusAuth.Host.Email;
+using NexusAuth.Application.Services.Email;
 
 namespace NexusAuth.Host;
 
@@ -32,12 +33,8 @@ public class AppWebModule : LuckAppModule
         var configuration = services.GetConfiguration();
 
         services.AddNexusAuthTokenSigning(configuration);
-        services.AddOptions<SmtpOptions>()
-            .Bind(configuration.GetSection(SmtpOptions.SectionName))
-            .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<SmtpOptions>, SmtpOptionsValidator>();
-        services.AddTransient<ISmtpTransport, MailKitSmtpTransport>();
-        services.AddTransient<IEmailSender, SmtpEmailSender>();
+        services.AddNexusAuthEmail(configuration);
+        services.AddScoped<EmailAccountService>();
         services.Configure<NexusAuthSecurityOptions>(configuration.GetSection("Security"));
         services.AddOptions<LoginFlowOptions>()
             .Bind(configuration.GetSection(LoginFlowOptions.SectionName))
@@ -151,7 +148,7 @@ public class AppWebModule : LuckAppModule
         if (family is null)
             return RateLimitPartition.GetNoLimiter("unlimited");
 
-        var address = context.Connection.RemoteIpAddress?.ToString();
+        var address = ClientIpConfiguration.GetAddress(context);
         if (string.IsNullOrWhiteSpace(address))
             address = "unknown";
 
@@ -171,10 +168,14 @@ public class AppWebModule : LuckAppModule
 
     private static (string? Family, int TokenLimit) GetRateLimitFamily(PathString path)
     {
+        if (path.StartsWithSegments("/account/forgot-password") || path.StartsWithSegments("/account/email"))
+            return ("email", 10);
         if (path.StartsWithSegments("/account/login"))
             return ("login", 10);
 
-        if (path.StartsWithSegments("/account/passkey"))
+        if (path.StartsWithSegments("/account/passkey")
+            || path.StartsWithSegments("/account/passkeys")
+            || path.StartsWithSegments("/account/PasskeyEnrollment"))
             return ("passkey", 10);
 
         if (path.StartsWithSegments("/account/register"))

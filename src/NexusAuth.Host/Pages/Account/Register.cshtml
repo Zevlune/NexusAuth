@@ -25,6 +25,7 @@
         .slider-captcha-dialog{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:16px;background:#000000a6}.slider-captcha-dialog.hidden{display:none}.captcha-card{width:min(100%,420px);padding:24px;border:1px solid var(--border);border-radius:8px;background:var(--page);box-shadow:0 24px 60px #0006}.captcha-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}.captcha-header h2{margin:0;font-family:Geist,sans-serif;font-size:18px}.captcha-header p{margin:5px 0 0;color:var(--muted);font-size:14px}.captcha-close{border:0;color:var(--muted);background:transparent;font-size:24px;cursor:pointer}.slider-captcha-scene{position:relative;width:100%;height:160px;overflow:hidden;border:1px solid #ffffff33;border-radius:6px;background:#2563eb}.captcha-image{display:block;width:100%;height:100%;object-fit:fill}.slider-captcha-piece{position:absolute;top:52px;left:0;width:44px;height:44px;border:1px solid #ffffffcc;border-radius:6px;background:#ffffff59;box-shadow:0 8px 18px #00000047;backdrop-filter:blur(4px);will-change:transform}.captcha-track{position:relative;height:48px;margin-top:20px;overflow:hidden;border-radius:6px;background:color-mix(in srgb,var(--field) 75%,var(--border));user-select:none}.captcha-progress{position:absolute;inset:0 auto 0 0;border-radius:6px;background:color-mix(in srgb,var(--blue) 30%,transparent);transform-origin:left center;will-change:transform}.captcha-instruction{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:13px;pointer-events:none}.captcha-handle{position:absolute;top:0;left:0;display:grid;width:48px;height:48px;place-items:center;border:0;border-radius:6px;color:var(--button);background:var(--blue);box-shadow:0 4px 12px #0004;cursor:grab;touch-action:none;will-change:transform}.captcha-status{min-height:20px;margin:12px 0 0;color:var(--muted);font-size:13px;text-align:center}
         @@media(max-width:1099px){.shell{display:block}.visual{display:none}.form-panel{padding:0 24px}.utility{top:24px;right:24px}.mobile-brand{position:absolute;top:24px;left:24px;display:flex;color:var(--heading)}.register{width:min(100%,578px);padding-top:116px}}@@media(max-width:600px){.form-panel{padding:0 20px}.mobile-brand{top:20px;left:20px}.utility{top:20px;right:20px}.register{padding-top:100px}.title{font-size:31px}.subtitle{font-size:14px}.row{grid-template-columns:1fr;gap:14px}}
     </style>
+    <link rel="stylesheet" href="/css/slider-captcha.css" asp-append-version="true" />
 </head>
 <body>
     <div class="shell">
@@ -67,8 +68,8 @@
                 </form>
                 @if (Model.SliderCaptchaEnabled)
                 {
-                    <div id="slider-captcha-dialog" class="slider-captcha-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="slider-captcha-title">
-                        <div class="captcha-card"><div class="captcha-header"><div><h2 id="slider-captcha-title">安全验证</h2><p>拖动滑块，将拼图移动到缺口位置。</p></div><button id="slider-captcha-close" type="button" class="captcha-close" aria-label="关闭验证">&times;</button></div><div id="slider-captcha-scene" class="slider-captcha-scene" data-track-width="@Model.SliderCaptchaTrackWidthPixels"><img class="captcha-image" src="@Model.SliderCaptchaImageDataUrl" alt="滑块验证码背景" draggable="false" /><div id="slider-captcha-piece" class="slider-captcha-piece" aria-hidden="true"></div></div><div id="slider-captcha-track" class="captcha-track" aria-label="拖动完成安全验证"><div id="slider-captcha-progress" class="captcha-progress"></div><span class="captcha-instruction">按住滑块向右拖动</span><button id="slider-captcha-handle" type="button" class="captcha-handle" aria-label="拖动滑块"><span aria-hidden="true">&raquo;</span></button></div><p id="slider-captcha-status" class="captcha-status" aria-live="polite"></p></div>
+                    <div id="slider-captcha-dialog" data-retry="@(Model.ErrorMessage == "请完成拼图验证。" ? "true" : "false")" class="slider-captcha-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="slider-captcha-title">
+                        <div class="captcha-card"><div class="captcha-header"><div><h2 id="slider-captcha-title">安全验证</h2><p>拖动滑块，将拼图移动到缺口位置。</p></div><button id="slider-captcha-close" type="button" class="captcha-close" aria-label="关闭验证">&times;</button></div><div id="slider-captcha-scene" class="slider-captcha-scene" data-track-width="@Model.SliderCaptchaTrackWidthPixels"><img class="captcha-image" src="@Model.SliderCaptchaImageDataUrl" alt="滑块验证码背景" draggable="false" /><img id="slider-captcha-piece" class="slider-captcha-piece" src="@Model.SliderCaptchaImages?.PieceDataUrl" data-size="@Model.SliderCaptchaImages?.PieceSize" data-top="@Model.SliderCaptchaImages?.PieceTop" data-width="@Model.SliderCaptchaImages?.Width" data-height="@Model.SliderCaptchaImages?.Height" alt="" draggable="false" /></div><div id="slider-captcha-track" class="captcha-track" aria-label="拖动完成安全验证"><div id="slider-captcha-progress" class="captcha-progress"></div><span class="captcha-instruction">按住滑块向右拖动</span><button id="slider-captcha-handle" type="button" class="captcha-handle" aria-label="拖动滑块"><span aria-hidden="true">&raquo;</span></button></div><div class="captcha-tools"><span>完成拼图以继续</span><button id="slider-captcha-refresh" type="button">↻ 换一张</button></div><p id="slider-captcha-status" class="captcha-status" aria-live="polite"></p></div>
                     </div>
                 }
             </section>
@@ -83,28 +84,7 @@
             document.querySelectorAll('[data-password-toggle]').forEach(function (button) { button.addEventListener('click', function () { const input = document.getElementById(button.dataset.passwordToggle), showing = input.type === 'text'; input.type = showing ? 'password' : 'text'; button.setAttribute('aria-label', showing ? '显示密码' : '隐藏密码'); }); });
         })();
     </script>
-    <script>
-        (function () {
-            const form = document.getElementById('register-form'), dialog = document.getElementById('slider-captcha-dialog');
-            if (!form || !dialog) return;
-            document.body.appendChild(dialog);
-            const scene = document.getElementById('slider-captcha-scene'), piece = document.getElementById('slider-captcha-piece');
-            const track = document.getElementById('slider-captcha-track'), handle = document.getElementById('slider-captcha-handle');
-            const progress = document.getElementById('slider-captcha-progress'), offsetInput = document.getElementById('slider-captcha-offset');
-            const status = document.getElementById('slider-captcha-status'), close = document.getElementById('slider-captcha-close');
-            let verified = false, dragging = false, startX = 0, currentOffset = 0, trackTravel = 0, sceneTravel = 0, handleWidth = 0, pendingOffset = 0, animationFrame = 0;
-            function measure(){handleWidth=handle.clientWidth;trackTravel=Math.max(0,track.clientWidth-handleWidth);sceneTravel=Math.max(0,scene.clientWidth-piece.clientWidth);progress.style.width=`${track.clientWidth}px`;}
-            function setPosition(offset){currentOffset=Math.max(0,Math.min(trackTravel,offset));const configuredWidth=Number(scene.dataset.trackWidth),normalizedOffset=trackTravel===0?0:Math.round(currentOffset/trackTravel*configuredWidth),ratio=trackTravel===0?0:currentOffset/trackTravel;handle.style.transform=`translate3d(${currentOffset}px,0,0)`;progress.style.transform=`scaleX(${Math.min(1,(currentOffset+handleWidth)/Math.max(1,track.clientWidth))})`;piece.style.transform=`translate3d(${ratio*sceneTravel}px,0,0)`;offsetInput.value=normalizedOffset;}
-            function queuePosition(offset){pendingOffset=offset;if(animationFrame)return;animationFrame=window.requestAnimationFrame(function(){animationFrame=0;setPosition(pendingOffset);});}
-            function prepare(){verified=false;offsetInput.value='';status.textContent='';measure();setPosition(0);}
-            function openDialog(){dialog.classList.remove('hidden');window.requestAnimationFrame(function(){prepare();handle.focus();});}
-            form.addEventListener('submit',function(event){if(!verified){event.preventDefault();openDialog();}});
-            handle.addEventListener('pointerdown',function(event){dragging=true;startX=event.clientX-currentOffset;handle.setPointerCapture(event.pointerId);});
-            handle.addEventListener('pointermove',function(event){if(dragging)queuePosition(event.clientX-startX);});
-            handle.addEventListener('pointerup',function(event){if(!dragging)return;dragging=false;handle.releasePointerCapture(event.pointerId);if(animationFrame){window.cancelAnimationFrame(animationFrame);animationFrame=0;}setPosition(event.clientX-startX);verified=true;status.textContent='正在验证...';window.setTimeout(function(){dialog.classList.add('hidden');form.requestSubmit();},180);});
-            close.addEventListener('click',function(){dialog.classList.add('hidden');});
-            window.addEventListener('resize',function(){if(!dialog.classList.contains('hidden'))prepare();});
-        })();
-    </script>
+
+    <script src="/js/slider-captcha.js" asp-append-version="true" defer></script>
 </body>
 </html>

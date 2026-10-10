@@ -11,7 +11,7 @@ public sealed class LoginAuditService(ILoginAuditLogRepository auditLogRepositor
             record.ClientId,
             record.IsSuccessful,
             record.FailureReason,
-            record.IpAddress,
+            NormalizeAddress(record.IpAddress),
             record.UserAgent);
         return auditLogRepository.AddAsync(auditLog, ct);
     }
@@ -48,7 +48,13 @@ public sealed class LoginAuditService(ILoginAuditLogRepository auditLogRepositor
         auditLog.ClientId,
         auditLog.IsSuccessful,
         auditLog.FailureReason,
-        auditLog.IpAddress,
+        NormalizeAddress(auditLog.IpAddress),
         auditLog.UserAgent,
         auditLog.OccurredAt);
+
+    private static string? NormalizeAddress(string? value)
+    {
+        if (!System.Net.IPAddress.TryParse(value, out var address)) return value;
+        return (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
+    }
 }

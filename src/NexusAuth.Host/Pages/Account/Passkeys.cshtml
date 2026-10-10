@@ -1,0 +1,55 @@
+@page "/account/passkeys"
+@model NexusAuth.Host.Pages.Account.PasskeysModel
+@{
+    Layout = "_AccountLayout";
+    ViewData["Title"] = "Passkey 管理";
+}
+<section class="panel password-panel" aria-labelledby="passkeys-title">
+    <div class="section-heading"><div><h1 id="passkeys-title">Passkey 管理</h1><p>管理用于指纹、面容或设备解锁登录的凭据。</p></div></div>
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage)) { <p class="message error" role="alert">@Model.ErrorMessage</p> }
+    @if (!string.IsNullOrEmpty(Model.StatusMessage)) { <p class="message success" role="status">@Model.StatusMessage</p> }
+    @if (!Model.PasskeyEnabled) { <p class="password-notice">当前未开放 Passkey 登录与添加，已有凭据仍可重命名或删除。</p> }
+    <p class="password-notice">添加、删除需验证当前密码；已启用身份验证器时还需动态码。删除后将退出所有设备并撤销现有令牌。请保留可用的密码和身份验证器。</p>
+    @if (Model.Credentials.Count == 0) { <p>尚未添加 Passkey。</p> }
+    @foreach (var credential in Model.Credentials)
+    {
+        <article class="passkey-card">
+            <h2>@credential.DisplayName</h2>
+            <p>创建：@credential.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")<br />最近使用：@(credential.LastUsedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "尚未使用")<br />状态：@(credential.DisabledAt.HasValue ? "已撤销" : "可用") · @(credential.IsBackedUp ? "已备份" : "未备份")</p>
+            @if (!credential.DisabledAt.HasValue)
+            {
+                <form method="post" asp-page-handler="Rename" class="passkey-form">
+                    <input type="hidden" name="CredentialId" value="@credential.Id" />
+                    <label>凭据名称 <input class="password-input" name="DisplayName" value="@credential.DisplayName" maxlength="128" required /></label>
+                    <button type="submit" class="quiet-button">保存名称</button>
+                </form>
+                <details><summary>删除此 Passkey</summary>
+                    <form method="post" asp-page-handler="Delete" class="passkey-form" data-confirm-delete>
+                        <input type="hidden" name="CredentialId" value="@credential.Id" />
+                        <label>当前密码 <input class="password-input" type="password" name="CurrentPassword" autocomplete="current-password" required /></label>
+                        @if (Model.TotpEnabled) { <label>动态验证码 <input class="password-input" name="TotpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label> }
+                        <button type="submit" class="quiet-button">验证并删除</button>
+                    </form>
+                </details>
+            }
+        </article>
+    }
+    @if (Model.PasskeyEnabled)
+    {
+        <h2>添加新 Passkey</h2>
+        <form method="post" asp-page-handler="Add" class="passkey-form">
+            <label>当前密码 <input class="password-input" type="password" name="CurrentPassword" autocomplete="current-password" required /></label>
+            @if (Model.TotpEnabled) { <label>动态验证码 <input class="password-input" name="TotpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label> }
+            <button type="submit" class="primary-button">验证并添加 Passkey</button>
+        </form>
+    }
+</section>
+<style>
+    .passkey-card { margin:20px 0; padding:18px; border:1px solid var(--line); border-radius:7px; }
+    .passkey-card h2 { margin:0 0 8px; overflow-wrap:anywhere; font-size:17px; }
+    .passkey-card p { color:var(--muted); }
+    .passkey-form { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin:16px 0; }
+    .passkey-form label { display:grid; gap:6px; max-width:100%; }
+    .passkey-form .password-input { width:100%; min-height:40px; }
+    summary { cursor:pointer; color:var(--primary); }
+</style>

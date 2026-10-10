@@ -25,8 +25,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NexusAuth.Host", "src\NexusAuth.Host\NexusAuth.Host.csproj", "{F758C060-689F-445D-BD0A-7CE7C78B4467}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "nuget", "nuget", "{F9813FE2-2D6E-4345-B05B-79D68B1978CB}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NexusAuth.Domain.Tests", "tests\NexusAuth.Domain.Tests\NexusAuth.Domain.Tests.csproj", "{1BEB5A0F-1E3F-4291-A454-CFA3FEC30E53}"

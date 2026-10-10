@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NexusAuth.Application.Users;
+using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -58,5 +59,20 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
         var service = scope.ServiceProvider.GetRequiredService<IUserManagementService>();
 
         Assert.NotNull(service);
+    }
+
+    [Fact]
+    public void Passkey_management_resolves_without_provider_signing_services()
+    {
+        using var scope = factory.Services.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IPasskeyManagementService>());
+    }
+
+    [Fact]
+    public async Task Passkey_details_require_authentication()
+    {
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var response = await client.GetAsync($"/api/users/{Guid.NewGuid()}/passkeys");
+        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, response.StatusCode);
     }
 }

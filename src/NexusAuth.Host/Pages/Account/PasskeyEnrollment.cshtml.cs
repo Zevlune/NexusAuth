@@ -87,6 +87,9 @@ public sealed class PasskeyEnrollmentModel(
         if (!_webAuthnOptions.Enabled)
             return NotFound();
 
+        if (request.DisplayName?.Trim().Length > 128)
+            return BadRequest(new { error = "invalid_name", error_description = "Passkey 名称不能超过 128 个字符。" });
+
         var state = await webAuthnService.ConsumeRegistrationChallengeAsync(
             request.FlowToken,
             DateTimeOffset.UtcNow,

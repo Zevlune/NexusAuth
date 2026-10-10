@@ -27,6 +27,16 @@ export type ManagedUserPage = {
   pageSize: number;
 };
 
+export type WebAuthnCredentialSummary = {
+  id: string;
+  displayName: string;
+  createdAt: string;
+  lastUsedAt?: string | null;
+  disabledAt?: string | null;
+  isBackupEligible: boolean;
+  isBackedUp: boolean;
+};
+
 export type UserFilter = {
   keyword?: string;
   isActive?: boolean;
@@ -63,6 +73,14 @@ export const getUsers = (filter?: UserFilter): Promise<ManagedUserPage> => {
 
 export const getUser = (id: string): Promise<ManagedUser> => {
   return request.get<ManagedUser>(`/users/${id}`);
+};
+
+export const getUserPasskeys = (id: string): Promise<WebAuthnCredentialSummary[]> => {
+  return request.get<WebAuthnCredentialSummary[]>(`/users/${id}/passkeys`);
+};
+
+export const revokeUserPasskey = (id: string, credentialId: string, reason: string): Promise<void> => {
+  return request.post<void>(`/users/${id}/passkeys/${credentialId}/revoke`, { reason });
 };
 
 export const updateUser = (id: string, data: UpdateManagedUserRequest): Promise<ManagedUser> => {

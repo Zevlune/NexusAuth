@@ -20,6 +20,96 @@
   color: var(--app-text);
 }
 
+.user-management-detail-drawer .t-drawer__header {
+  color: var(--app-text);
+  font-weight: 650;
+}
+
+.user-management-detail-drawer .t-drawer__body {
+  color: var(--app-text);
+}
+
+.user-management-detail-state {
+  padding: 28px 12px;
+  color: var(--app-text-secondary);
+  text-align: center;
+}
+
+.user-management-detail-state--error {
+  color: var(--td-error-color, #d54941);
+}
+
+.user-management-detail-section + .user-management-detail-section {
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--app-border);
+}
+
+.user-management-detail-section h3 {
+  margin: 0 0 14px;
+  color: var(--app-text);
+  font-size: 16px;
+}
+
+.user-management-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 20px;
+  margin: 0;
+}
+
+.user-management-detail-grid > div {
+  min-width: 0;
+}
+
+.user-management-detail-grid dt {
+  margin-bottom: 4px;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+.user-management-detail-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--app-text);
+  line-height: 1.5;
+}
+
+.user-management-passkeys {
+  display: grid;
+  gap: 12px;
+}
+
+.user-management-passkey {
+  padding: 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface-subtle);
+}
+
+.user-management-passkey__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--app-text);
+}
+
+.user-management-passkey > .t-button {
+  margin-top: 12px;
+}
+
+.user-management-revoke__target {
+  margin-bottom: 14px;
+  color: var(--app-text-secondary);
+  line-height: 1.6;
+}
+
+.user-management-revoke__target strong {
+  color: var(--app-text);
+}
+
 .user-management-identity {
   display: grid;
   gap: 10px;
@@ -101,6 +191,14 @@
   }
 
   .user-management-drawer .t-drawer__body {
+    padding: 16px;
+  }
+
+  .user-management-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .user-management-detail-drawer .t-drawer__body {
     padding: 16px;
   }
 }

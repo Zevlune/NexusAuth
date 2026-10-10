@@ -12,9 +12,13 @@ try
     builder.Services.AddControllers();
     builder.Services.AddRazorPages();
     builder.Services.AddHttpContextAccessor();
+    builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(
+        options => NexusAuth.Host.Authentication.ClientIpConfiguration.Configure(options, builder.Configuration));
     builder.Services.AddApplication<AppWebModule>();
 
     var app = builder.Build();
+
+    app.UseForwardedHeaders();
 
     app.UseStaticFiles();
     app.InitializeApplication();
@@ -38,6 +42,10 @@ static void AddSingleUnderscoreEnvironmentVariables(ConfigurationManager configu
 {
     var keyMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
+        ["NEXUSAUTH_CLIENT_IP_FORWARDED_HEADERS_ENABLED"] = "ClientIp:ForwardedHeadersEnabled",
+        ["NEXUSAUTH_CLIENT_IP_KNOWN_PROXIES"] = "ClientIp:KnownProxies",
+        ["NEXUSAUTH_CLIENT_IP_KNOWN_NETWORKS"] = "ClientIp:KnownNetworks",
+        ["NEXUSAUTH_CLIENT_IP_FORWARD_LIMIT"] = "ClientIp:ForwardLimit",
         ["NEXUSAUTH_CONNECTION_STRINGS_DEFAULT"] = "ConnectionStrings:Default",
         ["NEXUSAUTH_SMTP_ENABLED"] = "Smtp:Enabled",
         ["NEXUSAUTH_SMTP_HOST"] = "Smtp:Host",
@@ -47,6 +55,8 @@ static void AddSingleUnderscoreEnvironmentVariables(ConfigurationManager configu
         ["NEXUSAUTH_SMTP_PASSWORD"] = "Smtp:Password",
         ["NEXUSAUTH_SMTP_FROM_ADDRESS"] = "Smtp:FromAddress",
         ["NEXUSAUTH_SMTP_FROM_NAME"] = "Smtp:FromName",
+        ["NEXUSAUTH_SMTP_VERIFICATION_CODE_COOLDOWN_SECONDS"] = "Smtp:VerificationCodeCooldownSeconds",
+        ["NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES"] = "Smtp:VerificationCodeLifetimeMinutes",
         ["NEXUSAUTH_JWT_ISSUER"] = "Jwt:Issuer",
         ["NEXUSAUTH_JWT_SIGNING_MODE"] = "Jwt:SigningMode",
         ["NEXUSAUTH_JWT_SIGNING_PATH"] = "Jwt:SigningPath",

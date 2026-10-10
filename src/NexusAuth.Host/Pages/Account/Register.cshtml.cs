@@ -66,6 +66,14 @@ public sealed class RegisterModel(
     public int SliderCaptchaTrackWidthPixels => sliderCaptcha.TrackWidthPixels;
 
     public string SliderCaptchaImageDataUrl { get; private set; } = string.Empty;
+    public SliderCaptchaChallengeTicket? SliderCaptchaImages { get; private set; }
+
+    public IActionResult OnGetCaptcha()
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (!SliderCaptchaEnabled) return NotFound();
+        return new JsonResult(sliderCaptchaChallengeProtector.CreateChallenge());
+    }
 
     public string? ErrorMessage { get; private set; }
 
@@ -202,6 +210,7 @@ public sealed class RegisterModel(
         }
 
         var challenge = sliderCaptchaChallengeProtector.CreateChallenge();
+        SliderCaptchaImages = challenge;
         SliderCaptchaToken = challenge.Token;
         SliderCaptchaOffset = null;
         SliderCaptchaImageDataUrl = challenge.ImageDataUrl;

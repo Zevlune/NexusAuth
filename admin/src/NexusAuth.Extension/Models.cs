@@ -105,6 +105,12 @@ public class WorkbenchAuthOptions
     public required string Authority { get; set; }
 
     /// <summary>
+    /// 中文：获取或设置服务端 HTTP 请求使用的可选 Provider 内部地址；公共 Authority 仍用于 issuer 和浏览器跳转。
+    /// English: Gets or sets the optional provider address for server-side HTTP requests; the public authority remains the issuer and browser-facing address.
+    /// </summary>
+    public string? BackchannelAuthority { get; set; }
+
+    /// <summary>
     /// 中文：获取或设置已注册的 OIDC 客户端标识。
     /// English: Gets or sets the registered OIDC client identifier.
     /// </summary>
