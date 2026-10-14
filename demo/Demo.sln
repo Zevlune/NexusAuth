@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Demo.RefreshToken", "src\Demo.RefreshToken\Demo.RefreshToken.csproj", "{E8215369-C9DB-4ABF-BFFB-4C92CFDCE110}"
 EndProject
@@ -15,6 +15,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "0.Solution Items", "0.Solut
 		schema.sql = schema.sql
 		seed.sql = seed.sql
 	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Demo.Mobile.Backend", "src\Demo.Mobile.Backend\Demo.Mobile.Backend.csproj", "{2D22F68A-B441-4349-87C5-EBC1EA0FC8CA}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -42,5 +44,9 @@ Global
 		{52EBC74E-6D5F-4A45-95D4-860201126B64}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{52EBC74E-6D5F-4A45-95D4-860201126B64}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{52EBC74E-6D5F-4A45-95D4-860201126B64}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2D22F68A-B441-4349-87C5-EBC1EA0FC8CA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2D22F68A-B441-4349-87C5-EBC1EA0FC8CA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2D22F68A-B441-4349-87C5-EBC1EA0FC8CA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2D22F68A-B441-4349-87C5-EBC1EA0FC8CA}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

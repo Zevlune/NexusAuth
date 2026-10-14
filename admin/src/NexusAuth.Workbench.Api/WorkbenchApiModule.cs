@@ -9,6 +9,7 @@ using NexusAuth.Extension;
 using NexusAuth.Persistence;
 using NexusAuth.Shared.Email;
 using NexusAuth.Application.Services.Email;
+using NexusAuth.Application.Services.Tokens;
 
 namespace NexusAuth.Workbench.Api;
 
@@ -126,15 +127,18 @@ public class WorkbenchApiModule : LuckAppModule
                 };
                 options.Events = new JwtBearerEvents
                 {
-                    OnTokenValidated = context =>
+                    OnTokenValidated = async context =>
                     {
                         var tokenUse = context.Principal?.FindFirst("token_use")?.Value;
                         if (!string.Equals(tokenUse, "access_token", StringComparison.Ordinal))
                         {
                             context.Fail("Only access_token is accepted.");
+                            return;
                         }
 
-                        return Task.CompletedTask;
+                        var validator = context.HttpContext.RequestServices.GetRequiredService<IUserTokenValidator>();
+                        if (context.Principal is null || !await validator.IsActiveAsync(context.Principal, context.HttpContext.RequestAborted))
+                            context.Fail("The token has been revoked or the user is inactive.");
                     }
                 };
             });

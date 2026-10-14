@@ -45,7 +45,7 @@ public sealed class OpenApiCredential : EntityWithIdentity<Guid>
             TargetType = normalizedTargetType,
             Scopes = [GetReadScope(normalizedTargetType)],
             IsActive = true,
-            ExpiresAt = expiresAt,
+            ExpiresAt = expiresAt?.ToUniversalTime(),
             CreatedAt = DateTimeOffset.UtcNow,
         };
     }
@@ -66,13 +66,13 @@ public sealed class OpenApiCredential : EntityWithIdentity<Guid>
             && Scopes.Contains(requiredScope, StringComparer.Ordinal);
     }
 
-    public void RecordUse(DateTimeOffset? now = null) => LastUsedAt = now ?? DateTimeOffset.UtcNow;
+    public void RecordUse(DateTimeOffset? now = null) => LastUsedAt = now?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
 
     public void Update(string name, DateTimeOffset? expiresAt, bool isActive)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         Name = name.Trim();
-        ExpiresAt = expiresAt;
+        ExpiresAt = expiresAt?.ToUniversalTime();
         SetActive(isActive);
     }
 

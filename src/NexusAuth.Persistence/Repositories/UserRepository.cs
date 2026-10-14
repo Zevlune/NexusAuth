@@ -86,6 +86,7 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
             query = query.Where(user => user.Username.Contains(value)
                 || user.Nickname.Contains(value)
                 || (user.Email != null && user.Email.Contains(value))
+                || (user.PhoneNumber != null && user.PhoneNumber.Contains(value))
                 || (user.ExternalId != null && user.ExternalId.Contains(value)));
         }
         if (isActive.HasValue)
@@ -127,6 +128,7 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(failureLimit);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(lockoutDuration, TimeSpan.Zero);
 
+        now = now.ToUniversalTime();
         var lockoutUntil = now.Add(lockoutDuration);
         // Keep the counter and lockout decision in one SQL UPDATE. This
         // prevents concurrent password attempts from overwriting each other
@@ -162,6 +164,7 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
 
     public async Task ResetLoginFailuresAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default)
     {
+        now = now.ToUniversalTime();
         await _dbContext.Set<User>()
             .Where(u => u.Id == userId)
             .ExecuteUpdateAsync(

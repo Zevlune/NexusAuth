@@ -30,9 +30,9 @@ Workbench API 从 `Auth:Authority` 读取 Provider 公开 Issuer，必须与 Dis
 
 ## 验证每次请求与续期
 
-默认模式下，管理 API 在没有 Bearer 头时使用 Workbench Cookie；携带 `Authorization: Bearer` 时交给 JWT Bearer 验证。Bearer 校验 issuer、audience、有效期，并要求 `token_use=access_token`；ID Token 不能用于调用 API。
+默认模式下，管理 API 在没有 Bearer 头时使用 Workbench Cookie；携带 `Authorization: Bearer` 时交给 JWT Bearer 验证。Bearer 校验 issuer、audience、有效期，并要求 `token_use=access_token`，随后检查数据库中的 token 黑名单、用户启用状态和 `token_epoch` 吊销版本；ID Token 不能用于调用 API。该检查同时适用于网关模式。
 
-[`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/WorkbenchCookieAuthenticationEvents.cs) 在 Cookie 验证时检查保存的 access token：距离过期超过一分钟时通过 introspection 确认令牌仍有效且用户、客户端匹配；接近过期时刷新并保存轮换后的 access/refresh token。失败则拒绝并清除本地 Cookie。刷新后本地会话续到新的 24 小时窗口；这不是 Provider 登录页“几天内免登录”的配置。多副本部署须共享 Data Protection key ring，否则其他实例无法解开 Cookie。
+[`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/WorkbenchCookieAuthenticationEvents.cs) 在 Cookie 验证时检查保存的 access token：距离过期超过一分钟时通过 introspection 确认令牌仍有效且用户、客户端匹配；接近过期时刷新，再通过 introspection 检查新 token，之后保存轮换后的 access/refresh token。失败则拒绝并清除本地 Cookie。刷新后本地会话续到新的 24 小时窗口；这不是 Provider 登录页“几天内免登录”的配置。多副本部署须共享 Data Protection key ring，否则其他实例无法解开 Cookie。
 
 登出由 `POST /api/auth/logout` 清本地 Cookie。如果配置 `SignOutProvider=true` 且有 ID Token，API 还返回 `/connect/endsession` 地址供浏览器继续跳转；Provider 会要求确认并撤销该用户的 SSO 会话和令牌。只清本地 Cookie 不等于结束 NexusAuth 的全局登录。
 

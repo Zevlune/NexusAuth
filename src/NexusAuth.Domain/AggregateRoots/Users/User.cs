@@ -126,11 +126,14 @@ public class User : AggregateRootWithIdentity<Guid>
 
     public void InvalidateTokens(DateTimeOffset now)
     {
-        // JWT iat is serialized at whole-second precision. Normalize the
-        // cutoff to the same precision so a freshly issued token is not
-        // mistaken for an older token because of database milliseconds.
-        TokenInvalidBefore = DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds());
-        UpdatedAt = now;
+        // PostgreSQL stores timestamps at microsecond precision. Keep a
+        // monotonic revision at that precision so even tokens issued and
+        // revoked within the same second can be distinguished.
+        var cutoffTicks = now.UtcTicks / 10 * 10;
+        if (TokenInvalidBefore.HasValue && cutoffTicks <= TokenInvalidBefore.Value.UtcTicks)
+            cutoffTicks = TokenInvalidBefore.Value.UtcTicks + 10;
+        TokenInvalidBefore = new DateTimeOffset(cutoffTicks, TimeSpan.Zero);
+        UpdatedAt = now.ToUniversalTime();
     }
 
     public bool IsLoginLocked(DateTimeOffset now)
@@ -159,18 +162,18 @@ public class User : AggregateRootWithIdentity<Guid>
         FailedLoginAttempts++;
         if (FailedLoginAttempts >= failureLimit)
         {
-            LockedUntil = now.Add(lockoutDuration);
+            LockedUntil = now.Add(lockoutDuration).ToUniversalTime();
             FailedLoginAttempts = 0;
         }
 
-        UpdatedAt = now;
+        UpdatedAt = now.ToUniversalTime();
     }
 
     public void RegisterSuccessfulLogin(DateTimeOffset now)
     {
         FailedLoginAttempts = 0;
         LockedUntil = null;
-        UpdatedAt = now;
+        UpdatedAt = now.ToUniversalTime();
     }
 
     public void UpdateScimProfile(

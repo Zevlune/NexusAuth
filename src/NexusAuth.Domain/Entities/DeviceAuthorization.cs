@@ -87,7 +87,7 @@ public class DeviceAuthorization : EntityWithIdentity<Guid>
 
     public void RegisterPoll(DateTimeOffset now, bool slowDown)
     {
-        LastPolledAt = now;
+        LastPolledAt = now.ToUniversalTime();
         if (slowDown)
             PollingIntervalSeconds += 5;
     }

@@ -28,7 +28,7 @@ public class TokenBlacklistEntry : EntityWithIdentity<Guid>
             Jti = jti,
             TokenType = tokenType,
             Subject = subject,
-            ExpiresAt = expiresAt,
+            ExpiresAt = expiresAt.ToUniversalTime(),
             RevokedAt = DateTimeOffset.UtcNow,
         };
     }
