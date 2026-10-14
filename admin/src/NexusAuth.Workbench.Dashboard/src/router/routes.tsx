@@ -1,15 +1,11 @@
-import { Navigate, RouteObject } from 'react-router-dom';
+import { RouteObject } from 'react-router-dom';
 
 import ErrorPage from '../components/error';
 import GlobalLoading from '../components/global-loading';
 import PublicLayout from '../layouts/layout';
 import Login from '../pages/login';
 import Dashboard from '../pages/dashboard';
-import { getCachedAuthStatus, HomeRedirect, RedirectIfAuthenticated, RequireAuth } from './auth';
-
-const AuthCallback = () => {
-  return <Navigate to={getCachedAuthStatus() ? '/dashboard' : '/login?error=session_missing'} replace />;
-};
+import { AuthCallback, HomeRedirect, RedirectIfAuthenticated, RequireAuth } from './auth-components';
 
 export const routes: RouteObject[] = [
   {

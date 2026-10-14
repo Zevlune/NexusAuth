@@ -21,30 +21,30 @@ public sealed record ManagedUserDto(
     string? PreferredLanguage, string? Locale, string? Timezone, bool IsSystemAccount, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
 public sealed record UpdateManagedUserRequest(
-    [property: Required, StringLength(100)] string Nickname,
-    [property: EmailAddress, StringLength(256)] string? Email,
-    [property: StringLength(20)] string? PhoneNumber,
-    [property: StringLength(100)] string? GivenName,
-    [property: StringLength(100)] string? FamilyName,
-    [property: StringLength(256)] string? Title,
-    [property: StringLength(100)] string? UserType,
-    [property: StringLength(35)] string? PreferredLanguage,
-    [property: StringLength(35)] string? Locale,
-    [property: StringLength(100)] string? Timezone);
+    [Required, StringLength(100)] string Nickname,
+    [EmailAddress, StringLength(256)] string? Email,
+    [StringLength(20)] string? PhoneNumber,
+    [StringLength(100)] string? GivenName,
+    [StringLength(100)] string? FamilyName,
+    [StringLength(256)] string? Title,
+    [StringLength(100)] string? UserType,
+    [StringLength(35)] string? PreferredLanguage,
+    [StringLength(35)] string? Locale,
+    [StringLength(100)] string? Timezone);
 
 public sealed record CreateManagedUserRequest(
-    [property: Required, StringLength(100)] string Username,
-    [property: Required, StringLength(72)] string Password,
-    [property: Required, StringLength(100)] string Nickname,
-    [property: EmailAddress, StringLength(256)] string? Email = null,
-    [property: StringLength(20)] string? PhoneNumber = null,
-    [property: StringLength(100)] string? GivenName = null,
-    [property: StringLength(100)] string? FamilyName = null,
-    [property: StringLength(256)] string? Title = null,
-    [property: StringLength(100)] string? UserType = null,
-    [property: StringLength(35)] string? PreferredLanguage = null,
-    [property: StringLength(35)] string? Locale = null,
-    [property: StringLength(100)] string? Timezone = null,
+    [Required, StringLength(100)] string Username,
+    [Required, StringLength(72)] string Password,
+    [Required, StringLength(100)] string Nickname,
+    [EmailAddress, StringLength(256)] string? Email = null,
+    [StringLength(20)] string? PhoneNumber = null,
+    [StringLength(100)] string? GivenName = null,
+    [StringLength(100)] string? FamilyName = null,
+    [StringLength(256)] string? Title = null,
+    [StringLength(100)] string? UserType = null,
+    [StringLength(35)] string? PreferredLanguage = null,
+    [StringLength(35)] string? Locale = null,
+    [StringLength(100)] string? Timezone = null,
     bool IsActive = true);
 
-public sealed record ResetManagedUserPasswordRequest([property: Required, StringLength(72)] string NewPassword);
+public sealed record ResetManagedUserPasswordRequest([Required, StringLength(72)] string NewPassword);

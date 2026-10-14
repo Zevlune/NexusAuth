@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
-import { Button, Checkbox, DatePicker, Dialog, Drawer, Form, Input, MessagePlugin, Space, Switch, Table, Tag, Textarea, type TableProps } from 'tdesign-react';
+import { Alert, Button, Card, Checkbox, DatePicker, Dialog, Drawer, Form, Input, MessagePlugin, Space, Switch, Table, Tag, Textarea, Typography, type FormInstanceFunctions, type TableProps } from 'tdesign-react';
 import { AddIcon, CopyIcon, DeleteIcon, EditIcon, RefreshIcon } from 'tdesign-icons-react';
 import {
   createScimCredential,
@@ -11,6 +11,7 @@ import {
   type ScimCredential,
   type ScimCredentialScope,
 } from '../../api/scim-credential';
+import PageActions from '../../components/page-actions';
 import './style.less';
 
 type CredentialFormData = {
@@ -96,7 +97,7 @@ const ScimCredentialManagementPage = () => {
   const [tokenVisible, setTokenVisible] = useState(false);
   const [createdToken, setCreatedToken] = useState('');
   const [createdCredentialName, setCreatedCredentialName] = useState('');
-  const formRef = useRef<any>(null);
+  const formRef = useRef<FormInstanceFunctions<CredentialFormData> | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -160,7 +161,7 @@ const ScimCredentialManagementPage = () => {
     }
 
     const validation = await formRef.current.validate();
-    if (validation.errors && Object.keys(validation.errors).length > 0) {
+    if (validation !== true) {
       return;
     }
     if (formData.scopes.length === 0) {
@@ -326,12 +327,14 @@ const ScimCredentialManagementPage = () => {
         onClose={handleCloseToken}
         onConfirm={handleCloseToken}
       >
-        <div className="scim-credential-token-body">
-          <div className="scim-credential-token-body__title">{createdCredentialName}</div>
-          <div className="scim-credential-token-body__hint">Token 只会展示一次，请立即复制并安全保存。关闭此窗口后无法再次查看。</div>
+        <Space className="scim-credential-token-body" direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text strong className="scim-credential-token-body__title">{createdCredentialName}</Typography.Text>
+          <Alert theme="warning" message="Token 只会展示一次，请立即复制并安全保存。关闭此窗口后无法再次查看。" />
           <Textarea readonly value={createdToken} autosize={{ minRows: 3, maxRows: 6 }} />
-          <Button theme="primary" variant="outline" icon={<CopyIcon />} onClick={() => void handleCopyToken()}>复制 Token</Button>
-        </div>
+          <div className="scim-credential-token-body__action">
+            <Button theme="primary" variant="outline" icon={<CopyIcon />} onClick={() => void handleCopyToken()}>复制 Token</Button>
+          </div>
+        </Space>
       </Dialog>
 
       <Drawer
@@ -384,17 +387,22 @@ const ScimCredentialManagementPage = () => {
           )}
         </Form>
         <div className="scim-credential-drawer__footer">
-          <Button variant="base" onClick={handleCloseForm} disabled={submitting}>取消</Button>
-          <Button theme="primary" loading={submitting} onClick={() => void handleSubmit()}>{editingCredential ? '保存' : '创建'}</Button>
+          <Space size={10}>
+            <Button variant="base" onClick={handleCloseForm} disabled={submitting}>取消</Button>
+            <Button theme="primary" loading={submitting} onClick={() => void handleSubmit()}>{editingCredential ? '保存' : '创建'}</Button>
+          </Space>
         </div>
       </Drawer>
 
-      <div className="page-filter-bar">
+      <Card className="page-filter-bar" bodyStyle={{ padding: 0 }}>
         <Space>
-          <Button theme="primary" icon={<AddIcon />} onClick={handleShowCreate}>新增凭证</Button>
           <Button variant="base" icon={<RefreshIcon />} loading={loading} onClick={() => void fetchData()}>刷新</Button>
         </Space>
-      </div>
+      </Card>
+
+      <PageActions>
+        <Button theme="primary" icon={<AddIcon />} onClick={handleShowCreate}>新增凭证</Button>
+      </PageActions>
 
       <div className="page-table-section">
         <Table

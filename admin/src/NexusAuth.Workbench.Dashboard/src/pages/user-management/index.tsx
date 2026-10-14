@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
-import { Button, Dialog, Drawer, Empty, Form, Input, MessagePlugin, Pagination, Select, Space, Switch, Table, Tag, Textarea, type TableProps } from 'tdesign-react';
-import { DeleteIcon, EditIcon, KeyIcon, PoweroffIcon, RefreshIcon, SearchIcon, UserAddIcon } from 'tdesign-icons-react';
+import { Alert, Avatar, Button, Card, Descriptions, Dialog, Drawer, Dropdown, Empty, Form, Input, Loading, MessagePlugin, Pagination, Select, Space, Statistic, Table, Tag, Textarea, Typography, type FormInstanceFunctions, type TableProps } from 'tdesign-react';
+import { BrowseIcon, DeleteIcon, EditIcon, EllipsisIcon, KeyIcon, PoweroffIcon, RefreshIcon, SearchIcon, UserAddIcon, UserIcon, UsergroupIcon } from 'tdesign-icons-react';
 import { createUser, deleteUser, getUser, getUserPasskeys, getUsers, resetUserPassword, revokeUserPasskey, revokeUserTokens, updateUser, updateUserStatus, type CreateManagedUserRequest, type ManagedUser, type ResetManagedUserPasswordRequest, type UpdateManagedUserRequest, type WebAuthnCredentialSummary } from '../../api/user';
+import PageActions from '../../components/page-actions';
+import UserForm, { type UserFormHandle, type UserProfileData, type CreateUserData } from './form';
+import { normalizePhoneNumber } from './validation';
 import './style.less';
 
 type FilterState = {
@@ -10,46 +13,16 @@ type FilterState = {
   isActive: '' | boolean;
 };
 
-type UserFormData = {
-  nickname: string;
-  email: string;
-  phoneNumber: string;
-  givenName: string;
-  familyName: string;
-  title: string;
-  userType: string;
-  preferredLanguage: string;
-  locale: string;
-  timezone: string;
-};
+type UserFormData = UserProfileData;
 
 type ResetPasswordFormData = {
   newPassword: string;
   confirmPassword: string;
 };
 
-type CreateUserFormData = UserFormData & {
-  username: string;
-  password: string;
-  confirmPassword: string;
-  isActive: boolean;
-};
+type CreateUserFormData = CreateUserData;
 
 const PASSWORD_MAX_BYTES = 72;
-
-const FIELD_MAX_LENGTH = {
-  username: 100,
-  nickname: 100,
-  email: 256,
-  phoneNumber: 20,
-  givenName: 100,
-  familyName: 100,
-  title: 256,
-  userType: 100,
-  preferredLanguage: 35,
-  locale: 35,
-  timezone: 100,
-} as const;
 
 const defaultFilters: FilterState = {
   keyword: '',
@@ -141,7 +114,7 @@ const isPasswordWithinByteLimit = (value: unknown) => (
 
 const profileFieldsFromForm = (formData: UserFormData) => ({
   email: nullableValue(formData.email),
-  phoneNumber: nullableValue(formData.phoneNumber),
+  phoneNumber: nullableValue(normalizePhoneNumber(formData.phoneNumber)),
   givenName: nullableValue(formData.givenName),
   familyName: nullableValue(formData.familyName),
   title: nullableValue(formData.title),
@@ -159,9 +132,14 @@ const UserManagementPage = () => {
   const [sourceData, setSourceData] = useState<ManagedUser[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<{ total: number; enabled: number; disabled: number } | null>(null);
+  const submissionLocks = useRef({ create: false, edit: false });
   const [tableMaxHeight, setTableMaxHeight] = useState(() => Math.max(window.innerHeight - 200, 260));
+  const [compactTable, setCompactTable] = useState(() => window.innerWidth <= 640);
+  const [stackedDetail, setStackedDetail] = useState(() => window.innerWidth <= 560);
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
-  const formRef = useRef<any>(null);
+  const formRef = useRef<UserFormHandle>(null);
   const [editorVisible, setEditorVisible] = useState(false);
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
   const [formData, setFormData] = useState<UserFormData>(defaultFormData);
@@ -169,13 +147,13 @@ const UserManagementPage = () => {
   const [createVisible, setCreateVisible] = useState(false);
   const [createFormData, setCreateFormData] = useState<CreateUserFormData>(defaultCreateFormData);
   const [creating, setCreating] = useState(false);
-  const createFormRef = useRef<any>(null);
+  const createFormRef = useRef<UserFormHandle>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [resetPasswordVisible, setResetPasswordVisible] = useState(false);
   const [resetPasswordTarget, setResetPasswordTarget] = useState<ManagedUser | null>(null);
   const [resetPasswordFormData, setResetPasswordFormData] = useState<ResetPasswordFormData>(defaultResetPasswordFormData);
   const [resetPasswordSubmitting, setResetPasswordSubmitting] = useState(false);
-  const resetPasswordFormRef = useRef<any>(null);
+  const resetPasswordFormRef = useRef<FormInstanceFunctions>(null);
   const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [revokeTokensTarget, setRevokeTokensTarget] = useState<ManagedUser | null>(null);
@@ -193,6 +171,7 @@ const UserManagementPage = () => {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const filter: { keyword?: string; isActive?: boolean; page: number; pageSize: number } = {
         page: current,
         pageSize,
@@ -207,9 +186,12 @@ const UserManagementPage = () => {
       const result = await getUsers(filter);
       setSourceData(result.items);
       setTotal(result.total);
+      void Promise.all([getUsers({ page: 1, pageSize: 1 }), getUsers({ isActive: true, page: 1, pageSize: 1 }), getUsers({ isActive: false, page: 1, pageSize: 1 })])
+        .then(([all, enabled, disabled]) => setSummary({ total: all.total, enabled: enabled.total, disabled: disabled.total }))
+        .catch(() => setSummary(null));
     } catch (error) {
       console.error('Failed to fetch users:', error);
-      MessagePlugin.error(getRequestErrorMessage(error, '加载用户失败'));
+      setLoadError(getRequestErrorMessage(error, '加载用户失败'));
     } finally {
       setLoading(false);
     }
@@ -228,6 +210,8 @@ const UserManagementPage = () => {
 
   useEffect(() => {
     const updateTableMaxHeight = () => {
+      setCompactTable((tableWrapRef.current?.clientWidth ?? window.innerWidth) < 720);
+      setStackedDetail(window.innerWidth <= 560);
       const baseHeight = Math.max(window.innerHeight - 200, 260);
       if (!tableWrapRef.current) {
         setTableMaxHeight(baseHeight);
@@ -240,10 +224,13 @@ const UserManagementPage = () => {
 
     updateTableMaxHeight();
     const frame = window.requestAnimationFrame(updateTableMaxHeight);
+    const resizeObserver = new ResizeObserver(updateTableMaxHeight);
+    if (tableWrapRef.current) resizeObserver.observe(tableWrapRef.current);
     window.addEventListener('resize', updateTableMaxHeight);
 
     return () => {
       window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
       window.removeEventListener('resize', updateTableMaxHeight);
     };
   }, []);
@@ -273,29 +260,32 @@ const UserManagementPage = () => {
   };
 
   const handleCreate = async () => {
-    if (!createFormRef.current) {
+    if (!createFormRef.current || submissionLocks.current.create) {
       return;
     }
 
-    const validation = await createFormRef.current.validate();
-    if (validation !== true) {
-      return;
-    }
-
-    if (createFormData.password !== createFormData.confirmPassword) {
-      MessagePlugin.warning('两次输入的密码不一致');
-      return;
-    }
-
-    const request: CreateManagedUserRequest = {
-      username: createFormData.username.trim(),
-      password: createFormData.password,
-      nickname: createFormData.nickname.trim(),
-      ...profileFieldsFromForm(createFormData),
-      isActive: createFormData.isActive,
-    };
-
+    submissionLocks.current.create = true;
     try {
+      const validation = await createFormRef.current.validate();
+      if (validation !== true) {
+        submissionLocks.current.create = false;
+        return;
+      }
+
+      if (createFormData.password !== createFormData.confirmPassword) {
+        submissionLocks.current.create = false;
+        MessagePlugin.warning('两次输入的密码不一致');
+        return;
+      }
+
+      const request: CreateManagedUserRequest = {
+        username: createFormData.username.trim(),
+        password: createFormData.password,
+        nickname: createFormData.nickname.trim(),
+        ...profileFieldsFromForm(createFormData),
+        isActive: createFormData.isActive,
+      };
+
       setCreating(true);
       await createUser(request);
       setCreateVisible(false);
@@ -304,9 +294,10 @@ const UserManagementPage = () => {
       MessagePlugin.success('用户已创建');
     } catch (error) {
       // Do not log the Axios error because its request config may contain the password.
-      MessagePlugin.error(getRequestErrorMessage(error, '创建用户失败'));
+      createFormRef.current?.setServerError(getRequestErrorMessage(error, '创建用户失败'));
     } finally {
       setCreating(false);
+      submissionLocks.current.create = false;
     }
   };
 
@@ -326,21 +317,23 @@ const UserManagementPage = () => {
   };
 
   const handleSubmit = async () => {
-    if (!editingUser || !formRef.current) {
+    if (!editingUser || !formRef.current || submissionLocks.current.edit) {
       return;
     }
 
-    const validation = await formRef.current.validate();
-    if (validation !== true) {
-      return;
-    }
-
-    const request: UpdateManagedUserRequest = {
-      nickname: formData.nickname.trim(),
-      ...profileFieldsFromForm(formData),
-    };
-
+    submissionLocks.current.edit = true;
     try {
+      const validation = await formRef.current.validate();
+      if (validation !== true) {
+        submissionLocks.current.edit = false;
+        return;
+      }
+
+      const request: UpdateManagedUserRequest = {
+        nickname: formData.nickname.trim(),
+        ...profileFieldsFromForm(formData),
+      };
+
       setSubmitting(true);
       await updateUser(editingUser.id, request);
       setEditorVisible(false);
@@ -350,9 +343,10 @@ const UserManagementPage = () => {
       MessagePlugin.success('用户资料已更新');
     } catch (error) {
       console.error('Failed to update user:', error);
-      MessagePlugin.error(getRequestErrorMessage(error, '更新用户资料失败'));
+      formRef.current?.setServerError(getRequestErrorMessage(error, '更新用户资料失败'));
     } finally {
       setSubmitting(false);
+      submissionLocks.current.edit = false;
     }
   };
 
@@ -530,282 +524,75 @@ const UserManagementPage = () => {
     }
   };
 
-  const columns: TableProps<ManagedUser>['columns'] = useMemo(
-    () => [
-      { colKey: 'username', title: '用户名', width: 150, ellipsis: true },
-      { colKey: 'nickname', title: '昵称', width: 140, ellipsis: true },
-      {
-        colKey: 'name',
-        title: '姓名',
-        width: 140,
-        ellipsis: true,
-        cell: ({ row }) => [row.familyName, row.givenName].filter(Boolean).join(' ') || '-',
-      },
-      { colKey: 'email', title: '邮箱', minWidth: 210, ellipsis: true, cell: ({ row }) => row.email || '-' },
-      { colKey: 'phoneNumber', title: '手机号', width: 150, ellipsis: true, cell: ({ row }) => row.phoneNumber || '-' },
-      { colKey: 'title', title: '职务', width: 140, ellipsis: true, cell: ({ row }) => row.title || '-' },
-      { colKey: 'userType', title: '用户类型', width: 130, ellipsis: true, cell: ({ row }) => row.userType || '-' },
-      {
-        colKey: 'isActive',
-        title: '状态',
-        width: 115,
-        cell: ({ row }) => (
-          <Switch
-            value={row.isActive}
-            loading={togglingId === row.id}
-            disabled={row.isSystemAccount}
-            label={({ value }) => value ? '启用' : '禁用'}
-            onChange={() => void handleToggleStatus(row)}
-          />
-        ),
-      },
-      {
-        colKey: 'source',
-        title: '来源',
-        width: 100,
-        cell: ({ row }) => row.externalId
-          ? <Tag theme="primary" variant="outline">SCIM</Tag>
-          : <Tag theme="default" variant="outline">本地</Tag>,
-      },
-      { colKey: 'updatedAt', title: '更新时间', width: 180, cell: ({ row }) => formatDateTime(row.updatedAt) },
-      {
-        colKey: 'operation',
-        title: '操作',
-        width: 190,
-        fixed: 'right',
-        cell: ({ row }) => (
-          <Space direction="vertical" size={4} style={{ alignItems: 'flex-start' }}>
-            <Button variant="text" theme="primary" onClick={() => void handleShowDetails(row)}>
-              用户详情
-            </Button>
-            {row.isSystemAccount ? (
-              <Tag theme="default" variant="light-outline">系统账号受保护</Tag>
-            ) : (
-              <>
-                <Button variant="text" theme="primary" icon={<EditIcon />} onClick={() => handleEdit(row)}>
-                  编辑
-                </Button>
-                <Button variant="text" theme="danger" icon={<KeyIcon />} onClick={() => handleShowResetPassword(row)}>
-                  重置密码
-                </Button>
-                <Button variant="text" theme="warning" icon={<PoweroffIcon />} onClick={() => handleShowRevokeTokens(row)}>
-                  撤销全部令牌
-                </Button>
-                <Button variant="text" theme="danger" icon={<DeleteIcon />} onClick={() => handleShowDelete(row)}>
-                  删除用户
-                </Button>
-              </>
-            )}
-          </Space>
-        ),
-      },
-    ],
-    [fetchData, togglingId],
-  );
+  const columns: TableProps<ManagedUser>['columns'] = [
+    {
+      colKey: 'username', title: '用户 / 用户名', width: 205,
+      cell: ({ row }) => <div className="user-management-user-cell">
+        <Avatar className="user-management-avatar">{(row.nickname || row.username).slice(0, 1).toUpperCase()}</Avatar>
+        <div><strong title={row.nickname}>{row.nickname || row.username}</strong><span title={row.username}>{row.username}</span></div>
+      </div>,
+    },
+    {
+      colKey: 'contact', title: '联系信息', minWidth: 240,
+      cell: ({ row }) => <div className="user-management-contact-cell"><span title={row.email || undefined}>{row.email || '未填写邮箱'}</span><small>{row.phoneNumber || '未填写手机号'}</small></div>,
+    },
+    { colKey: 'userType', title: '用户类型', width: 110, ellipsis: true, cell: ({ row }) => row.userType || '—' },
+    { colKey: 'isActive', title: '状态', width: 108,
+      cell: ({ row }) => <Tag theme={row.isActive ? 'success' : 'default'} variant="light">{row.isActive ? '已启用' : '已停用'}</Tag> },
+    { colKey: 'updatedAt', title: '更新时间', width: 174, cell: ({ row }) => formatDateTime(row.updatedAt) },
+    { colKey: 'createdAt', title: '创建时间', width: 174, cell: ({ row }) => formatDateTime(row.createdAt) },
+    {
+      colKey: 'operation', title: '操作', width: 280, fixed: compactTable ? undefined : 'right',
+      cell: ({ row }) => <div className="user-management-row-actions">
+        <Button variant="text" theme="primary" icon={<BrowseIcon />} onClick={() => void handleShowDetails(row)}>查看</Button>
+        {row.isSystemAccount ? <Tag theme="default" variant="light-outline">系统账号受保护</Tag> : <>
+          <Button variant="text" theme="primary" icon={<EditIcon />} onClick={() => handleEdit(row)}>编辑</Button>
+          <Button variant="text" theme="danger" icon={<DeleteIcon />} onClick={() => handleShowDelete(row)}>删除</Button>
+          <Dropdown trigger="click" placement="bottom-right" minColumnWidth={150} options={[
+            { content: row.isActive ? '停用账号' : '启用账号', value: 'status', prefixIcon: <PoweroffIcon />, disabled: togglingId === row.id, onClick: () => void handleToggleStatus(row) },
+            { content: '重置密码', value: 'password', prefixIcon: <KeyIcon />, onClick: () => handleShowResetPassword(row) },
+            { content: '撤销全部令牌', value: 'tokens', theme: 'error', prefixIcon: <PoweroffIcon />, onClick: () => handleShowRevokeTokens(row) },
+          ]}><Button variant="text" theme="default" aria-label={`更多操作：${row.username}`} icon={<EllipsisIcon />} /></Dropdown>
+        </>}
+      </div>,
+    },
+  ];
 
   return (
     <div className="user-management-page">
+      <PageActions><Button theme="primary" icon={<UserAddIcon />} onClick={handleShowCreate}>新增用户</Button></PageActions>
+      <header className="user-management-page__header"><Typography.Title level="h1">用户管理</Typography.Title><Typography.Paragraph className="user-management-page__description">维护组织成员、登录权限与联系信息</Typography.Paragraph></header>
+      <div className="user-management-stats" aria-label="用户统计">
+        {[
+          { label: '用户总数', value: summary?.total, icon: <UsergroupIcon />, tone: 'primary' },
+          { label: '已启用', value: summary?.enabled, icon: <UserIcon />, tone: 'success' },
+          { label: '已停用', value: summary?.disabled, icon: <PoweroffIcon />, tone: 'neutral' },
+          { label: '本页 SCIM 用户', value: sourceData.filter((user) => user.externalId).length, icon: <RefreshIcon />, tone: 'warning' },
+        ].map((stat) => <Card key={stat.label} className={`user-management-stat-card user-management-stat--${stat.tone}`}><div className="user-management-stat"><div className="user-management-stat__icon">{stat.icon}</div><Statistic title={stat.label} value={stat.value ?? 0} loading={stat.value == null} /></div></Card>)}
+      </div>
       <Drawer
         visible={createVisible}
         className="user-management-drawer user-management-create-drawer"
-        header="新增用户"
+        header={<div className="user-management-drawer__heading"><strong>新增用户</strong><p>填写账号信息，创建后即可用于登录</p></div>}
         onClose={handleCloseCreate}
-        footer={false}
-        size="min(680px, 100vw)"
+        footer={<div className="user-management-drawer__footer"><span>* 为必填项</span><Space>
+          <Button variant="outline" onClick={handleCloseCreate} disabled={creating}>取消</Button>
+          <Button theme="primary" loading={creating} onClick={() => void handleCreate()}>创建用户</Button>
+        </Space></div>}
+        size="min(660px, 100vw)"
         destroyOnClose
       >
-        <Form
-          className="user-management-form"
-          ref={createFormRef}
-          layout="vertical"
-          labelAlign="top"
-          colon
-          initialData={createFormData}
-        >
-          <div className="user-management-form__grid">
-            <Form.FormItem
-              label="用户名"
-              name="username"
-              rules={[
-                { required: true, message: '请输入用户名', type: 'error' },
-                { whitespace: true, message: '用户名不能只包含空格', type: 'error' },
-              ]}
-            >
-              <Input
-                value={createFormData.username}
-                maxlength={FIELD_MAX_LENGTH.username}
-                autocomplete="username"
-                placeholder="请输入用户名"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, username: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem
-              label="昵称"
-              name="nickname"
-              rules={[
-                { required: true, message: '请输入昵称', type: 'error' },
-                { whitespace: true, message: '昵称不能只包含空格', type: 'error' },
-              ]}
-            >
-              <Input
-                value={createFormData.nickname}
-                maxlength={FIELD_MAX_LENGTH.nickname}
-                placeholder="请输入昵称"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, nickname: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem
-              label="密码"
-              name="password"
-              rules={[
-                { required: true, message: '请输入密码', type: 'error' },
-                { whitespace: true, message: '密码不能只包含空格', type: 'error' },
-                {
-                  validator: isPasswordWithinByteLimit,
-                  message: `密码不能超过 ${PASSWORD_MAX_BYTES} 个 UTF-8 字节`,
-                  type: 'error',
-                },
-              ]}
-              help={`密码最多 ${PASSWORD_MAX_BYTES} 字节，中文字符通常占 3 字节`}
-            >
-              <Input
-                type="password"
-                autocomplete="new-password"
-                value={createFormData.password}
-                placeholder="请输入密码"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, password: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem
-              label="确认密码"
-              name="confirmPassword"
-              rules={[
-                { required: true, message: '请再次输入密码', type: 'error' },
-                { whitespace: true, message: '确认密码不能只包含空格', type: 'error' },
-                {
-                  validator: (value) => value === createFormData.password,
-                  message: '两次输入的密码不一致',
-                  type: 'error',
-                },
-                {
-                  validator: isPasswordWithinByteLimit,
-                  message: `密码不能超过 ${PASSWORD_MAX_BYTES} 个 UTF-8 字节`,
-                  type: 'error',
-                },
-              ]}
-            >
-              <Input
-                type="password"
-                autocomplete="new-password"
-                value={createFormData.confirmPassword}
-                placeholder="请再次输入密码"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, confirmPassword: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="邮箱" name="email">
-              <Input
-                value={createFormData.email}
-                maxlength={FIELD_MAX_LENGTH.email}
-                clearable
-                type="text"
-                placeholder="请输入邮箱"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, email: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="手机号" name="phoneNumber">
-              <Input
-                value={createFormData.phoneNumber}
-                maxlength={FIELD_MAX_LENGTH.phoneNumber}
-                clearable
-                type="tel"
-                placeholder="请输入手机号"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, phoneNumber: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="名 (Given name)" name="givenName">
-              <Input
-                value={createFormData.givenName}
-                maxlength={FIELD_MAX_LENGTH.givenName}
-                clearable
-                placeholder="请输入名"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, givenName: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="姓 (Family name)" name="familyName">
-              <Input
-                value={createFormData.familyName}
-                maxlength={FIELD_MAX_LENGTH.familyName}
-                clearable
-                placeholder="请输入姓"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, familyName: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="职务 (Title)" name="title">
-              <Input
-                value={createFormData.title}
-                maxlength={FIELD_MAX_LENGTH.title}
-                clearable
-                placeholder="请输入职务"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, title: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="用户类型 (User type)" name="userType">
-              <Input
-                value={createFormData.userType}
-                maxlength={FIELD_MAX_LENGTH.userType}
-                clearable
-                placeholder="请输入用户类型"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, userType: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="首选语言" name="preferredLanguage">
-              <Input
-                value={createFormData.preferredLanguage}
-                maxlength={FIELD_MAX_LENGTH.preferredLanguage}
-                clearable
-                placeholder="如 zh-CN"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, preferredLanguage: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="Locale" name="locale">
-              <Input
-                value={createFormData.locale}
-                maxlength={FIELD_MAX_LENGTH.locale}
-                clearable
-                placeholder="如 zh-CN"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, locale: value }))}
-              />
-            </Form.FormItem>
-            <Form.FormItem label="时区" name="timezone">
-              <Input
-                value={createFormData.timezone}
-                maxlength={FIELD_MAX_LENGTH.timezone}
-                clearable
-                placeholder="如 Asia/Shanghai"
-                onChange={(value) => setCreateFormData((previous) => ({ ...previous, timezone: value }))}
-              />
-            </Form.FormItem>
-          </div>
-          <Form.FormItem label="账号状态" name="isActive">
-            <Switch
-              value={createFormData.isActive}
-              label={({ value }) => value ? '启用' : '禁用'}
-              onChange={(value) => setCreateFormData((previous) => ({ ...previous, isActive: value }))}
-            />
-          </Form.FormItem>
-        </Form>
-        <div className="user-management-drawer__footer">
-          <Button variant="base" onClick={handleCloseCreate} disabled={creating}>取消</Button>
-          <Button theme="primary" loading={creating} onClick={() => void handleCreate()}>创建</Button>
-        </div>
+        <UserForm ref={createFormRef} mode="create" value={createFormData} disabled={creating}
+          onChange={(field, value) => setCreateFormData((previous) => ({ ...previous, [field]: value }))}
+          onSubmit={() => void handleCreate()} />
       </Drawer>
 
       <Dialog
         visible={Boolean(deleteTarget)}
-        header="删除用户"
+        header="删除这个用户？"
         width="min(480px, calc(100vw - 32px))"
         theme="danger"
-        confirmBtn="永久删除"
+        confirmBtn="确认删除"
         cancelBtn="取消"
         confirmLoading={deleting}
         destroyOnClose
@@ -817,7 +604,9 @@ const UserManagementPage = () => {
         onConfirm={() => void handleDelete()}
       >
         <div className="user-management-confirm-text">
-          将永久删除用户 <strong>{deleteTarget?.username}</strong>。该用户及其凭据将被永久删除且无法恢复，现有登录凭据会立即失效。
+          <p>将永久删除该用户及其关联凭据。此操作无法撤销。</p>
+          <div className="user-management-delete-identity"><Avatar className="user-management-avatar">{(deleteTarget?.nickname || deleteTarget?.username || 'U').slice(0, 1)}</Avatar><div><strong>{deleteTarget?.nickname || deleteTarget?.username}</strong><span>{deleteTarget?.username} · {deleteTarget?.email || '未填写邮箱'}</span></div></div>
+          <p>只想暂停访问？可使用用户菜单中的“停用账号”。</p>
         </div>
       </Dialog>
 
@@ -954,52 +743,54 @@ const UserManagementPage = () => {
         className="user-management-detail-drawer"
         header="用户详情"
         onClose={handleCloseDetails}
-        footer={false}
-        size="min(760px, 100vw)"
+        footer={detailUser && !detailLoading && !detailError ? <div className="user-management-drawer__footer"><span>{detailUser.isSystemAccount ? '系统账号受保护' : '账号与安全资料'}</span>{!detailUser.isSystemAccount && <Button theme="primary" icon={<EditIcon />} onClick={() => { const user = detailUser; handleCloseDetails(); handleEdit(user); }}>编辑资料</Button>}</div> : false}
+        size="min(660px, 100vw)"
         destroyOnClose
       >
         {detailLoading ? (
-          <div className="user-management-detail-state">正在加载用户详情…</div>
+          <div className="user-management-detail-state"><Loading text="正在加载用户详情…" /></div>
         ) : detailError ? (
-          <div className="user-management-detail-state user-management-detail-state--error" role="alert">{detailError}</div>
+          <Alert className="user-management-detail-error" theme="error" title="加载用户详情失败" message={detailError} />
         ) : detailUser ? (
           <>
+            <div className="user-management-detail-hero"><Avatar className="user-management-avatar" size="large">{(detailUser.nickname || detailUser.username).slice(0, 1)}</Avatar><div><strong>{detailUser.nickname || detailUser.username}</strong><span>{detailUser.username}</span></div><Tag theme={detailUser.isActive ? 'success' : 'default'} variant="light">{detailUser.isActive ? '已启用' : '已停用'}</Tag></div>
             <section className="user-management-detail-section" aria-labelledby="user-detail-profile-title">
-              <h3 id="user-detail-profile-title">基本资料</h3>
-              <dl className="user-management-detail-grid">
-                <div><dt>用户名</dt><dd>{detailUser.username}</dd></div>
-                <div><dt>昵称</dt><dd>{detailUser.nickname || '-'}</dd></div>
-                <div><dt>邮箱</dt><dd>{detailUser.email || '-'}</dd></div>
-                <div><dt>手机号</dt><dd>{detailUser.phoneNumber || '-'}</dd></div>
-                <div><dt>姓名</dt><dd>{[detailUser.familyName, detailUser.givenName].filter(Boolean).join(' ') || '-'}</dd></div>
-                <div><dt>职务</dt><dd>{detailUser.title || '-'}</dd></div>
-                <div><dt>用户类型</dt><dd>{detailUser.userType || '-'}</dd></div>
-                <div><dt>状态</dt><dd><Tag theme={detailUser.isActive ? 'success' : 'default'}>{detailUser.isActive ? '启用' : '禁用'}</Tag></dd></div>
-                <div><dt>创建时间</dt><dd>{formatDateTime(detailUser.createdAt)}</dd></div>
-                <div><dt>更新时间</dt><dd>{formatDateTime(detailUser.updatedAt)}</dd></div>
-                <div><dt>SCIM External ID</dt><dd>{detailUser.externalId || '-'}</dd></div>
-                <div><dt>时区</dt><dd>{detailUser.timezone || '-'}</dd></div>
-              </dl>
+              <Typography.Title level="h3"><span id="user-detail-profile-title">基本资料</span></Typography.Title>
+              <Descriptions className="user-management-detail-descriptions" column={stackedDetail ? 1 : 2} itemLayout="vertical">
+                <Descriptions.DescriptionsItem label="用户名" content={detailUser.username} />
+                <Descriptions.DescriptionsItem label="昵称" content={detailUser.nickname || '-'} />
+                <Descriptions.DescriptionsItem label="邮箱" content={detailUser.email || '-'} />
+                <Descriptions.DescriptionsItem label="手机号" content={detailUser.phoneNumber || '-'} />
+                <Descriptions.DescriptionsItem label="姓名" content={[detailUser.familyName, detailUser.givenName].filter(Boolean).join(' ') || '-'} />
+                <Descriptions.DescriptionsItem label="职务" content={detailUser.title || '-'} />
+                <Descriptions.DescriptionsItem label="用户类型" content={detailUser.userType || '-'} />
+                <Descriptions.DescriptionsItem label="状态" content={<Tag theme={detailUser.isActive ? 'success' : 'default'}>{detailUser.isActive ? '启用' : '禁用'}</Tag>} />
+                <Descriptions.DescriptionsItem label="创建时间" content={formatDateTime(detailUser.createdAt)} />
+                <Descriptions.DescriptionsItem label="更新时间" content={formatDateTime(detailUser.updatedAt)} />
+                <Descriptions.DescriptionsItem label="SCIM External ID" content={detailUser.externalId || '-'} />
+                <Descriptions.DescriptionsItem label="首选语言 / 地区" content={`${detailUser.preferredLanguage || '—'} / ${detailUser.locale || '—'}`} />
+                <Descriptions.DescriptionsItem label="时区" content={detailUser.timezone || '-'} />
+              </Descriptions>
             </section>
             <section className="user-management-detail-section" aria-labelledby="user-detail-passkeys-title">
-              <h3 id="user-detail-passkeys-title">Passkey 凭据</h3>
+              <Typography.Title level="h3"><span id="user-detail-passkeys-title">Passkey 凭据</span></Typography.Title>
               {passkeys.length === 0 ? <Empty description="该用户暂无 Passkey 凭据" /> : (
                 <div className="user-management-passkeys">
                   {passkeys.map((credential) => (
-                    <article className="user-management-passkey" key={credential.id}>
+                    <Card className="user-management-passkey" key={credential.id} bodyStyle={{ padding: 14 }}>
                       <div className="user-management-passkey__heading">
                         <strong>{credential.displayName || 'Passkey'}</strong>
                         {credential.disabledAt
                           ? <Tag theme="default" variant="outline">已撤销</Tag>
                           : <Tag theme="success" variant="outline">启用</Tag>}
                       </div>
-                      <dl className="user-management-detail-grid user-management-detail-grid--compact">
-                        <div><dt>创建时间</dt><dd>{formatDateTime(credential.createdAt)}</dd></div>
-                        <div><dt>最近使用</dt><dd>{formatDateTime(credential.lastUsedAt)}</dd></div>
-                        <div><dt>撤销时间</dt><dd>{formatDateTime(credential.disabledAt)}</dd></div>
-                        <div><dt>备份资格</dt><dd>{credential.isBackupEligible ? '支持' : '不支持'}</dd></div>
-                        <div><dt>已备份</dt><dd>{credential.isBackedUp ? '是' : '否'}</dd></div>
-                      </dl>
+                      <Descriptions className="user-management-detail-descriptions user-management-detail-descriptions--compact" column={stackedDetail ? 1 : 2} itemLayout="vertical" size="small">
+                        <Descriptions.DescriptionsItem label="创建时间" content={formatDateTime(credential.createdAt)} />
+                        <Descriptions.DescriptionsItem label="最近使用" content={formatDateTime(credential.lastUsedAt)} />
+                        <Descriptions.DescriptionsItem label="撤销时间" content={formatDateTime(credential.disabledAt)} />
+                        <Descriptions.DescriptionsItem label="备份资格" content={credential.isBackupEligible ? '支持' : '不支持'} />
+                        <Descriptions.DescriptionsItem label="已备份" content={credential.isBackedUp ? '是' : '否'} />
+                      </Descriptions>
                       {!credential.disabledAt && (
                         <Button
                           size="small"
@@ -1013,7 +804,7 @@ const UserManagementPage = () => {
                           撤销凭据
                         </Button>
                       )}
-                    </article>
+                    </Card>
                   ))}
                 </div>
               )}
@@ -1025,10 +816,13 @@ const UserManagementPage = () => {
       <Drawer
         visible={editorVisible}
         className="user-management-drawer"
-        header="编辑用户资料"
+        header={<div className="user-management-drawer__heading"><strong>编辑用户资料</strong><p>{editingUser?.nickname} · {editingUser?.username}</p></div>}
         onClose={handleCloseEditor}
-        footer={false}
-        size="min(620px, 100vw)"
+        footer={<div className="user-management-drawer__footer"><span>修改将立即生效</span><Space>
+          <Button variant="outline" onClick={handleCloseEditor} disabled={submitting}>取消</Button>
+          <Button theme="primary" loading={submitting} onClick={() => void handleSubmit()}>保存修改</Button>
+        </Space></div>}
+        size="min(660px, 100vw)"
         destroyOnClose
       >
         {editingUser && (
@@ -1043,69 +837,14 @@ const UserManagementPage = () => {
                 <code>{editingUser.externalId || '-'}</code>
               </div>
             </div>
-            <Form
-              className="user-management-form"
-              key={editingUser.id}
-              ref={formRef}
-              layout="vertical"
-              labelAlign="top"
-              colon
-              initialData={formData}
-            >
-              <div className="user-management-form__grid">
-                <Form.FormItem
-                  label="昵称"
-                  name="nickname"
-                  rules={[
-                    { required: true, message: '请输入昵称', type: 'error' },
-                    { whitespace: true, message: '昵称不能只包含空格', type: 'error' },
-                  ]}
-                >
-                  <Input
-                    value={formData.nickname}
-                    maxlength={FIELD_MAX_LENGTH.nickname}
-                    placeholder="请输入昵称"
-                    onChange={(value) => setFormData((prev) => ({ ...prev, nickname: value }))}
-                  />
-                </Form.FormItem>
-                <Form.FormItem label="邮箱" name="email">
-                  <Input value={formData.email} maxlength={FIELD_MAX_LENGTH.email} clearable type="text" placeholder="请输入邮箱" onChange={(value) => setFormData((prev) => ({ ...prev, email: value }))} />
-                </Form.FormItem>
-                <Form.FormItem label="手机号" name="phoneNumber">
-                  <Input value={formData.phoneNumber} maxlength={FIELD_MAX_LENGTH.phoneNumber} clearable type="tel" placeholder="请输入手机号" onChange={(value) => setFormData((prev) => ({ ...prev, phoneNumber: value }))} />
-                </Form.FormItem>
-                <Form.FormItem label="名 (Given name)" name="givenName">
-                  <Input value={formData.givenName} maxlength={FIELD_MAX_LENGTH.givenName} clearable placeholder="请输入名" onChange={(value) => setFormData((prev) => ({ ...prev, givenName: value }))} />
-                </Form.FormItem>
-                <Form.FormItem label="姓 (Family name)" name="familyName">
-                  <Input value={formData.familyName} maxlength={FIELD_MAX_LENGTH.familyName} clearable placeholder="请输入姓" onChange={(value) => setFormData((prev) => ({ ...prev, familyName: value }))} />
-                </Form.FormItem>
-                <Form.FormItem label="职务 (Title)" name="title">
-                  <Input value={formData.title} maxlength={FIELD_MAX_LENGTH.title} clearable placeholder="请输入职务" onChange={(value) => setFormData((prev) => ({ ...prev, title: value }))} />
-                </Form.FormItem>
-                <Form.FormItem label="用户类型 (User type)" name="userType">
-                  <Input value={formData.userType} maxlength={FIELD_MAX_LENGTH.userType} clearable placeholder="请输入用户类型" onChange={(value) => setFormData((prev) => ({ ...prev, userType: value }))} />
-                </Form.FormItem>
-                <Form.FormItem label="首选语言" name="preferredLanguage">
-                  <Input value={formData.preferredLanguage} maxlength={FIELD_MAX_LENGTH.preferredLanguage} clearable placeholder="如 zh-CN" onChange={(value) => setFormData((prev) => ({ ...prev, preferredLanguage: value }))} />
-                </Form.FormItem>
-                <Form.FormItem label="Locale" name="locale">
-                  <Input value={formData.locale} maxlength={FIELD_MAX_LENGTH.locale} clearable placeholder="如 zh-CN" onChange={(value) => setFormData((prev) => ({ ...prev, locale: value }))} />
-                </Form.FormItem>
-                <Form.FormItem label="时区" name="timezone">
-                  <Input value={formData.timezone} maxlength={FIELD_MAX_LENGTH.timezone} clearable placeholder="如 Asia/Shanghai" onChange={(value) => setFormData((prev) => ({ ...prev, timezone: value }))} />
-                </Form.FormItem>
-              </div>
-            </Form>
-            <div className="user-management-drawer__footer">
-              <Button variant="base" onClick={handleCloseEditor} disabled={submitting}>取消</Button>
-              <Button theme="primary" loading={submitting} onClick={() => void handleSubmit()}>保存</Button>
-            </div>
+            <UserForm key={editingUser.id} ref={formRef} mode="edit" value={formData} disabled={submitting}
+              onChange={(field, value) => setFormData((previous) => ({ ...previous, [field]: value }))}
+              onSubmit={() => void handleSubmit()} />
           </>
         )}
       </Drawer>
 
-      <div className="page-filter-bar">
+      <Card className="page-filter-bar" bodyStyle={{ padding: 0 }}>
         <Form layout="inline" className="user-management-filter-form">
           <Form.FormItem label="关键词">
             <Input
@@ -1113,8 +852,9 @@ const UserManagementPage = () => {
               value={filters.keyword}
               prefixIcon={<SearchIcon />}
               placeholder="用户名、昵称、邮箱或手机号"
-              style={{ width: 280 }}
+              style={{ width: 360 }}
               onChange={(value) => setFilters((prev) => ({ ...prev, keyword: value }))}
+              onEnter={handleQuery}
             />
           </Form.FormItem>
           <Form.FormItem label="状态">
@@ -1129,13 +869,20 @@ const UserManagementPage = () => {
             <Space>
               <Button theme="primary" icon={<SearchIcon />} onClick={handleQuery}>查询</Button>
               <Button variant="base" icon={<RefreshIcon />} onClick={handleReset}>重置</Button>
-              <Button theme="primary" variant="outline" icon={<UserAddIcon />} onClick={handleShowCreate}>新增用户</Button>
             </Space>
           </Form.FormItem>
         </Form>
-      </div>
+      </Card>
 
-      <div className="page-table-section">
+      <Card className="page-table-section user-management-table-section" bodyStyle={{ padding: 0 }}>
+        {loadError && (
+          <Alert
+            className="user-management-load-error"
+            theme="error"
+            message={loadError}
+            operation={<Button variant="text" theme="primary" onClick={() => void fetchData()}>重新加载</Button>}
+          />
+        )}
         <div ref={tableWrapRef}>
           <Table
             rowKey="id"
@@ -1144,12 +891,13 @@ const UserManagementPage = () => {
             verticalAlign="middle"
             maxHeight={tableMaxHeight}
             tableLayout="fixed"
+            empty={<Empty description={appliedFilters.keyword || appliedFilters.isActive !== '' ? '没有找到匹配的用户，请调整关键词或重置筛选' : '还没有用户，点击右上方“新增用户”开始管理组织成员'} />}
             resizable
             loading={loading}
           />
         </div>
 
-        <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+        <div className="user-management-pagination"><span>共 {total} 个用户</span>
           <Pagination
             total={total}
             current={current}
@@ -1164,7 +912,7 @@ const UserManagementPage = () => {
             }}
           />
         </div>
-      </div>
+      </Card>
     </div>
   );
 };

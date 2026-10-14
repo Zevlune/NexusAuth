@@ -2,7 +2,7 @@ import './style.less';
 
 import { Column, Line, Pie } from '@ant-design/charts';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Select, Tag } from 'tdesign-react';
+import { Button, Card, List, Select, Statistic, Tag, Typography } from 'tdesign-react';
 import {
   ChartLineDataIcon,
   CheckCircleFilledIcon,
@@ -157,6 +157,16 @@ const formatUpdatedAt = (value: Date) => value.toLocaleTimeString('zh-CN', {
   second: '2-digit',
 });
 
+const getMetricStatistic = (value: string) => {
+  const suffix = value.endsWith('%') ? '%' : undefined;
+
+  return {
+    value: Number(value.replace(/[,%]/g, '')),
+    suffix,
+    decimalPlaces: suffix ? 2 : undefined,
+  };
+};
+
 const Dashboard = () => {
   const [isDark, setIsDark] = useState(() => isDarkTheme());
   const [dateRange, setDateRange] = useState('7d');
@@ -207,12 +217,19 @@ const Dashboard = () => {
     <div className="dashboard-page">
       <header className="dashboard-header">
         <div className="dashboard-heading">
-          <h1 className="dashboard-title">身份与访问态势</h1>
-          <p className="dashboard-subtitle">实时监测组织内认证流量、访问风险与协议健康度</p>
+          <Typography.Title level="h1" className="dashboard-title">身份与访问态势</Typography.Title>
+          <Typography.Paragraph className="dashboard-subtitle">实时监测组织内认证流量、访问风险与协议健康度</Typography.Paragraph>
           <div className="dashboard-health" aria-label="协议健康度：稳定">
-            <span className="dashboard-health-dot" aria-hidden="true" />
             <span>协议健康度</span>
-            <strong>稳定</strong>
+            <Tag
+              className="dashboard-health-status"
+              theme="success"
+              variant="light"
+              size="small"
+              icon={<CheckCircleFilledIcon />}
+            >
+              稳定
+            </Tag>
             <span className="dashboard-health-detail">OIDC · OAuth 2.0 · SAML 2.0</span>
           </div>
         </div>
@@ -237,32 +254,41 @@ const Dashboard = () => {
       </header>
 
       <section className="dashboard-metrics" aria-label="核心身份指标">
-        {metricCards.map((metric) => (
-          <article key={metric.key} className="dashboard-metric-card">
-            <div className="metric-card-top">
-              <span className="metric-title">{metric.title}</span>
-              <span className={`metric-icon metric-icon-${metric.icon}`} aria-hidden="true">
-                {getMetricIcon(metric.icon)}
-              </span>
-            </div>
-            <div className="metric-value-row">
-              <span className="metric-value">{metric.value}</span>
-              <span className={`metric-trend is-${metric.trendTone}`}>
-                {metric.trendDirection === 'up' ? <TrendingUpIcon /> : <TrendingDownIcon />}
-                {metric.trend}
-              </span>
-            </div>
-            <div className="metric-helper">{metric.helper}</div>
-          </article>
-        ))}
+        {metricCards.map((metric) => {
+          const statistic = getMetricStatistic(metric.value);
+
+          return (
+            <Card key={metric.key} className="dashboard-metric-card" bordered={false}>
+              <div className="metric-card-top">
+                <span className="metric-title">{metric.title}</span>
+                <span className={`metric-icon metric-icon-${metric.icon}`} aria-hidden="true">
+                  {getMetricIcon(metric.icon)}
+                </span>
+              </div>
+              <div className="metric-value-row">
+                <Statistic
+                  className="metric-statistic"
+                  value={statistic.value}
+                  decimalPlaces={statistic.decimalPlaces}
+                  suffix={statistic.suffix}
+                />
+                <span className={`metric-trend is-${metric.trendTone}`}>
+                  {metric.trendDirection === 'up' ? <TrendingUpIcon /> : <TrendingDownIcon />}
+                  {metric.trend}
+                </span>
+              </div>
+              <div className="metric-helper">{metric.helper}</div>
+            </Card>
+          );
+        })}
       </section>
 
       <section className="dashboard-main-grid" aria-label="认证趋势与结果分布">
-        <article className="dashboard-panel dashboard-trend-panel">
+        <Card className="dashboard-panel dashboard-trend-panel" bordered={false}>
           <div className="panel-header">
             <div>
-              <h2 className="panel-title">认证请求趋势</h2>
-              <p className="panel-caption">成功与失败请求量</p>
+              <Typography.Title level="h2" className="panel-title">认证请求趋势</Typography.Title>
+              <Typography.Paragraph className="panel-caption">成功与失败请求量</Typography.Paragraph>
             </div>
             <Tag theme="primary" variant="light-outline">{selectedRangeLabel}</Tag>
           </div>
@@ -299,13 +325,13 @@ const Dashboard = () => {
               }}
             />
           </div>
-        </article>
+        </Card>
 
-        <article className="dashboard-panel dashboard-result-panel">
+        <Card className="dashboard-panel dashboard-result-panel" bordered={false}>
           <div className="panel-header">
             <div>
-              <h2 className="panel-title">认证结果分布</h2>
-              <p className="panel-caption">按请求结果统计</p>
+              <Typography.Title level="h2" className="panel-title">认证结果分布</Typography.Title>
+              <Typography.Paragraph className="panel-caption">按请求结果统计</Typography.Paragraph>
             </div>
           </div>
           <div className="dashboard-donut-wrap">
@@ -334,15 +360,15 @@ const Dashboard = () => {
               <span>认证成功率</span>
             </div>
           </div>
-        </article>
+        </Card>
       </section>
 
       <section className="dashboard-secondary-grid" aria-label="应用调用排行与近期安全事件">
-        <article className="dashboard-panel dashboard-application-panel">
+        <Card className="dashboard-panel dashboard-application-panel" bordered={false}>
           <div className="panel-header">
             <div>
-              <h2 className="panel-title">应用认证调用排行</h2>
-              <p className="panel-caption">{selectedRangeLabel}认证请求量（千次）</p>
+              <Typography.Title level="h2" className="panel-title">应用认证调用排行</Typography.Title>
+              <Typography.Paragraph className="panel-caption">{selectedRangeLabel}认证请求量（千次）</Typography.Paragraph>
             </div>
           </div>
           <div className="dashboard-chart dashboard-application-chart">
@@ -377,19 +403,19 @@ const Dashboard = () => {
               }}
             />
           </div>
-        </article>
+        </Card>
 
-        <article className="dashboard-panel dashboard-security-panel">
+        <Card className="dashboard-panel dashboard-security-panel" bordered={false}>
           <div className="panel-header">
             <div>
-              <h2 className="panel-title">近期安全事件</h2>
-              <p className="panel-caption">需要关注的访问与认证活动</p>
+              <Typography.Title level="h2" className="panel-title">近期安全事件</Typography.Title>
+              <Typography.Paragraph className="panel-caption">需要关注的访问与认证活动</Typography.Paragraph>
             </div>
             <ErrorCircleFilledIcon className="panel-header-icon" aria-hidden="true" />
           </div>
-          <div className="security-event-list">
+          <List className="security-event-list" size="small" split>
             {securityEvents.map((event) => (
-              <div key={`${event.title}-${event.time}`} className="security-event-item">
+              <List.ListItem key={`${event.title}-${event.time}`} className="security-event-item">
                 <Tag theme={getEventTheme(event.level)} variant="light-outline" size="small">
                   {event.level}
                 </Tag>
@@ -400,13 +426,13 @@ const Dashboard = () => {
                     <span>{event.time}</span>
                   </div>
                 </div>
-              </div>
+              </List.ListItem>
             ))}
-          </div>
+          </List>
           <Button className="security-event-more" variant="text" suffix={<ChevronRightIcon />}>
             查看全部
           </Button>
-        </article>
+        </Card>
       </section>
     </div>
   );

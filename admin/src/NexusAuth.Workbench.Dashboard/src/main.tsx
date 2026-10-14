@@ -1,4 +1,5 @@
 import 'tdesign-react/es/style/index.css';
+import 'tdesign-react/es/_util/react-19-adapter';
 import './main.css';
 
 import App from './App.tsx';

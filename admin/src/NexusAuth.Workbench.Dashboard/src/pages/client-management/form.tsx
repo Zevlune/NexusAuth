@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { AxiosError } from 'axios';
 import { AddIcon, DeleteIcon, KeyIcon } from 'tdesign-icons-react';
-import { Button, Form, Input, MessagePlugin, Popconfirm, Select, Switch, Tag, Textarea, Tooltip } from 'tdesign-react';
+import { Alert, Button, Card, Descriptions, Form, Input, Loading, MessagePlugin, Popconfirm, Select, Switch, Tag, Textarea, Tooltip, Typography } from 'tdesign-react';
 import type { FormInstanceFunctions } from 'tdesign-react/es/form/type';
 import {
   createClient,
@@ -459,19 +459,23 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     const title = generatedCredential.privateKeyPem ? 'Private Key' : 'Client Secret';
 
     return (
-      <div className="client-credential-alert">
-        <div>
-          <div className="client-credential-alert__title">{title} 已生成</div>
-          <div className="client-credential-alert__hint">该凭据只会展示一次。请立即复制并安全保存，离开当前页面后将无法再次查看。</div>
-        </div>
-        {generatedCredential.clientSecret && (
-          <Tag theme="primary" variant="light" size="large" className="client-credential-alert__value">{generatedCredential.clientSecret}</Tag>
+      <Alert
+        className="client-credential-alert"
+        theme="warning"
+        title={`${title} 已生成`}
+        message={(
+          <>
+            <div className="client-credential-alert__hint">该凭据只会展示一次。请立即复制并安全保存，离开当前页面后将无法再次查看。</div>
+            {generatedCredential.clientSecret && (
+              <Tag theme="primary" variant="light" size="large" className="client-credential-alert__value">{generatedCredential.clientSecret}</Tag>
+            )}
+            {generatedCredential.privateKeyPem && (
+              <Textarea readonly autosize={{ minRows: 10, maxRows: 16 }} value={generatedCredential.privateKeyPem} />
+            )}
+          </>
         )}
-        {generatedCredential.privateKeyPem && (
-          <Textarea readonly autosize={{ minRows: 10, maxRows: 16 }} value={generatedCredential.privateKeyPem} />
-        )}
-        <Button variant="outline" onClick={() => copyCredentialValue(value)}>复制 {title}</Button>
-      </div>
+        operation={<Button variant="outline" onClick={() => copyCredentialValue(value)}>复制 {title}</Button>}
+      />
     );
   };
 
@@ -481,17 +485,31 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     }
 
     return (
-      <div className="client-overview">
-        <div className="client-overview__meta">
-          <div className="client-overview__title">应用状态</div>
-          <div className="client-overview__tags">
-            <Tag theme={editingClient.isActive ? 'success' : 'default'}>{editingClient.isActive ? '启用' : '禁用'}</Tag>
-            <Tag theme="primary" variant="light-outline">{editingClient.clientId}</Tag>
-            <Tag variant="light-outline">{editingClient.tokenEndpointAuthMethod}</Tag>
-          </div>
-          <div className="client-overview__created">创建时间：{formatDateTime(editingClient.createdAt)}</div>
-        </div>
-      </div>
+      <Card className="client-overview" title="应用状态" bordered headerBordered>
+        <Descriptions
+          colon
+          column={1}
+          size="small"
+          items={[
+            {
+              label: '状态',
+              content: <Tag theme={editingClient.isActive ? 'success' : 'default'}>{editingClient.isActive ? '启用' : '禁用'}</Tag>,
+            },
+            {
+              label: 'Client ID',
+              content: <span className="client-overview__value">{editingClient.clientId}</span>,
+            },
+            {
+              label: '认证方式',
+              content: <span className="client-overview__value">{editingClient.tokenEndpointAuthMethod}</span>,
+            },
+            {
+              label: '创建时间',
+              content: formatDateTime(editingClient.createdAt),
+            },
+          ]}
+        />
+      </Card>
     );
   };
 
@@ -522,8 +540,8 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     <div className="client-form-page">
       <div className="client-form-header">
         <div className="client-form-header__content">
-          <div className="client-form-header__title">{pageTitle}</div>
-          <div className="client-form-header__description">配置 OAuth/OIDC 应用的基础信息、授权类型、回调地址和客户端认证方式。</div>
+          <Typography.Title level="h1" className="client-form-header__title">{pageTitle}</Typography.Title>
+          <Typography.Paragraph className="client-form-header__description">配置 OAuth/OIDC 应用的基础信息、授权类型、回调地址和客户端认证方式。</Typography.Paragraph>
         </div>
         <div className="client-form-header__actions">
           {isEditMode && editingClient && formData.tokenEndpointAuthMethod !== 'none' && (
@@ -543,13 +561,10 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
       {renderClientOverview()}
       {renderCredentialCard()}
 
-      {loadingDetail ? (
-        <div className="client-form-loading">正在加载应用详情...</div>
-      ) : (
+      <Loading loading={loadingDetail} text="正在加载应用详情..." className="client-form-loading">
         <Form key={editingClient?.id ?? 'new-client'} ref={formRef} layout="vertical" labelAlign="top" initialData={formData}>
           <div className="client-form-grid">
-            <section className="client-form-section">
-              <div className="client-form-section__heading">基础信息</div>
+            <Card className="client-form-section" title="基础信息" bordered headerBordered>
               <div className="client-form-fields">
                 <Form.FormItem label="Client ID" name="clientId" rules={[{ required: true, message: '请输入 Client ID', type: 'error' }]}>
                   <Input value={formData.clientId} disabled={isEditMode} placeholder="请输入 Client ID" onChange={(value) => setFormData((prev) => ({ ...prev, clientId: value }))} />
@@ -561,10 +576,9 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
               <Form.FormItem label="描述" name="description">
                 <Textarea value={formData.description} placeholder="请输入应用描述" autosize={{ minRows: 3, maxRows: 6 }} onChange={(value) => setFormData((prev) => ({ ...prev, description: value }))} />
               </Form.FormItem>
-            </section>
+            </Card>
 
-            <section className="client-form-section">
-              <div className="client-form-section__heading">授权配置</div>
+            <Card className="client-form-section" title="授权配置" bordered headerBordered>
               <Form.FormItem label="允许的 Scope" name="allowedScopes" rules={[{ required: true, message: '请选择 Scope', type: 'error' }]}>
                 <Select value={formData.allowedScopes} multiple placeholder="请选择 Scope" options={scopeSelectOptions} onChange={(value) => setFormData((prev) => ({ ...prev, allowedScopes: value as string[] }))} />
               </Form.FormItem>
@@ -574,20 +588,18 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
               <Form.FormItem label="服务资源" name="apiResourceIds" help="选择应用可以访问的 API 服务资源，资源的 audience 会用于生成访问令牌的 aud。">
                 <Select value={formData.apiResourceIds} multiple loading={loadingResources} placeholder="请选择服务资源" options={apiResourceSelectOptions} onChange={(value) => setFormData((prev) => ({ ...prev, apiResourceIds: value as string[] }))} />
               </Form.FormItem>
-            </section>
+            </Card>
 
-            <section className="client-form-section">
-              <div className="client-form-section__heading">回调地址</div>
+            <Card className="client-form-section" title="回调地址" bordered headerBordered>
               <Form.FormItem label="登录回调地址" help="授权完成后，NexusAuth 将把授权响应发送到这些地址。">
                 {renderUriRows('redirectUris', '请输入完整的 HTTPS 回调地址')}
               </Form.FormItem>
               <Form.FormItem label="登出回调地址">
                 {renderUriRows('postLogoutRedirectUris', '请输入登出后的回调地址')}
               </Form.FormItem>
-            </section>
+            </Card>
 
-            <section className="client-form-section">
-              <div className="client-form-section__heading">客户端认证</div>
+            <Card className="client-form-section" title="客户端认证" bordered headerBordered>
               <div className="client-form-fields">
                 <Form.FormItem label="认证方式" name="tokenEndpointAuthMethod" rules={[{ required: true, message: '请选择认证方式', type: 'error' }]}>
                   <Select value={formData.tokenEndpointAuthMethod} placeholder="请选择认证方式" options={authMethodSelectOptions} onChange={(value) => handleAuthMethodChange(String(value))} />
@@ -604,7 +616,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
 
               {formData.tokenEndpointAuthMethod === 'private_key_jwt' && (
                 <div className="client-jwt-material">
-                  <div className="client-form-section__subheading">JWT 客户端认证材料</div>
+                  <Typography.Text strong className="client-form-section__subheading">JWT 客户端认证材料</Typography.Text>
                   <div className="client-form-fields">
                     <Form.FormItem label="公钥来源" name="keyMaterialSource">
                       <Select value={formData.keyMaterialSource} options={keyMaterialSourceOptions} onChange={(value) => handleKeyMaterialSourceChange(value as 'jwks' | 'jwks_uri')} />
@@ -620,7 +632,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
                       <Form.FormItem label="JWKS" name="jwks">
                         <Textarea value={formData.jwks} placeholder="请输入客户端公钥 JWKS JSON" autosize={{ minRows: 4, maxRows: 10 }} onChange={(value) => setFormData((prev) => ({ ...prev, jwks: value }))} />
                       </Form.FormItem>
-                    ) : <div className="client-form-help">自动生成模式下，创建应用时会由后端生成 RSA 密钥对并登记 JWKS，创建成功后会在本页面一次性展示私钥明文。</div>
+                    ) : <Alert className="client-form-help" theme="info" message="自动生成模式下，创建应用时会由后端生成 RSA 密钥对并登记 JWKS，创建成功后会在本页面一次性展示私钥明文。" />
                   ) : (
                     <Form.FormItem label="JWKS URI" name="jwksUri">
                       <Input value={formData.jwksUri} placeholder="请输入客户端 jwks_uri，例如 https://client.example.com/.well-known/jwks.json" onChange={(value) => setFormData((prev) => ({ ...prev, jwksUri: value }))} />
@@ -628,14 +640,14 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
                   )}
                 </div>
               )}
-            </section>
+            </Card>
           </div>
 
           <div className="client-form-actions">
             <Button theme="primary" loading={submitting} disabled={loadingDetail} onClick={handleSubmit}>{isEditMode ? '保存' : '创建'}</Button>
           </div>
         </Form>
-      )}
+      </Loading>
     </div>
   );
 };

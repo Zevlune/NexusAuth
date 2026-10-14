@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Checkbox, Form, Input, Pagination, Select, Space, Table, type TableProps } from 'tdesign-react';
+import { Card, Tag, Button, Checkbox, Form, Input, Pagination, Select, Space, Table, type TableProps } from 'tdesign-react';
 
 type ProductStatus = '启用' | '停用';
 type ProductType = '标准产品' | '增值产品' | '渠道产品';
@@ -105,7 +105,7 @@ const columns: TableProps<ProductConfigItem>['columns'] = [
   { colKey: 'monthlySales', title: '月销量', width: 110 },
   { colKey: 'effectiveDate', title: '生效日期', width: 130 },
   { colKey: 'version', title: '版本', width: 100 },
-  { colKey: 'status', title: '状态', width: 100 },
+  { colKey: 'status', title: '状态', width: 100, cell: ({ row }) => <Tag theme={row.status === '启用' ? 'success' : 'default'} variant="light">{row.status}</Tag> },
   { colKey: 'updatedAt', title: '更新时间', width: 180 },
   {
     colKey: 'operation',
@@ -231,7 +231,7 @@ const ProductConfigPage = () => {
 
   return (
     <div>
-      <div className="page-filter-bar">
+      <Card className="page-filter-bar" bodyStyle={{ padding: 0 }}>
         <Form layout="inline">
           <Form.FormItem label="关键词">
             <Input
@@ -283,7 +283,7 @@ const ProductConfigPage = () => {
             </Space>
           </Form.FormItem>
         </Form>
-      </div>
+      </Card>
 
       <div className="page-table-section">
         <div ref={tableWrapRef}>

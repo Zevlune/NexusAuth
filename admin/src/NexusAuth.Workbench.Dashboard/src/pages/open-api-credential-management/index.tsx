@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
-import { Button, DatePicker, Dialog, Drawer, Form, Input, MessagePlugin, Select, Space, Switch, Table, Tag, Textarea, type FormInstanceFunctions, type TableProps } from 'tdesign-react';
+import { Alert, Button, Card, DatePicker, Dialog, Drawer, Form, Input, MessagePlugin, Select, Space, Switch, Table, Tag, Textarea, Typography, type FormInstanceFunctions, type TableProps } from 'tdesign-react';
 import { AddIcon, CopyIcon, DeleteIcon, EditIcon, RefreshIcon } from 'tdesign-icons-react';
 import {
   createOpenApiCredential,
@@ -11,6 +11,7 @@ import {
   type OpenApiCredential,
   type OpenApiCredentialTargetType,
 } from '../../api/open-api-credential';
+import PageActions from '../../components/page-actions';
 import './style.less';
 
 type CredentialFormData = {
@@ -357,12 +358,14 @@ const OpenApiCredentialManagementPage = () => {
         onClose={handleCloseToken}
         onConfirm={handleCloseToken}
       >
-        <div className="open-api-credential-token-body">
-          <div className="open-api-credential-token-body__title">{createdCredentialName}</div>
-          <div className="open-api-credential-token-body__hint">Token 只会展示一次，请立即复制并安全保存。关闭此窗口后无法再次查看。</div>
+        <Space className="open-api-credential-token-body" direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text strong className="open-api-credential-token-body__title">{createdCredentialName}</Typography.Text>
+          <Alert theme="warning" message="Token 只会展示一次，请立即复制并安全保存。关闭此窗口后无法再次查看。" />
           <Textarea readonly value={createdToken} autosize={{ minRows: 3, maxRows: 6 }} />
-          <Button theme="primary" variant="outline" icon={<CopyIcon />} onClick={() => void handleCopyToken()}>复制 Token</Button>
-        </div>
+          <div className="open-api-credential-token-body__action">
+            <Button theme="primary" variant="outline" icon={<CopyIcon />} onClick={() => void handleCopyToken()}>复制 Token</Button>
+          </div>
+        </Space>
       </Dialog>
 
       <Drawer
@@ -420,17 +423,22 @@ const OpenApiCredentialManagementPage = () => {
           )}
         </Form>
         <div className="open-api-credential-drawer__footer">
-          <Button variant="base" onClick={handleCloseForm} disabled={submitting}>取消</Button>
-          <Button theme="primary" loading={submitting} onClick={() => void handleSubmit()}>{editingCredential ? '保存' : '创建'}</Button>
+          <Space size={10}>
+            <Button variant="base" onClick={handleCloseForm} disabled={submitting}>取消</Button>
+            <Button theme="primary" loading={submitting} onClick={() => void handleSubmit()}>{editingCredential ? '保存' : '创建'}</Button>
+          </Space>
         </div>
       </Drawer>
 
-      <div className="page-filter-bar">
+      <Card className="page-filter-bar" bodyStyle={{ padding: 0 }}>
         <Space>
-          <Button theme="primary" icon={<AddIcon />} onClick={handleShowCreate}>新增凭证</Button>
           <Button variant="base" icon={<RefreshIcon />} loading={loading} onClick={() => void fetchData()}>刷新</Button>
         </Space>
-      </div>
+      </Card>
+
+      <PageActions>
+        <Button theme="primary" icon={<AddIcon />} onClick={handleShowCreate}>新增凭证</Button>
+      </PageActions>
 
       <div className="page-table-section">
         <div ref={tableWrapRef} className="open-api-credential-table-wrap">

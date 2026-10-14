@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Form, Input, Pagination, Select, Space, Table, type TableProps } from 'tdesign-react';
+import { Card, Tag, Button, Form, Input, Pagination, Select, Space, Table, type TableProps } from 'tdesign-react';
 
 type MappingStatus = '启用' | '停用';
 type SourceSystem = 'CRM' | 'OMS' | 'ERP';
@@ -59,7 +59,7 @@ const columns: TableProps<SaleRefIdMappingItem>['columns'] = [
   { colKey: 'sourceSystem', title: '来源系统', width: 120 },
   { colKey: 'sourceValue', title: '来源值', minWidth: 180, ellipsis: true },
   { colKey: 'targetValue', title: '目标值', minWidth: 180, ellipsis: true },
-  { colKey: 'status', title: '状态', width: 100 },
+  { colKey: 'status', title: '状态', width: 100, cell: ({ row }) => <Tag theme={row.status === '启用' ? 'success' : 'default'} variant="light">{row.status}</Tag> },
   { colKey: 'updatedAt', title: '更新时间', width: 180 },
   {
     colKey: 'operation',
@@ -144,7 +144,7 @@ const SaleRefIdMappingConfigPage = () => {
 
   return (
     <div>
-      <div className="page-filter-bar">
+      <Card className="page-filter-bar" bodyStyle={{ padding: 0 }}>
         <Form layout="inline">
           <Form.FormItem label="关键词">
             <Input
@@ -195,7 +195,7 @@ const SaleRefIdMappingConfigPage = () => {
             </Space>
           </Form.FormItem>
         </Form>
-      </div>
+      </Card>
 
       <div className="page-table-section">
         <div ref={tableWrapRef}>
