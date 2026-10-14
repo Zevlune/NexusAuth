@@ -218,8 +218,9 @@
   }
 
   .layout-content-tabs {
+    --layout-tabs-height: 44px;
     flex-shrink: 0;
-    min-height: 44px;
+    min-height: var(--layout-tabs-height);
 
     .t-tabs {
       width: 100%;
@@ -231,6 +232,11 @@
       background: transparent;
     }
 
+    .t-tabs__nav {
+      // TDesign sets an inline 48px minimum height on the navigation container.
+      min-height: var(--layout-tabs-height) !important;
+    }
+
     .t-tabs__nav-wrap {
       padding: 0;
       color: var(--app-text-secondary);
@@ -238,7 +244,8 @@
     }
 
     .t-tabs__nav-item {
-      height: 44px;
+      height: var(--layout-tabs-height);
+      line-height: var(--layout-tabs-height);
       padding: 0 14px;
       border-radius: 4px 4px 0 0;
       color: var(--app-text-secondary);
@@ -294,6 +301,18 @@
     .t-tabs__btn {
       color: var(--app-text-secondary);
       background: var(--app-surface);
+    }
+
+    .t-tabs__operations {
+      height: var(--layout-tabs-height);
+      border-bottom: 0;
+    }
+
+    .t-tabs__btn {
+      box-sizing: border-box;
+      height: var(--layout-tabs-height);
+      line-height: var(--layout-tabs-height);
+      border-bottom: 1px solid var(--app-border);
     }
 
     .t-tabs__content {
