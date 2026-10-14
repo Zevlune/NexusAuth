@@ -1,6 +1,6 @@
 import './style.less';
 
-import { Button, Tooltip } from 'tdesign-react';
+import { Button, Card, Tag, Tooltip, Typography } from 'tdesign-react';
 import { MoonIcon, SunnyIcon } from 'tdesign-icons-react';
 import { applyThemeMode, getThemeMode } from '../../theme';
 import { checkAuthenticated, setCachedAuthStatus } from '../../router/auth';
@@ -61,22 +61,19 @@ const Login = () => {
       </header>
 
       <main className="stitch-login-main">
-        <section className="stitch-login-card">
+        <Card className="stitch-login-card" bordered bodyClassName="stitch-login-card__body">
           <div className="stitch-login-identity">
-            <h1 className="stitch-login-title">欢迎回来</h1>
-            <p className="stitch-login-subtitle">点击下方按钮使用 NexusAuth 账号登录</p>
+            <Typography.Title level="h1" className="stitch-login-title">欢迎回来</Typography.Title>
+            <Typography.Paragraph className="stitch-login-subtitle">点击下方按钮使用 NexusAuth 账号登录</Typography.Paragraph>
           </div>
 
           <Button className="stitch-login-submit" theme="primary" size="large" loading={loading} onClick={handleLogin} block>
             使用 NexusAuth 登录
           </Button>
-        </section>
+        </Card>
 
         <div className="stitch-login-status">
-          <div className="stitch-login-status-item">
-            <span className="stitch-login-status-dot" />
-            <span>系统在线</span>
-          </div>
+          <Tag theme="success" variant="light">系统在线</Tag>
         </div>
       </main>
 

@@ -1,7 +1,8 @@
 import { lazy, useEffect, useState } from "react";
 
 import ErrorPage from "../../components/error";
-import { getMenuList } from "../../api/auth";
+import { getMenuList, type MenuDefinition } from "../../api/auth";
+import type { RouteObject } from "react-router-dom";
 import { lazyLoad } from '../../lazyLoad/lazy'
 import { replaceRoutes } from "../../router/router-utils";
 import { router } from "../../router";
@@ -24,6 +25,8 @@ const resolveMenuPath = (route: string, parentMenu?: { parentPaths?: string[] })
     return `${parentPath}${route}`;
 };
 
+type FormattedMenu = MenuDefinition & { path: string };
+
 const useUserDetail = () => {
     const [loading, setLoading] = useState(true);
     const [requestLoading] = useState(true);
@@ -35,17 +38,17 @@ const useUserDetail = () => {
         // document.body.setAttribute('arco-theme', 'dark');
         getMenuList().then(res => {
             function formatMenus(
-                menus: any[],
-                menuGroup: Record<string, any[]>,
-                routes: any[],
-                parentMenu?: any
-            ): any[] {
+                menus: MenuDefinition[],
+                menuGroup: Record<string, MenuDefinition[]>,
+                routes: FormattedMenu[],
+                parentMenu?: MenuDefinition
+            ): FormattedMenu[] {
                 return menus.map(menu => {
                     /**
                      * 判断当前格式化内是否传入了父级菜单
                      * 如果传入的父级菜单则在当前遍历的菜单内添加父级路由
                      */
-                    const children = menuGroup[menu.id!];
+                    const children = menuGroup[menu.id];
                     const parentPaths = parentMenu?.parentPaths || [];
                     const path = resolveMenuPath(menu.route, parentMenu) || '';
                     routes.push({
@@ -65,16 +68,16 @@ const useUserDetail = () => {
                         ...menu,
                         path,
                         parentPaths,
-                        children,
+                        children: children ?? [],
                     };
                 });
             }
 
-            const menus: any[] = res;
+            const menus = res;
             /**
              * 将菜单按照父子关系分组
              */
-            const menuGroup = menus.reduce<Record<string, any[]>>((prev: any, menu: any) => {
+            const menuGroup = menus.reduce<Record<string, MenuDefinition[]>>((prev, menu) => {
                 if (!menu.parentId) {
                     return prev;
                 }
@@ -86,7 +89,7 @@ const useUserDetail = () => {
                 return prev;
             }, {});
 
-            const routes: any[] = [];
+            const routes: FormattedMenu[] = [];
             /**
              * 格式化路由
              */
@@ -100,7 +103,7 @@ const useUserDetail = () => {
                     /**
                      * @description: 路由格式化将二级路由和一级路由合并生成路由列表
                      */
-                    var route = {
+                    const route: RouteObject & { name: string } = {
                         path: menu.path,
                         id: menu.path,
                         // Component: menu.componentPath ? lazy(modules[`../pages/${menu.componentPath}/index.tsx`]) : ErrorPage,

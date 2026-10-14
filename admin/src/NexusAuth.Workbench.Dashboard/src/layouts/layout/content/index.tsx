@@ -3,9 +3,14 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import GlobalLoading from '../../../components/global-loading';
 import { setPageLoading } from '../../../page-loading';
+import ContentHeader from '../../../components/content-header';
+import type { ContentBreadcrumb } from '../../../components/content-header/breadcrumbs';
+import { PageActionsContext } from '../../../components/page-actions/context';
 
-const PublicContent = () => {
+const PublicContent = ({ breadcrumbs }: { breadcrumbs: ContentBreadcrumb[] }) => {
     const { pathname } = useLocation();
+    const [actionsTarget, setActionsTarget] = useState<HTMLDivElement | null>(null);
+    const showContentHeader = pathname !== '/dashboard';
     const contentInnerRef = useRef<HTMLDivElement | null>(null);
     const contentRef = useRef<HTMLDivElement | null>(null);
     const [contentMaxHeight, setContentMaxHeight] = useState<number>();
@@ -56,14 +61,16 @@ const PublicContent = () => {
 
     return (
 
-        <Suspense fallback={<GlobalLoading height={contentMaxHeight || 320} />}>
-            <div className="layout-content-inner" ref={contentInnerRef}>
-                <div className="layout-main-content" ref={contentRef} style={{ maxHeight: contentMaxHeight }}>
-                    <Outlet />
-                </div>
+        <PageActionsContext.Provider key={pathname} value={actionsTarget}>
+          <div className="layout-content-inner" ref={contentInnerRef}>
+            <div className="layout-main-content" ref={contentRef} style={{ maxHeight: contentMaxHeight }}>
+                {showContentHeader && <ContentHeader items={breadcrumbs} actionsRef={setActionsTarget} />}
+                <Suspense fallback={<GlobalLoading height={contentMaxHeight || 320} />}>
+                    <div className="layout-page-body" key={pathname}><Outlet /></div>
+                </Suspense>
             </div>
-
-        </Suspense>
+          </div>
+        </PageActionsContext.Provider>
     )
 }
 export default PublicContent

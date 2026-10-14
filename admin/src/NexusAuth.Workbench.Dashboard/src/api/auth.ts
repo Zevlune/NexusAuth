@@ -1,5 +1,18 @@
+export interface MenuDefinition {
+    id: string;
+    route: string;
+    componentPath: string | null;
+    name: string;
+    show: boolean;
+    iconName: string | null;
+    icon?: string | null;
+    parentId: string | null;
+    parentPaths: string[];
+    children: MenuDefinition[];
+}
+
 export const getMenuList = () => {
-    return new Promise<Array<any>>((resolve) => {
+    return new Promise<MenuDefinition[]>((resolve) => {
         window.setTimeout(() => {
             resolve([
                 {
@@ -10,7 +23,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: "dashboard",
                     parentId: null,
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -21,7 +34,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: "user",
                     parentId: null,
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -32,7 +45,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: "key",
                     parentId: null,
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: []
                 },
                 {
@@ -43,7 +56,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: 'oauth',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -54,7 +67,7 @@ export const getMenuList = () => {
                     show: false,
                     iconName: null,
                     parentId: 'oauth-client',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -65,7 +78,7 @@ export const getMenuList = () => {
                     show: false,
                     iconName: null,
                     parentId: 'oauth-client',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -76,7 +89,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: 'oauth',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -87,7 +100,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: 'oauth',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -98,7 +111,7 @@ export const getMenuList = () => {
                     show: false,
                     iconName: null,
                     parentId: 'oauth',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -109,7 +122,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: 'oauth',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -120,7 +133,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: 'oauth',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -131,7 +144,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: "aiAgent",
                     parentId: null,
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: [],
                 },
                 {
@@ -142,7 +155,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: "ruleConfig",
                     parentId: null,
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: []
                 },
                 {
@@ -153,7 +166,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: '2',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: []
                 },
                 {
@@ -164,7 +177,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: '2',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: []
                 },
                 {
@@ -175,7 +188,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: '2',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: []
                 },
                 {
@@ -186,7 +199,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: '2',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: []
                 },
                 {
@@ -197,7 +210,7 @@ export const getMenuList = () => {
                     show: true,
                     iconName: null,
                     parentId: '2',
-                    parentPaths: Array<string>,
+                    parentPaths: [],
                     children: []
                 },
             ])

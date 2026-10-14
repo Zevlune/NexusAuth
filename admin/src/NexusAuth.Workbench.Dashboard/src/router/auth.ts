@@ -1,4 +1,3 @@
-import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { checkAuth } from '../api/login';
 
 let cachedAuthStatus: boolean | null = null;
@@ -32,32 +31,7 @@ const getRedirectPath = (location: { pathname: string; search?: string; hash?: s
   return `${location.pathname}${location.search || ''}${location.hash || ''}`;
 };
 
-const getLoginPath = (location: { pathname: string; search?: string; hash?: string }) => {
+export const getLoginPath = (location: { pathname: string; search?: string; hash?: string }) => {
   const params = new URLSearchParams({ redirect: getRedirectPath(location) });
   return `/login?${params.toString()}`;
-};
-
-export const RequireAuth = () => {
-  const location = useLocation();
-
-  if (!getCachedAuthStatus()) {
-    return <Navigate to={getLoginPath(location)} replace state={{ from: location }} />;
-  }
-
-  return <Outlet />;
-};
-
-export const RedirectIfAuthenticated = () => {
-  const location = useLocation();
-
-  if (getCachedAuthStatus()) {
-    const redirect = getSafeRedirectPath(new URLSearchParams(location.search).get('redirect'));
-    return <Navigate to={redirect || '/dashboard'} replace />;
-  }
-
-  return <Outlet />;
-};
-
-export const HomeRedirect = () => {
-  return <Navigate to={getCachedAuthStatus() ? '/dashboard' : '/login'} replace />;
 };

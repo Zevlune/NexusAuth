@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
-import { Button, Card, Descriptions, Dialog, Drawer, Empty, Form, Input, Loading, MessagePlugin, Pagination, Select, Space, Switch, Tag, Textarea, Tooltip } from 'tdesign-react';
+import { Avatar, Typography, Button, Card, Descriptions, Dialog, Drawer, Empty, Form, Input, Loading, MessagePlugin, Pagination, Select, Space, Switch, Tag, Textarea, Tooltip } from 'tdesign-react';
 import type { FormInstanceFunctions } from 'tdesign-react/es/form/type';
 import { AddIcon, ApiIcon, DeleteIcon, EditIcon, ErrorCircleFilledIcon, RefreshIcon, SearchIcon, ViewListIcon } from 'tdesign-icons-react';
 import {
@@ -14,6 +14,7 @@ import {
   type CreateApiResourceRequest,
   type UpdateApiResourceRequest,
 } from '../../api/api-resource';
+import PageActions from '../../components/page-actions';
 import './style.less';
 import '../management-card.less';
 
@@ -432,13 +433,16 @@ const ApiResourceManagementPage = () => {
 
       <div className="api-resource-page__header">
         <div>
-          <h1>服务资源</h1>
-          <p>集中管理受保护 API 的资源标识、Audience 与启停状态</p>
+          <Typography.Title level="h1" className="management-page-title">服务资源</Typography.Title>
+          <Typography.Paragraph className="management-page-description">集中管理受保护 API 的资源标识、Audience 与启停状态</Typography.Paragraph>
         </div>
-        <Button size="small" theme="primary" icon={<AddIcon />} onClick={showDialog}>新增资源</Button>
       </div>
 
-      <div className="management-card-page__toolbar api-resource-page__toolbar">
+      <PageActions>
+        <Button theme="primary" icon={<AddIcon />} onClick={showDialog}>新增资源</Button>
+      </PageActions>
+
+      <Card className="management-card-page__toolbar api-resource-page__toolbar" bodyStyle={{ padding: 0 }}>
         <Form layout="inline" className="api-resource-filter-form">
           <Form.FormItem className="api-resource-page__search">
             <Input
@@ -463,7 +467,7 @@ const ApiResourceManagementPage = () => {
             <Button size="small" variant="text" theme="primary" icon={<RefreshIcon />} onClick={handleReset}>重置</Button>
           </Form.FormItem>
         </Form>
-      </div>
+      </Card>
 
       <Loading loading={loading} className="management-card-page__loading">
         {sourceData.length ? (
@@ -472,7 +476,7 @@ const ApiResourceManagementPage = () => {
               <Card key={resource.id} className="management-card management-card--resource" bordered>
                 <div className="management-card__header api-resource-card__header">
                   <div className="api-resource-card__identity">
-                    <span className="api-resource-card__icon"><ApiIcon /></span>
+                    <Avatar className="api-resource-card__icon" shape="round" icon={<ApiIcon />} />
                     <div className="management-card__heading">
                       <span className="management-card__title" title={resource.displayName}>{resource.displayName}</span>
                       <code className="management-card__identifier" title={resource.name}>{resource.name}</code>
@@ -483,24 +487,12 @@ const ApiResourceManagementPage = () => {
                   </Tooltip>
                 </div>
 
-                <div className="api-resource-card__rows">
-                  <div className="api-resource-card__row">
-                    <span>服务资源 Key</span>
-                    <code title={resource.name}>{resource.name}</code>
-                  </div>
-                  <div className="api-resource-card__row">
-                    <span>Audience</span>
-                    <code title={resource.audience}>{resource.audience}</code>
-                  </div>
-                  <div className="api-resource-card__row">
-                    <span>描述</span>
-                    <span className="api-resource-card__description" title={resource.description || '未填写描述'}>{resource.description || '未填写描述'}</span>
-                  </div>
-                  <div className="api-resource-card__row">
-                    <span>创建时间</span>
-                    <span>{new Date(resource.createdAt).toLocaleDateString('zh-CN')}</span>
-                  </div>
-                </div>
+                <Descriptions className="management-card__descriptions" column={1} size="small" items={[
+                  { label: '服务资源 Key', content: <code title={resource.name}>{resource.name}</code> },
+                  { label: 'Audience', content: <code title={resource.audience}>{resource.audience}</code> },
+                  { label: '描述', content: <span className="api-resource-card__description" title={resource.description || '未填写描述'}>{resource.description || '未填写描述'}</span> },
+                  { label: '创建时间', content: new Date(resource.createdAt).toLocaleDateString('zh-CN') },
+                ]} />
 
                 <div className="management-card__footer api-resource-card__footer">
                   <Button size="small" variant="outline" icon={<EditIcon />} onClick={() => void handleEdit(resource)}>编辑</Button>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
-import { Button, Form, Input, MessagePlugin, Pagination, Select, Space, Table, Tag, Tooltip, type TableProps } from 'tdesign-react';
+import { Card, Button, Form, Input, MessagePlugin, Pagination, Select, Space, Table, Tag, Tooltip, type TableProps } from 'tdesign-react';
 import { RefreshIcon, SearchIcon } from 'tdesign-icons-react';
 import { getLoginAudits, type LoginAuditLog } from '../../api/login-audit';
 import './style.less';
@@ -98,7 +98,7 @@ const LoginAuditManagementPage = () => {
 
   return (
     <div className="login-audit-management-page">
-      <div className="page-filter-bar">
+      <Card className="page-filter-bar" bodyStyle={{ padding: 0 }}>
         <Form layout="inline" className="login-audit-management-filter-form">
           <Form.FormItem label="关键词">
             <Input clearable value={filters.keyword} prefixIcon={<SearchIcon />} placeholder="登录账号或 IP" style={{ width: 240 }} onChange={(value) => setFilters((previous) => ({ ...previous, keyword: value }))} />
@@ -116,7 +116,7 @@ const LoginAuditManagementPage = () => {
             </Space>
           </Form.FormItem>
         </Form>
-      </div>
+      </Card>
       <div className="page-table-section">
         <div ref={tableWrapRef}>
           <Table rowKey="id" columns={columns} data={sourceData} verticalAlign="middle" maxHeight={tableMaxHeight} tableLayout="fixed" resizable loading={loading} />

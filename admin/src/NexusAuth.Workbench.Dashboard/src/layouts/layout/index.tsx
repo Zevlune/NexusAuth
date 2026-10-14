@@ -1,6 +1,6 @@
 import './style.less';
 
-import { Layout, Tabs } from 'tdesign-react';
+import { Button, Layout, Tabs } from 'tdesign-react';
 import { ChevronLeftIcon, ChevronRightIcon } from 'tdesign-icons-react';
 import { applyThemeMode, getThemeMode } from '../../theme';
 import { getPageLoading, subscribePageLoading } from '../../page-loading';
@@ -13,8 +13,9 @@ import LogoComponent from './logo';
 import PublicContent from './content';
 import PublicHeader from './header';
 import SliderMenu from './side';
-import { getMenuList } from '../../api/auth';
+import { getMenuList, type MenuDefinition } from '../../api/auth';
 import useUserDetail from '../common/use-user-detail.';
+import { getContentBreadcrumbs, type ContentMenu } from '../../components/content-header/breadcrumbs';
 
 const { Content, Aside, Header } = Layout;
 const { TabPanel } = Tabs;
@@ -61,9 +62,19 @@ const PublicLayout = () => {
   useUserDetail();
 
   const [collapsed, setCollapsed] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const effectiveCollapsed = collapsed || viewportWidth <= 640;
+  const sidebarWidth = viewportWidth <= 640 ? 56 : collapsed ? 64 : viewportWidth <= 900 ? 192 : 240;
   const [theme, setTheme] = useState<'light' | 'dark'>(() => getThemeMode());
   const [menuMap, setMenuMap] = useState<Record<string, MenuInfo>>({});
+  const [menus, setMenus] = useState<ContentMenu[]>([]);
   const [tabs, setTabs] = useState<TabItem[]>(getInitialTabs);
+
+  useEffect(() => {
+    const updateViewportWidth = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', updateViewportWidth);
+    return () => window.removeEventListener('resize', updateViewportWidth);
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(tabs));
@@ -71,9 +82,10 @@ const PublicLayout = () => {
 
   useEffect(() => {
     getMenuList().then((res) => {
+      setMenus(res);
       const map: Record<string, MenuInfo> = {};
 
-      const buildMap = (menus: any[], parentMenu?: any) => {
+      const buildMap = (menus: MenuDefinition[], parentMenu?: Pick<MenuDefinition, 'id' | 'parentPaths'>) => {
         const parentId = parentMenu ? parentMenu.id : null;
         menus
           .filter((item) => item.parentId === parentId)
@@ -110,6 +122,8 @@ const PublicLayout = () => {
     const handle = lastRoute?.handle as { name?: string } | undefined;
     return handle?.name || pathname;
   }, [matches, menuMap, pathname]);
+
+  const breadcrumbs = useMemo(() => getContentBreadcrumbs(menus, pathname, currentTabLabel), [menus, pathname, currentTabLabel]);
 
   useEffect(() => {
     setTabs((prev) => {
@@ -232,15 +246,16 @@ const PublicLayout = () => {
 
       <Layout className="layout-body">
         <Aside
-          width={collapsed ? '64px' : '240px'}
-          className={`layout-sider${collapsed ? ' is-collapsed' : ''}`}
+          width={`${sidebarWidth}px`}
+          className={`layout-sider${effectiveCollapsed ? ' is-collapsed' : ''}`}
         >
           <div className="layout-sider-menu">
-            <SliderMenu collapse={collapsed} />
+            <SliderMenu collapse={effectiveCollapsed} />
           </div>
-          <div className="layout-sider-trigger-bottom" onClick={handleCollapsed}>
-            {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-          </div>
+          <Button className="layout-sider-trigger-bottom" variant="text"
+            aria-label={effectiveCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            disabled={viewportWidth <= 640} onClick={handleCollapsed}
+            icon={effectiveCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />} />
         </Aside>
 
         <Layout className="layout-main">
@@ -264,7 +279,7 @@ const PublicLayout = () => {
                 ))}
               </Tabs>
             </div>
-            <PublicContent />
+            <PublicContent breadcrumbs={breadcrumbs} />
           </Content>
         </Layout>
       </Layout>

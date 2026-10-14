@@ -1,4 +1,5 @@
 import './style.less';
+import { Image } from 'tdesign-react';
 
 interface BrandComponentProps {
   className?: string;
@@ -12,8 +13,9 @@ const BrandComponent = ({ className, compact = false }: BrandComponentProps) => 
 
   return (
     <div className={classes} aria-label="NexusAuth Workbench">
-      <img
+      <Image
         className="brand__mark"
+        fit="contain"
         src="/brand/nexusauth-logo.svg"
         alt={compact ? 'NexusAuth' : ''}
       />

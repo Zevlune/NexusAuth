@@ -3,8 +3,9 @@ import '@tdesign-react/chat/es/style/index.js';
 
 import { ChatBot } from '@tdesign-react/chat';
 import { AddIcon } from 'tdesign-icons-react';
-import { Button, Empty, Menu, Space } from 'tdesign-react';
+import { Button, Card, Empty, Menu, Typography } from 'tdesign-react';
 import { useMemo, useRef, useState } from 'react';
+import PageActions from '../../components/page-actions';
 import type {
   ChatMessagesData,
   ChatRequestParams,
@@ -286,16 +287,11 @@ const AIAgent = () => {
 
   return (
     <div className="ai-agent-page">
-      <aside className="ai-agent-sessions">
-        <Button className="ai-agent-new-session-btn" icon={<AddIcon />} onClick={handleCreateSession}>
-          新建
-        </Button>
-
+      <PageActions>
+        <Button theme="primary" icon={<AddIcon />} onClick={handleCreateSession}>新建会话</Button>
+      </PageActions>
+      <Card className="ai-agent-sessions" title="会话列表" headerBordered bodyClassName="ai-agent-sessions__body">
         <div className="ai-agent-history-panel">
-          <Space align="center" className="ai-agent-history-header">
-            <span className="ai-agent-history-title">会话列表</span>
-          </Space>
-
           <div className="ai-agent-sessions-list">
             {sessions.length === 0 ? (
               <Empty description="暂无历史会话" />
@@ -308,15 +304,15 @@ const AIAgent = () => {
               >
                 {sessions.map((session) => (
                   <Menu.MenuItem key={session.id} value={session.id} className="ai-agent-session-menu-item">
-                    <div className="ai-agent-session-title-text">{session.title}</div>
-                    <div className="ai-agent-session-meta">{formatTime(session.updatedAt)}</div>
+                    <Typography.Text className="ai-agent-session-title-text">{session.title}</Typography.Text>
+                    <Typography.Text className="ai-agent-session-meta" theme="secondary">{formatTime(session.updatedAt)}</Typography.Text>
                   </Menu.MenuItem>
                 ))}
               </Menu>
             )}
           </div>
         </div>
-      </aside>
+      </Card>
 
       <div
         className={`ai-agent-content${isChatScrolling ? ' is-chat-scrolling' : ''}`}
