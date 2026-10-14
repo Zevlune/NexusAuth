@@ -42,6 +42,7 @@ public sealed class UserCredentialRepository(IUnitOfWork unitOfWork)
 
     public async Task<bool> TryConfirmTotpAsync(Guid credentialId, Guid userId, string expectedProtectedSecret, long counter, DateTimeOffset now, CancellationToken ct = default)
     {
+        now = now.ToUniversalTime();
         var affected = await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE nexusauth.user_credentials
             SET secret_protected = pending_secret_protected, pending_secret_protected = NULL,
@@ -55,6 +56,7 @@ public sealed class UserCredentialRepository(IUnitOfWork unitOfWork)
 
     public async Task<bool> TryUseTotpCounterAsync(Guid credentialId, Guid userId, long counter, DateTimeOffset now, CancellationToken ct = default)
     {
+        now = now.ToUniversalTime();
         var affected = await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE nexusauth.user_credentials SET last_used_counter = {counter}, updated_at = {now}
             WHERE id = {credentialId} AND user_id = {userId} AND type = 'totp' AND is_enabled = true
@@ -66,6 +68,7 @@ public sealed class UserCredentialRepository(IUnitOfWork unitOfWork)
 
     public async Task<bool> DisableAsync(Guid credentialId, Guid userId, DateTimeOffset now, CancellationToken ct = default)
     {
+        now = now.ToUniversalTime();
         var affected = await dbContext.Set<UserCredential>()
             .Where(credential => credential.Id == credentialId && credential.UserId == userId && credential.IsEnabled)
             .ExecuteUpdateAsync(setters => setters

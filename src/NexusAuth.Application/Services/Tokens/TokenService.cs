@@ -1,4 +1,5 @@
 using Luck.Logging.Serilog;
+using System.Globalization;
 using NexusAuth.Application.Services.OIDC;
 
 namespace NexusAuth.Application.Services.Tokens;
@@ -52,7 +53,14 @@ public class TokenService(
         };
 
         if (userId.HasValue)
+        {
+            var user = await userRepository.FindByIdAsync(userId.Value, ct);
+            if (user is not { IsActive: true })
+                throw new InvalidOperationException("Active user not found for access token issuance.");
             claims.Add(new("token_use", "access_token"));
+            claims.Add(new(UserTokenValidator.EpochClaim,
+                (user.TokenInvalidBefore?.UtcTicks ?? 0).ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64));
+        }
 
         if (!string.IsNullOrWhiteSpace(claimsJson))
         {
@@ -101,6 +109,8 @@ public class TokenService(
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new("client_id", clientId),
             new("token_use", "id_token"),
+            new(UserTokenValidator.EpochClaim,
+                (user.TokenInvalidBefore?.UtcTicks ?? 0).ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
             new("preferred_username", user.Username),
             new("name", user.Nickname),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
@@ -349,8 +359,7 @@ public class TokenService(
                 out var validatedToken);
 
             var jwt = (JwtSecurityToken)validatedToken;
-            var jti = GetClaimValue(principal, JwtRegisteredClaimNames.Jti, ClaimTypes.SerialNumber);
-            if (!string.IsNullOrWhiteSpace(jti) && await tokenBlacklistRepository.ExistsActiveAsync(jti, DateTimeOffset.UtcNow, ct))
+            if (!await new UserTokenValidator(userRepository, tokenBlacklistRepository).IsActiveAsync(principal, ct))
                 return TokenIntrospectionResult.Inactive();
 
             var tokenClientId = principal.FindFirst("client_id")?.Value;
@@ -361,16 +370,6 @@ public class TokenService(
             }
 
             var subject = GetClaimValue(principal, JwtRegisteredClaimNames.Sub, ClaimTypes.NameIdentifier);
-            if (Guid.TryParse(subject, out var userId))
-            {
-                var user = await userRepository.FindByIdAsync(userId, ct);
-                if (user is null || !user.IsActive
-                    || (user.TokenInvalidBefore.HasValue && jwt.IssuedAt < user.TokenInvalidBefore.Value.UtcDateTime))
-                {
-                    return TokenIntrospectionResult.Inactive();
-                }
-            }
-
             return TokenIntrospectionResult.Success(
                 subject,
                 tokenClientId,

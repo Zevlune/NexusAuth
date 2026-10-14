@@ -42,7 +42,7 @@ public sealed class WebAuthnCredential : EntityWithIdentity<Guid>
         if (credentialId.Length == 0 || publicKeyCose.Length == 0)
             throw new ArgumentException("A WebAuthn credential and its public key are required.");
 
-        var timestamp = now ?? DateTimeOffset.UtcNow;
+        var timestamp = now?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
         return new WebAuthnCredential(Guid.NewGuid())
         {
             UserId = userId,
@@ -69,11 +69,11 @@ public sealed class WebAuthnCredential : EntityWithIdentity<Guid>
         if (signatureCounter > 0)
             SignatureCounter = signatureCounter;
         IsBackedUp = isBackedUp;
-        LastUsedAt = now;
+        LastUsedAt = now.ToUniversalTime();
     }
 
     public void Disable(DateTimeOffset now)
     {
-        DisabledAt = now;
+        DisabledAt = now.ToUniversalTime();
     }
 }

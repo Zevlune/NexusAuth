@@ -13,6 +13,7 @@ logs/
 .env
 .env.*
 **/smtp.qq.local.json
+**/App_Data/
 
 *.user
 *.suo

@@ -78,7 +78,7 @@ public class AuthorizationCode : EntityWithIdentity<Guid>
             CodeChallengeMethod = codeChallengeMethod,
             Nonce = nonce,
             ClaimsJson = claimsJson,
-            AuthenticatedAt = authenticatedAt,
+            AuthenticatedAt = authenticatedAt?.ToUniversalTime(),
             Acr = acr,
             Amr = amr,
             IsUsed = false,

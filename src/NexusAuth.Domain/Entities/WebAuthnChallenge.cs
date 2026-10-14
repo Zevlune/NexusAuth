@@ -39,8 +39,9 @@ public sealed class WebAuthnChallenge : EntityWithIdentity<Guid>
         if (purpose is not RegistrationPurpose and not AuthenticationPurpose)
             throw new ArgumentOutOfRangeException(nameof(purpose));
 
-        var timestamp = now ?? DateTimeOffset.UtcNow;
-        if (expiresAt <= timestamp)
+        var timestamp = now?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
+        var normalizedExpiresAt = expiresAt.ToUniversalTime();
+        if (normalizedExpiresAt <= timestamp)
             throw new ArgumentOutOfRangeException(nameof(expiresAt));
 
         return new WebAuthnChallenge(Guid.NewGuid())
@@ -51,7 +52,7 @@ public sealed class WebAuthnChallenge : EntityWithIdentity<Guid>
             OptionsJson = optionsJson,
             ReturnUrl = returnUrl,
             RememberMe = rememberMe,
-            ExpiresAt = expiresAt,
+            ExpiresAt = normalizedExpiresAt,
             CreatedAt = timestamp,
         };
     }
@@ -64,7 +65,7 @@ public sealed class WebAuthnChallenge : EntityWithIdentity<Guid>
         if (ConsumedAt.HasValue || ExpiresAt <= now)
             return false;
 
-        ConsumedAt = now;
+        ConsumedAt = now.ToUniversalTime();
         return true;
     }
 

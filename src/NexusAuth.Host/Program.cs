@@ -2,6 +2,7 @@ using Luck.AutoDependencyInjection;
 using Luck.Logging.Serilog;
 using Microsoft.Extensions.Configuration;
 using NexusAuth.Host;
+using NexusAuth.Host.Swagger;
 
 var builder = WebApplication.CreateBuilder(args);
 AddSingleUnderscoreEnvironmentVariables(builder.Configuration);
@@ -15,6 +16,7 @@ try
     builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(
         options => NexusAuth.Host.Authentication.ClientIpConfiguration.Configure(options, builder.Configuration));
     builder.Services.AddApplication<AppWebModule>();
+    builder.Services.AddNexusAuthSwagger();
 
     var app = builder.Build();
 
@@ -23,6 +25,7 @@ try
     app.UseStaticFiles();
     app.InitializeApplication();
     app.UseLuckRequestLogContext();
+    app.UseNexusAuthSwagger();
     app.MapControllers();
     app.MapRazorPages();
 

@@ -4,6 +4,7 @@
         <PackageReference Include="Fido2" />
         <PackageReference Include="Luck.AutoDependencyInjection" />
         <PackageReference Include="Luck.AspNetCore" />
+        <PackageReference Include="Swashbuckle.AspNetCore" />
     </ItemGroup>
 
     <ItemGroup>

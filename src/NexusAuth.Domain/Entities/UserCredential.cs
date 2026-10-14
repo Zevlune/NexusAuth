@@ -32,8 +32,9 @@ public sealed class UserCredential : EntityWithIdentity<Guid>
         DateTimeOffset? now = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(protectedSecret);
-        var createdAt = now ?? DateTimeOffset.UtcNow;
-        if (expiresAt <= createdAt)
+        var createdAt = now?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
+        var normalizedExpiresAt = expiresAt.ToUniversalTime();
+        if (normalizedExpiresAt <= createdAt)
             throw new ArgumentOutOfRangeException(nameof(expiresAt));
 
         return new UserCredential(Guid.NewGuid())
@@ -42,7 +43,7 @@ public sealed class UserCredential : EntityWithIdentity<Guid>
             Type = TotpType,
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Authenticator" : displayName.Trim(),
             PendingSecretProtected = protectedSecret,
-            PendingExpiresAt = expiresAt,
+            PendingExpiresAt = normalizedExpiresAt,
             IsEnabled = false,
             CreatedAt = createdAt,
             UpdatedAt = createdAt,
@@ -65,7 +66,7 @@ public sealed class UserCredential : EntityWithIdentity<Guid>
         PendingExpiresAt = null;
         IsEnabled = true;
         LastUsedCounter = counter;
-        UpdatedAt = now;
+        UpdatedAt = now.ToUniversalTime();
         return true;
     }
 
@@ -78,7 +79,7 @@ public sealed class UserCredential : EntityWithIdentity<Guid>
             return false;
 
         LastUsedCounter = counter;
-        UpdatedAt = now;
+        UpdatedAt = now.ToUniversalTime();
         return true;
     }
 
@@ -89,7 +90,7 @@ public sealed class UserCredential : EntityWithIdentity<Guid>
         PendingSecretProtected = null;
         PendingExpiresAt = null;
         LastUsedCounter = null;
-        DisabledAt = now;
-        UpdatedAt = now;
+        DisabledAt = now.ToUniversalTime();
+        UpdatedAt = now.ToUniversalTime();
     }
 }

@@ -91,6 +91,16 @@ public sealed class WorkbenchCookieAuthenticationEvents(
                 throw new InvalidOperationException("The refresh response did not contain the required tokens.");
             }
 
+            // A completed refresh may be reused briefly by concurrent requests.
+            // Recheck its persisted state in case an administrator revoked the
+            // user after that result was produced.
+            var introspection = await oidcService.IntrospectAccessTokenAsync(
+                refreshed.AccessToken, context.HttpContext.RequestAborted);
+            if (!introspection.Active
+                || !string.Equals(introspection.Subject, context.Principal.FindFirstValue(ClaimTypes.NameIdentifier), StringComparison.Ordinal)
+                || !string.Equals(introspection.ClientId, oidcService.ClientId, StringComparison.Ordinal))
+                throw new InvalidOperationException("The refreshed token is no longer active.");
+
             var refreshedExpiresAt = DateTimeOffset.UtcNow.AddSeconds(refreshed.ExpiresIn);
             var tokens = context.Properties.GetTokens()
                 .Where(token => token.Name is not ("access_token" or "refresh_token" or "id_token" or "expires_at"))

@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    participant App as 原生 App
+    participant BFF as Mobile BFF
+    participant Auth as NexusAuth 认证
+    participant Token as NexusAuth TokenService
+    participant API as 业务 API
+    Note over App,API: 拟新增原生手机号认证入口；所有通信使用 HTTPS
+    App->>App: 随机 verifier；计算 S256 challenge
+    App->>BFF: 手机号 + challenge；请求验证码
+    BFF->>Auth: 客户端认证；发起认证事务
+    Auth->>Auth: 校验客户端、限流；发送短信
+    Auth-->>BFF: challengeId + 有效期
+    BFF-->>App: challengeId + 重发倒计时
+    App->>BFF: challengeId + 短信验证码
+    BFF->>Auth: 验证验证码；继续认证事务
+    Auth->>Auth: 一次性消费验证码；检查账号状态
+    opt 账号要求 MFA
+        Auth-->>BFF: 待完成 MFA 的 transactionId
+        BFF-->>App: 显示原生 TOTP 页面
+        App->>BFF: transactionId + TOTP
+        BFF->>Auth: 验证 MFA
+    end
+    Auth-->>BFF: 一次性 login ticket（绑定客户端与 challenge）
+    BFF-->>App: login ticket
+    App->>BFF: login ticket + verifier
+    BFF->>Auth: 客户端凭据 + ticket + verifier + scope
+    Auth->>Auth: 校验客户端、票据时效、S256 与资源权限；原子消费
+    Auth->>Token: 已认证用户 + 获授权客户端及资源 + 认证上下文
+    Token-->>Auth: access_token + refresh_token
+    Auth-->>BFF: 返回统一签发的 Token
+    BFF->>BFF: 保存 Token；创建 App 会话
+    BFF-->>App: sessionToken + 用户资料
+    App->>App: SecureStore 保存 sessionToken
+    App->>BFF: 业务请求；Bearer sessionToken
+    BFF->>API: 业务请求；Bearer access_token
+    API->>API: 验证签名、iss、aud、时效、scope；检查业务权限
+    API-->>BFF: 业务数据
+    BFF-->>App: 业务数据
+    Note over App,BFF: App 不持有 client_secret 或 NexusAuth refresh_token

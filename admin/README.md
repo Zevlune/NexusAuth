@@ -137,7 +137,7 @@ Workbench Cookie 名为 `.NexusAuth.Workbench`，HttpOnly、SameSite=Lax，默�
 每次 Cookie 验证都会检查 token 状态：
 
 - access token 距离过期超过 1 分钟时，API 通过 introspection 验证 token 仍 active、用户和客户端归属正确；
-- 距离过期不超过 1 分钟时，API 使用 refresh token 自动刷新，并保存轮换后的新 refresh token、access token 和 ID Token；
+- 距离过期不超过 1 分钟时，API 使用 refresh token 自动刷新，再通过 introspection 检查新 token 的状态和归属，并保存轮换后的令牌；
 - refresh 成功后将 Cookie session 和 token 续到新的 24 小时窗口；
 - token 缺失、用户不匹配、introspection 失败或 refresh 失败时拒绝 Principal 并清除 Cookie，前端需要重新登录。
 
@@ -150,7 +150,7 @@ Workbench Cookie 名为 `.NexusAuth.Workbench`，HttpOnly、SameSite=Lax，默�
 | 路由 | 能力 |
 |---|---|
 | `/api/clients` | OAuth 客户端查询、创建、更新、凭据生成/重置和删除 |
-| `/api/users` | 用户查询、资料更新、启停和密码重置 |
+| `/api/users` | 用户查询、创建、资料更新、删除、启停、密码重置和 token 吊销 |
 | `/api/api-resources` | API resource 查询、创建、更新、启停和删除 |
 | `/api/client-metadata` | 客户端元数据查询 |
 | `/api/login-audits` | 登录审计查询 |
@@ -159,7 +159,28 @@ Workbench Cookie 名为 `.NexusAuth.Workbench`，HttpOnly、SameSite=Lax，默�
 | `/api/auth/config` | 返回可公开的 Provider、client ID 和回调配置 |
 | `/api/auth/login`、`/signin-oidc`、`/api/auth/me`、`/api/auth/logout` | BFF 登录生命周期 |
 
-普通管理控制器使用统一 API 结果包装；`/api/auth/*` 和 `/signin-oidc` 是认证流程端点，按 HTTP 状态和认证响应处理。Swagger 是接口细节的最终来源。
+其他普通管理控制器使用统一 API 结果包装；`/api/users` 直接返回 HTTP 状态及数据，避免结果包装把拒绝访问和删除结果改为 HTTP 200。`/api/auth/*` 和 `/signin-oidc` 是认证流程端点，按 HTTP 状态和认证响应处理。Swagger 是接口细节的最终来源。
+
+### 用户管理与 token 吊销
+
+侧边栏的独立“用户管理”入口为 `/user-management`；原 `/oauth/user-management` 地址仍可访问。页面支持搜索、分页、创建用户、编辑资料、启用/禁用、重置密码、删除用户和吊销全部 token。创建时必填用户名、昵称和密码，用户名、邮箱和手机号不得重复；密码以 BCrypt 哈希保存。
+
+`/api/users` 下的全部接口仅允许数据库中启用的系统管理员账号操作（`IsSystemAccount=true`）。系统账号不能通过这些接口被修改、禁用、重置密码、删除或吊销 token。
+
+| 方法与路由 | 操作 |
+|---|---|
+| `POST /api/users` | 创建本地用户 |
+| `PUT /api/users/{id}` | 修改用户资料 |
+| `DELETE /api/users/{id}` | 删除用户，同时作废 token 和登录会话 |
+| `PATCH /api/users/{id}/status` | 启用/禁用；禁用时作废 token 和会话 |
+| `POST /api/users/{id}/reset-password` | 重置密码，同时作废 token 和会话 |
+| `POST /api/users/{id}/revoke-tokens` | 吊销该用户在全部客户端的现有访问 token、刷新 token 和 SSO 会话 |
+
+吊销后，Workbench 的 Cookie、直接 Bearer 和网关转发的 Bearer 在下一次请求时拒绝旧 token；Provider 的 introspection 和 userinfo 同样拒绝。吊销不会禁用账号，用户仍可重新登录取得新 token。若要持续禁止访问，应禁用或删除用户；重新启用账号不会恢复旧 token。
+
+用户 JWT 携带签名保护的 `token_epoch`，与数据库 `token_invalid_before` 的 UTC 微秒精度版本匹配，从而区分同一秒内签发、吊销和重新登录的 token。旧 JWT 兼容 `iat` 校验，吊销时同一秒内的旧 JWT 一并拒绝。此改动复用现有数据库字段，无需新增 schema。
+
+其他接入应用要实现同样的即时吊销效果，须在受保护请求中调用 `/connect/introspect` 并要求 `active=true`，本地 Cookie 也须检查对应 token 的状态。仅离线校验 JWT 签名和有效期的应用不会得知吊销，仍可能接受旧 token 直到到期；`AddNexusAuthJwtBearer` 本身只提供离线验证。introspection 使用应用自己的机密客户端凭据，提交对应客户端的 token。
 
 ## 构建与部署
 

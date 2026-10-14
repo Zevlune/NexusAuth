@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "NexusAuth Demo",
+    "slug": "nexusauth-demo-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "nexusauth-demo",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nexusauth.demo.mobile"
+    },
+    "android": {
+      "package": "com.nexusauth.demo.mobile"
+    },
+    "plugins": ["expo-secure-store"]
+  }
+}

@@ -37,6 +37,6 @@ public sealed class SsoSession : EntityWithIdentity<Guid>
 
     public void Revoke(DateTimeOffset now)
     {
-        RevokedAt ??= now;
+        RevokedAt ??= now.ToUniversalTime();
     }
 }

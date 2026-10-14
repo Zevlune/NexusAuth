@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+.env
+.env.*
+!.env.example
+ios/
+android/
+*.p8
+*.p12
+*.key

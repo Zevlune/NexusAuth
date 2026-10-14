@@ -113,6 +113,22 @@ VALUES
     false,
     true,
     NOW()
+),
+(
+    '20000000-0000-0000-0000-000000000104',
+    'demo-mobile-bff',
+    'client_secret_basic',
+    NULL,
+    NULL,
+    'Demo Mobile BFF Client',
+    'Mobile app OAuth redirect broker. The secret stays on the backend.',
+    '["http://localhost:5401/signin-oidc"]',
+    '[]',
+    '["openid","profile","email","offline_access"]',
+    '["authorization_code","refresh_token"]',
+    true,
+    true,
+    NOW()
 )
 ON CONFLICT (client_id) DO UPDATE SET
     token_endpoint_auth_method = EXCLUDED.token_endpoint_auth_method,
@@ -136,6 +152,16 @@ VALUES
     '$2a$12$pw856E1CHH3FfcshE0NwCeETGR5hyYaeudBqZfQYCpXdbBuvOpuuy',
     NULL,
     'demo-bff-secret',
+    true,
+    NOW()
+),
+(
+    '21000000-0000-0000-0000-000000000104',
+    '20000000-0000-0000-0000-000000000104',
+    'shared_secret',
+    '$2a$12$pw856E1CHH3FfcshE0NwCeETGR5hyYaeudBqZfQYCpXdbBuvOpuuy',
+    NULL,
+    'demo-mobile-bff (backend only)',
     true,
     NOW()
 )

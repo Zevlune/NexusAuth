@@ -57,6 +57,22 @@ export type UpdateManagedUserRequest = {
   timezone?: string | null;
 };
 
+export type CreateManagedUserRequest = {
+  username: string;
+  password: string;
+  nickname: string;
+  email?: string | null;
+  phoneNumber?: string | null;
+  givenName?: string | null;
+  familyName?: string | null;
+  title?: string | null;
+  userType?: string | null;
+  preferredLanguage?: string | null;
+  locale?: string | null;
+  timezone?: string | null;
+  isActive?: boolean;
+};
+
 export type ResetManagedUserPasswordRequest = {
   newPassword: string;
 };
@@ -83,12 +99,24 @@ export const revokeUserPasskey = (id: string, credentialId: string, reason: stri
   return request.post<void>(`/users/${id}/passkeys/${credentialId}/revoke`, { reason });
 };
 
+export const createUser = (data: CreateManagedUserRequest): Promise<ManagedUser> => {
+  return request.post<ManagedUser>('/users', data);
+};
+
 export const updateUser = (id: string, data: UpdateManagedUserRequest): Promise<ManagedUser> => {
   return request.put<ManagedUser>(`/users/${id}`, data);
 };
 
 export const updateUserStatus = (id: string, isActive: boolean): Promise<ManagedUser> => {
   return request.patch<ManagedUser>(`/users/${id}/status`, { isActive });
+};
+
+export const deleteUser = (id: string): Promise<void> => {
+  return request.delete<void>(`/users/${id}`);
+};
+
+export const revokeUserTokens = (id: string): Promise<void> => {
+  return request.post<void>(`/users/${id}/revoke-tokens`);
 };
 
 export const resetUserPassword = (id: string, data: ResetManagedUserPasswordRequest): Promise<void> => {

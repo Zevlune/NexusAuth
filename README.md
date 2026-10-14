@@ -2,7 +2,7 @@
 
 NexusAuth 是基于 ASP.NET Core / .NET 10 的 OAuth 2.0 授权服务器和 OpenID Connect（OIDC）身份提供方。接入方通过授权码获取用户身份，或用客户端凭据获取服务令牌；NexusAuth 负责登录、授权、签发和校验所需的协议端点。
 
-当前接入对象是能安全保存凭据的服务端应用、Web 后端和设备客户端。`token_endpoint_auth_method=none` 尚未实现，SPA、移动端和桌面端不能把客户端密钥或 refresh token 放在自身环境中直接接入；Web 前端可通过服务端 BFF 完成协议交互。
+当前接入对象是能安全保存凭据的服务端应用、Web 后端和设备客户端。`token_endpoint_auth_method=none` 尚未实现，SPA、移动端和桌面端不能把客户端密钥或 refresh token 放在自身环境中直接接入；Web 前端可通过服务端 BFF 完成协议交互。移动端可参考 [React Native / Expo 完整 App](./demo/src/Demo.Mobile/README.md) 和 [移动端登录后端](./demo/src/Demo.Mobile.Backend/README.md)，使用系统浏览器登录、一次性回调票据和 App 安全存储会话。
 
 ## 从哪里开始
 

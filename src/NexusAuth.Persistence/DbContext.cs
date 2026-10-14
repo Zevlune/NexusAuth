@@ -4,6 +4,7 @@ using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
+using NexusAuth.Persistence.Converters;
 
 namespace NexusAuth.Persistence;
 
@@ -41,6 +42,13 @@ public class DbContext(DbContextOptions options) : LuckDbContextBase(options)
         Set<ScimServicePrincipalCredential>();
 
     public DbSet<OpenApiCredential> OpenApiCredentials => Set<OpenApiCredential>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        base.ConfigureConventions(configurationBuilder);
+        configurationBuilder.Properties<DateTimeOffset>()
+            .HaveConversion<UtcDateTimeOffsetConverter>();
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

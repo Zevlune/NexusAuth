@@ -61,7 +61,7 @@ public class ScimServicePrincipalCredential : EntityWithIdentity<Guid>
             TokenHash = Hash(rawToken),
             Scopes = NormalizeScopes(scopes),
             IsActive = true,
-            ExpiresAt = expiresAt,
+            ExpiresAt = expiresAt?.ToUniversalTime(),
             CreatedAt = DateTimeOffset.UtcNow,
         };
     }
@@ -90,13 +90,13 @@ public class ScimServicePrincipalCredential : EntityWithIdentity<Guid>
 
     public void RecordUse(DateTimeOffset? now = null)
     {
-        LastUsedAt = now ?? DateTimeOffset.UtcNow;
+        LastUsedAt = now?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
     }
 
     public void Revoke(DateTimeOffset? revokedAt = null)
     {
         IsActive = false;
-        RevokedAt ??= revokedAt ?? DateTimeOffset.UtcNow;
+        RevokedAt ??= revokedAt?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
     }
 
     public void Update(
@@ -108,7 +108,7 @@ public class ScimServicePrincipalCredential : EntityWithIdentity<Guid>
 
         Name = name.Trim();
         Scopes = NormalizeScopes(scopes);
-        ExpiresAt = expiresAt;
+        ExpiresAt = expiresAt?.ToUniversalTime();
     }
 
     public void SetActive(bool isActive)
