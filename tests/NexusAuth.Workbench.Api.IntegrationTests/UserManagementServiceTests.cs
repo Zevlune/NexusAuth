@@ -129,6 +129,41 @@ public sealed class UserManagementServiceTests
     }
 
     [Fact]
+    public async Task UpdateProfileAsync_rejects_invalid_fields_before_repository_access()
+    {
+        var invalidRequests = new[]
+        {
+            ValidUpdate() with { Nickname = "" },
+            ValidUpdate() with { Nickname = new string('n', 101) },
+            ValidUpdate() with { Email = "not-an-email" },
+            ValidUpdate() with { PhoneNumber = new string('1', 21) },
+            ValidUpdate() with { Timezone = new string('t', 101) },
+        };
+
+        foreach (var request in invalidRequests)
+        {
+            var harness = new Harness();
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                harness.Service.UpdateProfileAsync(Guid.NewGuid(), request, CancellationToken.None));
+            Assert.Empty(harness.Calls);
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public async Task ResetPasswordAsync_rejects_invalid_password_before_repository_access(string password)
+    {
+        var harness = new Harness();
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            harness.Service.ResetPasswordAsync(Guid.NewGuid(), new ResetManagedUserPasswordRequest(password), CancellationToken.None));
+
+        Assert.Empty(harness.Calls);
+    }
+
+    [Fact]
     public async Task UpdateProfileAsync_rejects_phone_used_by_another_user_without_updating()
     {
         var target = User.Create("target", "pw-for-fixture", "Target");

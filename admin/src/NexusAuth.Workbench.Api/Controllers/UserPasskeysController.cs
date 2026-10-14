@@ -47,4 +47,4 @@ public sealed class UserPasskeysController(IPasskeyManagementService passkeys, I
         ActorId != Guid.Empty && await users.FindByIdAsync(ActorId, ct) is { IsActive: true, IsSystemAccount: true };
 }
 
-public sealed record RevokePasskeyRequest([property: Required, StringLength(500)] string Reason);
+public sealed record RevokePasskeyRequest([Required, StringLength(500)] string Reason);

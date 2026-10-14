@@ -2,6 +2,7 @@ namespace NexusAuth.Application.Users;
 
 using Luck.Logging.Serilog;
 using System.ComponentModel.DataAnnotations;
+using System.Reflection;
 using NexusAuth.Application.Services.Sessions;
 
 public class UserManagementService(
@@ -139,7 +140,19 @@ public class UserManagementService(
     {
         ArgumentNullException.ThrowIfNull(request);
         var results = new List<ValidationResult>();
-        if (!Validator.TryValidateObject(request, new ValidationContext(request), results, validateAllProperties: true))
+        Validator.TryValidateObject(request, new ValidationContext(request), results, validateAllProperties: true);
+
+        // MVC reads positional record validation from constructor parameters, not properties.
+        // Apply the same rules when this service is called without the MVC pipeline.
+        var requestType = request.GetType();
+        foreach (var parameter in requestType.GetConstructors().Single().GetParameters())
+        {
+            var context = new ValidationContext(request) { MemberName = parameter.Name };
+            var value = requestType.GetProperty(parameter.Name!)!.GetValue(request);
+            Validator.TryValidateValue(value, context, results, parameter.GetCustomAttributes<ValidationAttribute>());
+        }
+
+        if (results.Count > 0)
             throw new ArgumentException(string.Join(" ", results.Select(result => result.ErrorMessage)));
     }
 
