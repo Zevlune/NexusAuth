@@ -2,7 +2,7 @@
 
 本文是 NexusAuth 当前 OAuth 2.0 / OpenID Connect Provider 的行为说明。它解释授权请求如何校验、错误何时回跳、PKCE 如何按客户端生效，以及 token endpoint 如何处理客户端认证冲突。
 
-本文描述的是实现边界，不代表 NexusAuth 已实现所有 OAuth/OIDC 扩展。接入方可先阅读 [使用手册](./01-快速启动.md) 的接入章节，再按需查看 [Workbench 接入说明](./01-快速启动.md) 和 [Demo 示例](./01-快速启动.md)。
+本文描述的是实现边界，不代表 NexusAuth 已实现所有 OAuth/OIDC 扩展。接入方可先阅读 [NexusAuth.Host 使用手册](./NexusAuth.Host使用手册.md) 的协议接入章节；管理工作台的部署及 BFF 登录见 [Workbench 使用手册](./Workbench使用手册.md)。
 
 ## 0. 端点总览
 
