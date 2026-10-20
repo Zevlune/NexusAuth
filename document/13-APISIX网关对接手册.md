@@ -1,6 +1,6 @@
 # APISIX Dashboard 手工配置 NexusAuth OIDC 手册
 
-> 状态：暂未整理。本手册当前不作为推荐部署流程；非 Gateway 部署请先阅读 [快速启动](./01-快速启动.md)。以下 APISIX 操作内容暂保留，仅供需要网关接入的场景参考。
+> 状态：暂未整理。本手册当前不作为推荐部署流程；非 Gateway 部署请先阅读 [Workbench 使用手册](./Workbench使用手册.md)，认证服务的独立部署见 [Host 使用手册](./NexusAuth.Host使用手册.md)。以下 APISIX 操作内容暂保留，仅供需要网关接入的场景参考。
 
 当前本地已有的网关 OIDC 路由为 `http://localhost:9180/auth/me`，回调为 `http://localhost:9180/auth/callback`，进入时会跳转到 `http://localhost:5100` 登录。下文 `/api/*` 是另建路由的手工示例，并非当前已部署路由。根 Compose 必须先运行；本地启动使用 `./docker/apisix/start-local.sh`。APISIX 的 9180 和 Dashboard 的 9000 都只绑定宿主机回环地址。
 

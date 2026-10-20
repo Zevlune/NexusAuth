@@ -1,6 +1,6 @@
 # Workbench Dashboard：浏览器统一登录模板
 
-这个模板展示 React 前端如何与已接入 NexusAuth 的服务端配合。Dashboard 自身不是 OAuth 客户端：不兑换授权码，不验证 ID Token，也不保存客户端密钥、access token 或 refresh token。对应代码在 [`admin/src/NexusAuth.Workbench.Dashboard`](../admin/src/NexusAuth.Workbench.Dashboard)；后端步骤见[Workbench API 模板](./Workbench-API统一登录接入模板.md)。
+这个模板展示 React 前端如何与已接入 NexusAuth 的服务端配合。Dashboard 的页面脚本不兑换授权码，不验证 ID Token，也不保存客户端密钥或明文令牌；浏览器通过 API 签发的加密 HttpOnly Cookie 维持会话。整套管理工作台的部署与操作先看 [Workbench 使用手册](Workbench使用手册.md)。对应代码在 [`admin/src/NexusAuth.Workbench.Dashboard`](../admin/src/NexusAuth.Workbench.Dashboard)；后端步骤见[Workbench API 模板](./Workbench-API统一登录接入模板.md)。
 
 ## 页面如何进入登录状态
 
@@ -10,11 +10,11 @@
 4. 前端重新请求 `/api/auth/me`，成功后进入受保护页面。普通管理请求使用同源 Cookie；受保护 API 返回 401 时回到登录页。
 5. 登出时调用 `POST /api/auth/logout` 清 API 会话；若响应包含 `logoutUrl`，浏览器继续跳到 NexusAuth 的 `/connect/endsession`，完成 Provider 侧登出。
 
-接口由 [`src/api/login.ts`](../admin/src/NexusAuth.Workbench.Dashboard/src/api/login.ts) 封装；路由和登录状态判断见 [`src/router/auth.tsx`](../admin/src/NexusAuth.Workbench.Dashboard/src/router/auth.tsx) 与 [`src/router/routes.tsx`](../admin/src/NexusAuth.Workbench.Dashboard/src/router/routes.tsx)。`/auth/callback` 是前端落地页，不是 NexusAuth 登记的 OAuth 回调地址。不要把客户端的 `redirect_uri` 指向它。
+接口由 [`src/api/login.ts`](../admin/src/NexusAuth.Workbench.Dashboard/src/api/login.ts) 封装；路由和登录状态判断见 [`src/router/auth.ts`](../admin/src/NexusAuth.Workbench.Dashboard/src/router/auth.ts) 与 [`src/router/routes.tsx`](../admin/src/NexusAuth.Workbench.Dashboard/src/router/routes.tsx)。`/auth/callback` 是前端落地页，不是 NexusAuth 登记的 OAuth 回调地址。不要把客户端的 `redirect_uri` 指向它。
 
 ## 同源部署和 Cookie
 
-浏览器通过 `/api` 访问后端，请求开启 `withCredentials`。开发环境的 Vite 代理将 `/api` 与 `/signin-oidc` 转发到本地 API；根目录 Compose 的 Nginx 同样代理这两个路径，因此对外回调为 `http://localhost:5560/signin-oidc`，真正处理回调的是 Workbench API。直接运行 Dashboard 时默认 Vite 端口为 `5273`，Compose 为 `5560`。配置的 `redirect_uri` 必须与公开路径逐字符一致。
+浏览器通过 `/api` 访问后端，请求开启 `withCredentials`。当前 Vite 配置将 `/api` 与 `/signin-oidc` 转发到 `http://192.168.31.200:9100`。本地运行 API（`http://localhost:5051`）时，需要在 `vite.config.ts` 中同时修改这两个代理目标，并将 API 的 Authority 改到实际 Host 地址；根目录 Compose 的 Nginx 同样代理这两个路径，因此对外回调为 `http://localhost:5560/signin-oidc`，真正处理回调的是 Workbench API。直接运行 Dashboard 时默认 Vite 端口为 `5273`，Compose 为 `5560`。配置的 `redirect_uri` 必须与公开路径逐字符一致。
 
 前端不从查询串、localStorage 或构建变量里读取令牌；仅依赖 API 签发的 HttpOnly Cookie。应用请求收到 401 时可清理页面登录状态并回到登录入口，但不要对 `/api/auth/me` 的 401 反复跳转，否则会形成登录循环。复制这个模板到其他应用时，后端必须先实现对应的 `/api/auth/*`、回调、Cookie 验证与刷新逻辑；单独复制 React 页面无法完成 OIDC 接入。
 
