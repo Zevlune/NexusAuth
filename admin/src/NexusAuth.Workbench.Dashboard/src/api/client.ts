@@ -1,5 +1,12 @@
 import request from './request';
 
+export type TokenEndpointAuthMethod =
+  | 'client_secret_basic'
+  | 'client_secret_post'
+  | 'client_secret_jwt'
+  | 'private_key_jwt'
+  | 'none';
+
 export type CreateClientRequest = {
   clientId: string;
   clientName: string;
@@ -10,7 +17,7 @@ export type CreateClientRequest = {
   allowedGrantTypes?: string[];
   apiResourceIds?: string[];
   requirePkce: boolean;
-  tokenEndpointAuthMethod?: string;
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
   autoGenerateJwks?: boolean;
   jwks?: string;
   jwksUri?: string;
@@ -25,14 +32,14 @@ export type UpdateClientRequest = {
   allowedGrantTypes?: string[];
   apiResourceIds?: string[];
   requirePkce?: boolean;
-  tokenEndpointAuthMethod?: string;
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
   jwks?: string;
   jwksUri?: string;
   isActive?: boolean;
 };
 
 export type GenerateClientCredentialRequest = {
-  tokenEndpointAuthMethod?: string;
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
   autoGenerateJwks?: boolean;
   description?: string;
 };
@@ -69,7 +76,7 @@ export type Client = {
   apiResourceIds: string[];
   requirePkce: boolean;
   isActive: boolean;
-  tokenEndpointAuthMethod: string;
+  tokenEndpointAuthMethod: TokenEndpointAuthMethod;
   jwks?: string;
   jwksUri?: string;
   credentials: ClientCredential[];

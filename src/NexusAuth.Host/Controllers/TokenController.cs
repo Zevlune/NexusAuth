@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Services;
+using NexusAuth.Application.Services.ExternalIdentity;
 
 namespace NexusAuth.Host.Controllers;
 
@@ -12,7 +13,9 @@ public class TokenController(
     IClientService clientService,
     IUserService userService,
     ISecurityPolicyService securityPolicyService,
-    IOptions<JwtOptions> jwtOptions) : ControllerBase
+    IOptions<JwtOptions> jwtOptions,
+    IWeChatMiniProgramLoginService weChatMiniProgramLoginService,
+    IOptions<WeChatMiniProgramOptions> weChatOptions) : ControllerBase
 {
     private readonly IAuthorizationService _authorizationService = authorizationService;
     private readonly ITokenService _tokenService = tokenService;
@@ -21,10 +24,13 @@ public class TokenController(
     private readonly IUserService _userService = userService;
     private readonly ISecurityPolicyService _securityPolicyService = securityPolicyService;
     private readonly JwtOptions _jwtOptions = jwtOptions.Value;
+    private readonly IWeChatMiniProgramLoginService _weChatMiniProgramLoginService = weChatMiniProgramLoginService;
+    private readonly WeChatMiniProgramOptions _weChatOptions = weChatOptions.Value;
 
     /// <summary>
     /// OAuth2.0 Token Endpoint.
-    /// Supports grant_type: authorization_code, client_credentials, refresh_token.
+    /// Supports grant_type: authorization_code, client_credentials, refresh_token,
+    /// device_code and the configured WeChat mini program extension grant.
     /// </summary>
     /// <summary>
     /// 统一 Token 入口，根据 grant_type 分发到具体流程。
@@ -56,8 +62,25 @@ public class TokenController(
         [FromForm(Name = "client_assertion")] string? clientAssertion = null,
         CancellationToken ct = default)
     {
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.Pragma = "no-cache";
         if (string.IsNullOrWhiteSpace(grantType))
             return BadRequest(new { error = "invalid_request", error_description = "grant_type is required." });
+
+        if (string.Equals(grantType, WeChatMiniProgramGrantTypes.GrantType, StringComparison.Ordinal))
+        {
+            // 微信小程序是 public client，不能安全保存 client_secret。它使用微信一次性
+            // code 作为上游认证材料，只有这个扩展 grant 允许省略 OAuth client secret。
+            if (clientSecret is not null
+                || clientAssertionType is not null
+                || clientAssertion is not null
+                || !string.IsNullOrWhiteSpace(Request.Headers.Authorization))
+            {
+                return InvalidClient();
+            }
+
+            return await HandleWeChatMiniProgramAsync(clientId, code, scope, ct);
+        }
 
         // 中文注释：统一解析 OAuth2 客户端认证，优先兼容标准的 client_secret_basic，
         // 同时保留现有 demo 在用的 client_secret_post 表单方式。
@@ -83,6 +106,122 @@ public class TokenController(
             "urn:ietf:params:oauth:grant-type:device_code" => await HandleDeviceCodeAsync(authentication, deviceCode, ct),
             _ => BadRequest(new { error = "unsupported_grant_type", error_description = $"Grant type '{grantType}' is not supported." }),
         };
+    }
+
+    private async Task<IActionResult> HandleWeChatMiniProgramAsync(
+        string? clientId,
+        string? code,
+        string? scope,
+        CancellationToken ct)
+    {
+        if (!_weChatOptions.Enabled)
+            return BadRequest(new { error = "unsupported_grant_type", error_description = "WeChat mini program login is disabled." });
+
+        if (string.IsNullOrWhiteSpace(clientId)
+            || !string.Equals(clientId, _weChatOptions.ClientId, StringComparison.Ordinal))
+        {
+            return InvalidClient();
+        }
+
+        var clientAuthentication = await _clientService.AuthenticateClientAsync(
+            new ClientAuthenticationInput(clientId, null, null, null),
+            requireClientAuthentication: false,
+            ct);
+        if (!clientAuthentication.IsSuccess || clientAuthentication.Client is null)
+            return InvalidClient();
+
+        if (!string.Equals(clientAuthentication.Client.TokenEndpointAuthMethod, "none", StringComparison.Ordinal))
+            return InvalidClient();
+
+        if (!_securityPolicyService.CheckClient(clientId).IsSuccess)
+            return BadRequest(new { error = "unauthorized_client", error_description = "Client is blocked by security policy." });
+
+        if (!clientAuthentication.Client.IsGrantTypeAllowed(WeChatMiniProgramGrantTypes.GrantType))
+        {
+            return BadRequest(new
+            {
+                error = "unauthorized_client",
+                error_description = "Client is not allowed to use the WeChat mini program grant type.",
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(code))
+            return BadRequest(new { error = "invalid_request", error_description = "code is required." });
+
+        if (string.IsNullOrWhiteSpace(scope))
+            return BadRequest(new { error = "invalid_request", error_description = "scope is required." });
+
+        var scopeValidation = await _clientService.ValidateScopesAsync(clientId, scope, allowIdentityScopes: true, ct);
+        if (!scopeValidation.IsSuccess)
+        {
+            return BadRequest(new
+            {
+                error = scopeValidation.ErrorCode ?? "invalid_scope",
+                error_description = scopeValidation.Error,
+            });
+        }
+
+        if (scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Contains("offline_access", StringComparer.Ordinal)
+            && !clientAuthentication.Client.IsGrantTypeAllowed("refresh_token"))
+        {
+            return BadRequest(new
+            {
+                error = "unauthorized_client",
+                error_description = "Client is not allowed to use refresh_token.",
+            });
+        }
+
+        WeChatMiniProgramLoginResult login;
+        try
+        {
+            login = await _weChatMiniProgramLoginService.AuthenticateAsync(code, ct);
+        }
+        catch (WeChatMiniProgramLoginException exception)
+        {
+            return StatusCode(exception.ErrorCode == "temporarily_unavailable" ? 503 : 400,
+                new { error = exception.ErrorCode, error_description = exception.Message });
+        }
+
+        var userPolicy = _securityPolicyService.CheckUser(login.User);
+        if (!userPolicy.IsSuccess || !login.User.IsActive)
+            return BadRequest(new { error = "invalid_grant", error_description = "The user account is unavailable." });
+
+        var accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(
+            clientId,
+            scopeValidation.NormalizedScope!,
+            null,
+            login.User.Id,
+            null,
+            ct);
+        var refreshToken = ShouldIssueRefreshToken(scopeValidation.NormalizedScope!)
+            ? await _tokenService.IssueRefreshTokenAsync(clientId, login.User.Id, scopeValidation.NormalizedScope!, ct)
+            : null;
+        var includeIdToken = scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Contains("openid", StringComparer.Ordinal);
+        string? idToken = null;
+        if (includeIdToken)
+        {
+            idToken = await _tokenService.IssueIdTokenAsync(
+                clientId,
+                login.User.Id,
+                null,
+                accessTokenResult.AccessToken,
+                authenticatedAt: login.AuthenticatedAt,
+                acr: "urn:nexusauth:acr:external",
+                amr: "wechat",
+                ct: ct);
+        }
+
+        return Ok(new
+        {
+            access_token = accessTokenResult.AccessToken,
+            token_type = "Bearer",
+            refresh_token = refreshToken,
+            scope = scopeValidation.NormalizedScope,
+            id_token = idToken,
+            expires_in = GetAccessTokenLifetimeSeconds(),
+        });
     }
 
     private async Task<IActionResult> HandleAuthorizationCodeAsync(
@@ -208,9 +347,22 @@ public class TokenController(
         if (string.IsNullOrWhiteSpace(authentication.ClientId))
             return InvalidClient();
 
-        var clientAuthentication = await _clientService.AuthenticateClientAsync(authentication, requireClientAuthentication: true, ct);
+        var isConfiguredMiniProgram = _weChatOptions.Enabled
+            && string.Equals(authentication.ClientId, _weChatOptions.ClientId, StringComparison.Ordinal);
+        var clientAuthentication = await _clientService.AuthenticateClientAsync(authentication,
+            requireClientAuthentication: !isConfiguredMiniProgram, ct);
         if (!clientAuthentication.IsSuccess)
             return InvalidClient();
+
+        if (isConfiguredMiniProgram && (clientAuthentication.Client?.TokenEndpointAuthMethod != "none"
+            || authentication.ClientSecret is not null || authentication.ClientAssertion is not null
+            || authentication.ClientAssertionType is not null || !string.IsNullOrWhiteSpace(Request.Headers.Authorization)))
+            return InvalidClient();
+
+        if (clientAuthentication.Client?.IsGrantTypeAllowed("refresh_token") != true
+            || (isConfiguredMiniProgram && !clientAuthentication.Client.IsGrantTypeAllowed(WeChatMiniProgramGrantTypes.GrantType))
+            || !_securityPolicyService.CheckClient(authentication.ClientId!).IsSuccess)
+            return BadRequest(new { error = "unauthorized_client", error_description = "Client is not allowed to refresh tokens." });
 
         if (string.IsNullOrWhiteSpace(refreshToken))
             return BadRequest(new { error = "invalid_request", error_description = "refresh_token is required." });

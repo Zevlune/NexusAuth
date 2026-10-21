@@ -82,6 +82,31 @@ CREATE INDEX ix_user_credentials_user_type_enabled
     ON nexusauth.user_credentials (user_id, type, is_enabled);
 
 -- ============================================================
+-- user_external_identities
+-- ============================================================
+CREATE TABLE nexusauth.user_external_identities (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL REFERENCES nexusauth.users(id) ON DELETE CASCADE,
+    provider varchar(32) NOT NULL,
+    issuer varchar(256) NOT NULL,
+    subject varchar(256) NOT NULL,
+    union_id varchar(256),
+    created_at timestamptz NOT NULL,
+    last_authenticated_at timestamptz NOT NULL,
+    CONSTRAINT pk_user_external_identities PRIMARY KEY (id),
+    CONSTRAINT ck_user_external_identities_authentication_after_creation
+        CHECK (last_authenticated_at >= created_at)
+);
+
+CREATE UNIQUE INDEX ux_user_external_identities_provider_issuer_subject
+    ON nexusauth.user_external_identities (provider, issuer, subject);
+CREATE INDEX ix_user_external_identities_provider_issuer_union_id
+    ON nexusauth.user_external_identities (provider, issuer, union_id)
+    WHERE union_id IS NOT NULL;
+CREATE INDEX ix_user_external_identities_user_id
+    ON nexusauth.user_external_identities (user_id);
+
+-- ============================================================
 -- sso_sessions
 -- ============================================================
 CREATE TABLE nexusauth.sso_sessions (

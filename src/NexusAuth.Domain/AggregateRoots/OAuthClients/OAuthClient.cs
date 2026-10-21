@@ -6,6 +6,8 @@ namespace NexusAuth.Domain.AggregateRoots.OAuthClients;
 
 public class OAuthClient : AggregateRootWithIdentity<Guid>
 {
+    public const string TokenEndpointAuthMethodNone = "none";
+
     public const string TokenEndpointAuthMethodClientSecretBasic = "client_secret_basic";
 
     public const string TokenEndpointAuthMethodClientSecretPost = "client_secret_post";
@@ -13,6 +15,8 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
     public const string TokenEndpointAuthMethodClientSecretJwt = "client_secret_jwt";
 
     public const string TokenEndpointAuthMethodPrivateKeyJwt = "private_key_jwt";
+
+    private const string WeChatMiniProgramGrantType = "urn:nexusauth:grant-type:wechat_miniprogram";
 
     public const string ClientAssertionTypeJwtBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
@@ -71,7 +75,9 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
 
         var normalizedSecrets = clientSecrets?.ToList() ?? [];
         var normalizedAuthMethod = NormalizeTokenEndpointAuthMethod(tokenEndpointAuthMethod);
+        var normalizedGrantTypes = allowedGrantTypes?.ToList() ?? [];
         ValidateTokenEndpointAuthentication(normalizedAuthMethod, normalizedSecrets, jwks, jwksUri);
+        ValidatePublicClientGrantTypes(normalizedAuthMethod, normalizedGrantTypes);
 
         var client = new OAuthClient(id)
         {
@@ -85,7 +91,7 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
             RedirectUris = redirectUris?.ToList() ?? [],
             PostLogoutRedirectUris = postLogoutRedirectUris?.ToList() ?? [],
             AllowedScopes = allowedScopes?.ToList() ?? [],
-            AllowedGrantTypes = allowedGrantTypes?.ToList() ?? [],
+            AllowedGrantTypes = normalizedGrantTypes,
             RequirePkce = requirePkce,
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -181,6 +187,21 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         string? jwks = null,
         string? jwksUri = null)
     {
+        var normalizedAuthMethod = tokenEndpointAuthMethod is null
+            ? TokenEndpointAuthMethod
+            : NormalizeTokenEndpointAuthMethod(tokenEndpointAuthMethod);
+        var updatedGrantTypes = allowedGrantTypes is null
+            ? AllowedGrantTypes.ToList()
+            : [.. allowedGrantTypes];
+        var updatedSecrets = clientSecrets is null
+            ? ClientSecrets.ToList()
+            : [.. ClientSecrets, .. clientSecrets];
+        var updatedJwks = jwks is null ? Jwks : NormalizeNullableValue(jwks);
+        var updatedJwksUri = jwksUri is null ? JwksUri : NormalizeNullableValue(jwksUri);
+
+        ValidateTokenEndpointAuthentication(normalizedAuthMethod, updatedSecrets, updatedJwks, updatedJwksUri);
+        ValidatePublicClientGrantTypes(normalizedAuthMethod, updatedGrantTypes);
+
         if (!string.IsNullOrWhiteSpace(clientName))
             ClientName = clientName;
         
@@ -196,8 +217,7 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         if (allowedScopes is { })
             AllowedScopes = [.. allowedScopes];
         
-        if (allowedGrantTypes is { })
-            AllowedGrantTypes = [.. allowedGrantTypes];
+        AllowedGrantTypes = updatedGrantTypes;
         
         if (requirePkce is { } requirePkceValue)
             RequirePkce = requirePkceValue;
@@ -205,19 +225,12 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         if (isActive is { } isActiveValue)
             IsActive = isActiveValue;
 
-        if (tokenEndpointAuthMethod is { })
-            TokenEndpointAuthMethod = NormalizeTokenEndpointAuthMethod(tokenEndpointAuthMethod);
+        TokenEndpointAuthMethod = normalizedAuthMethod;
 
-        if (clientSecrets is { } secrets)
-            ClientSecrets.AddRange(secrets);
+        ClientSecrets = updatedSecrets;
 
-        if (jwks is { })
-            Jwks = NormalizeNullableValue(jwks);
-
-        if (jwksUri is { })
-            JwksUri = NormalizeNullableValue(jwksUri);
-
-        ValidateTokenEndpointAuthentication(TokenEndpointAuthMethod, ClientSecrets, Jwks, JwksUri);
+        Jwks = updatedJwks;
+        JwksUri = updatedJwksUri;
     }
 
     public bool AllowsTokenEndpointAuthMethod(string tokenEndpointAuthMethod)
@@ -227,9 +240,13 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
 
     public void SetJwks(string? jwks, string? jwksUri = null)
     {
-        Jwks = NormalizeNullableValue(jwks);
-        JwksUri = NormalizeNullableValue(jwksUri);
-        ValidateTokenEndpointAuthentication(TokenEndpointAuthMethod, ClientSecrets, Jwks, JwksUri);
+        var normalizedJwks = NormalizeNullableValue(jwks);
+        var normalizedJwksUri = NormalizeNullableValue(jwksUri);
+
+        ValidateTokenEndpointAuthentication(TokenEndpointAuthMethod, ClientSecrets, normalizedJwks, normalizedJwksUri);
+
+        Jwks = normalizedJwks;
+        JwksUri = normalizedJwksUri;
     }
 
     private static void ValidateTokenEndpointAuthentication(
@@ -241,9 +258,21 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         if (!string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretBasic, StringComparison.Ordinal)
             && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretPost, StringComparison.Ordinal)
             && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretJwt, StringComparison.Ordinal)
-            && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal))
+            && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal)
+            && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodNone, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"Unsupported token_endpoint_auth_method '{tokenEndpointAuthMethod}'.");
+        }
+
+        if (string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+        {
+            if (clientSecrets.Count > 0)
+                throw new InvalidOperationException("token_endpoint_auth_method 'none' cannot have client secrets.");
+
+            if (!string.IsNullOrWhiteSpace(jwks) || !string.IsNullOrWhiteSpace(jwksUri))
+                throw new InvalidOperationException("token_endpoint_auth_method 'none' does not use jwks or jwks_uri.");
+
+            return;
         }
 
         if (string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal))
@@ -265,6 +294,24 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
 
         if (!string.IsNullOrWhiteSpace(jwks) || !string.IsNullOrWhiteSpace(jwksUri))
             throw new InvalidOperationException($"token_endpoint_auth_method '{tokenEndpointAuthMethod}' does not use jwks or jwks_uri.");
+    }
+
+    private static void ValidatePublicClientGrantTypes(
+        string tokenEndpointAuthMethod,
+        IReadOnlyCollection<string> allowedGrantTypes)
+    {
+        if (!string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+            return;
+
+        var unsupportedGrant = allowedGrantTypes.FirstOrDefault(grantType =>
+            !string.Equals(grantType, WeChatMiniProgramGrantType, StringComparison.Ordinal)
+            && !string.Equals(grantType, "refresh_token", StringComparison.Ordinal));
+        if (unsupportedGrant is not null
+            || !allowedGrantTypes.Contains(WeChatMiniProgramGrantType, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "token_endpoint_auth_method 'none' requires the WeChat mini program grant and may only include refresh_token.");
+        }
     }
 
     private static string NormalizeTokenEndpointAuthMethod(string? tokenEndpointAuthMethod)

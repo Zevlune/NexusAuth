@@ -1,0 +1,13 @@
+flowchart LR
+    Mini["小程序<br/>access token 即将过期"] -->|"当前 refresh_token"| Host["NexusAuth.Host<br/>POST /connect/token<br/>grant_type=refresh_token"]
+    Host -->|"成功：签发并轮换"| Saved["小程序保存<br/>新的 access / refresh token"]
+    Host -->|"invalid_grant"| Login["清理失效会话<br/>重新 wx.login 登录"]
+    Host -->|"503 暂时不可用"| Later["保留会话并提示稍后重试"]
+    class Mini,Saved client
+    class Host gateway
+    class Login control
+    class Later core
+    classDef client fill:#e9f6f1,stroke:#2f6f5e,color:#173f35,stroke-width:1.5px
+    classDef gateway fill:#eaf2ff,stroke:#3567a7,color:#1d3b66,stroke-width:1.5px
+    classDef control fill:#f4edfb,stroke:#75529b,color:#422d59,stroke-width:1.5px
+    classDef core fill:#edf1f5,stroke:#596773,color:#303b44,stroke-width:1.5px

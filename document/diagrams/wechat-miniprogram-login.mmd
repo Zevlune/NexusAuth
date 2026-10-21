@@ -1,0 +1,19 @@
+sequenceDiagram
+    autonumber
+    participant Mini as 微信小程序
+    participant WX as 微信平台
+    participant Host as NexusAuth.Host
+    participant DB as 本地用户 / 外部身份库
+
+    Mini->>WX: wx.login()
+    WX-->>Mini: 一次性 code
+    Mini->>Host: POST /connect/token<br/>微信 grant + client_id + code + scope
+    Note over Host: 校验启用状态、客户端 none、grant 和 scope
+    Host->>WX: code2session<br/>AppId + AppSecret + code
+    WX-->>Host: openid / session_key / 可选 unionid
+    Host->>DB: 按 provider + AppId + openid 查找身份
+    DB-->>Host: 已有用户；首次则原子创建用户和身份
+    Note over Host: 检查本地用户状态；签发 NexusAuth Token
+    Host-->>Mini: access_token + id_token + refresh_token<br/>后两项分别需要 openid / offline_access
+    Mini->>Host: GET /connect/userinfo<br/>Authorization: Bearer access_token
+    Host-->>Mini: sub = 本地用户 ID；name = 本地昵称

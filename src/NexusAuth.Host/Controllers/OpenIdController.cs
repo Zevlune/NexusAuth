@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Services;
+using NexusAuth.Application.Services.ExternalIdentity;
 
 namespace NexusAuth.Host.Controllers;
 
@@ -16,7 +17,8 @@ public class OpenIdController(
     IDeviceAuthorizationService deviceAuthorizationService,
     ISsoSessionService sessionService,
     IAntiforgery antiforgery,
-    IOptions<JwtOptions> jwtOptions) : ControllerBase
+    IOptions<JwtOptions> jwtOptions,
+    IOptions<WeChatMiniProgramOptions>? weChatOptions = null) : ControllerBase
 {
     private readonly ITokenSigningCredentialsProvider _signingCredentialsProvider = signingCredentialsProvider;
     private readonly IIdTokenHintValidator _idTokenHintValidator = idTokenHintValidator;
@@ -71,10 +73,11 @@ public class OpenIdController(
                 "client_credentials",
                 "refresh_token",
                 "urn:ietf:params:oauth:grant-type:device_code",
-            },
+            }.Concat(weChatOptions?.Value.Enabled == true ? [WeChatMiniProgramGrantTypes.GrantType] : Array.Empty<string>()),
             subject_types_supported = new[] { "public" },
             id_token_signing_alg_values_supported = new[] { _signingCredentialsProvider.Algorithm },
-            token_endpoint_auth_methods_supported = new[] { "client_secret_post", "client_secret_basic", "client_secret_jwt", "private_key_jwt" },
+            token_endpoint_auth_methods_supported = new[] { "client_secret_post", "client_secret_basic", "client_secret_jwt", "private_key_jwt" }
+                .Concat(weChatOptions?.Value.Enabled == true ? ["none"] : Array.Empty<string>()),
             token_endpoint_auth_signing_alg_values_supported = new[] { "HS256", "RS256" },
             claims_supported = new[]
             {

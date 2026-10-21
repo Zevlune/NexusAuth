@@ -1,0 +1,104 @@
+.page {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 48rpx 32rpx;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 36rpx;
+}
+
+.title {
+  font-size: 44rpx;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.subtitle {
+  margin-top: 10rpx;
+  color: #66727f;
+  font-size: 26rpx;
+}
+
+.status,
+.user {
+  padding: 28rpx;
+  border: 1rpx solid #dce2e8;
+  border-radius: 12rpx;
+  background: #ffffff;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24rpx;
+  margin-bottom: 28rpx;
+}
+
+.status-label,
+.user-label {
+  color: #66727f;
+  font-size: 25rpx;
+}
+
+.status-value {
+  color: #1f2933;
+  font-size: 27rpx;
+  text-align: right;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 18rpx;
+}
+
+.actions button {
+  width: 100%;
+  margin: 0;
+  border-radius: 10rpx;
+  background: #ffffff;
+  color: #1f2933;
+  font-size: 28rpx;
+}
+
+.actions button::after {
+  border-color: #dce2e8;
+  border-radius: 10rpx;
+}
+
+.actions .primary {
+  border-color: #1769aa;
+  background: #1769aa;
+  color: #ffffff;
+}
+
+.actions .danger {
+  color: #a23b35;
+}
+
+.user {
+  margin-top: 28rpx;
+}
+
+.user-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.user-row + .user-row {
+  margin-top: 24rpx;
+  padding-top: 24rpx;
+  border-top: 1rpx solid #edf0f3;
+}
+
+.user-value {
+  color: #1f2933;
+  font-size: 27rpx;
+  line-height: 1.45;
+  word-break: break-all;
+}

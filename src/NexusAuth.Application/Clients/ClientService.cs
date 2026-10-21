@@ -457,6 +457,8 @@ public class ClientService(
     {
         var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new InvalidOperationException($"Client with id {id} not found.");
         var tokenEndpointAuthMethod = ResolveCredentialAuthMethod(client, request.TokenEndpointAuthMethod);
+        EnsureCredentialGenerationSupported(tokenEndpointAuthMethod);
+
         if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal))
             throw new InvalidOperationException("private_key_jwt does not use shared secret reset. Update the registered JWKS instead.");
 
@@ -528,6 +530,8 @@ public class ClientService(
 
     private static GeneratedCredential GenerateCredential(Guid clientId, string tokenEndpointAuthMethod, bool? autoGenerateJwks, string? description)
     {
+        EnsureCredentialGenerationSupported(tokenEndpointAuthMethod);
+
         if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal))
         {
             if (autoGenerateJwks is false)
@@ -584,6 +588,12 @@ public class ClientService(
         }
 
         throw new InvalidOperationException($"Unsupported token_endpoint_auth_method '{tokenEndpointAuthMethod}'.");
+    }
+
+    private static void EnsureCredentialGenerationSupported(string tokenEndpointAuthMethod)
+    {
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+            throw new InvalidOperationException("token_endpoint_auth_method 'none' does not use client credentials.");
     }
 
     private static string GenerateSecretValue()

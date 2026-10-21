@@ -28,16 +28,17 @@ import {
   Typography,
   Space,
 } from 'tdesign-react';
-import { deleteClient, getAllClients, getClient, getClients, type Client } from '../../api/client';
+import { deleteClient, getAllClients, getClient, getClients, type Client, type TokenEndpointAuthMethod } from '../../api/client';
 import { getAllApiResources } from '../../api/api-resource';
 import PageActions from '../../components/page-actions';
+import { authMethodOptions } from './client-options';
 import './style.less';
 import '../management-card.less';
 
 type FilterState = {
   keyword: string;
   isActive: '' | boolean;
-  authMethod: string;
+  authMethod: '' | TokenEndpointAuthMethod;
 };
 
 const defaultFilters: FilterState = { keyword: '', isActive: '', authMethod: '' };
@@ -46,12 +47,9 @@ const statusOptions = [
   { label: '启用', value: true },
   { label: '停用', value: false },
 ];
-const authMethodOptions = [
+const authMethodFilterOptions = [
   { label: '全部认证方式', value: '' },
-  { label: 'client_secret_basic', value: 'client_secret_basic' },
-  { label: 'client_secret_post', value: 'client_secret_post' },
-  { label: 'private_key_jwt', value: 'private_key_jwt' },
-  { label: 'none (public client)', value: 'none' },
+  ...authMethodOptions.map((option) => ({ label: option.label, value: option.value })),
 ];
 
 const getRequestErrorMessage = (error: unknown, fallback: string) => {
@@ -205,8 +203,8 @@ const ClientManagementPage = () => {
               size="small"
               value={filters.authMethod}
               placeholder="全部认证方式"
-              options={authMethodOptions}
-              onChange={(value) => applySelectFilter({ authMethod: String(value || '') })}
+              options={authMethodFilterOptions}
+              onChange={(value) => applySelectFilter({ authMethod: (value as TokenEndpointAuthMethod | '') || '' })}
             />
           </Form.FormItem>
           <Form.FormItem className="client-management-page__filter-actions">

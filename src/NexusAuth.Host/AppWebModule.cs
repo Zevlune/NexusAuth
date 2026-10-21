@@ -13,6 +13,7 @@ using NexusAuth.Application.Users;
 using System.Threading.RateLimiting;
 using Fido2NetLib;
 using NexusAuth.Application.Services.Email;
+using NexusAuth.Application.Services.ExternalIdentity;
 
 namespace NexusAuth.Host;
 
@@ -34,6 +35,12 @@ public class AppWebModule : LuckAppModule
 
         services.AddNexusAuthTokenSigning(configuration);
         services.AddNexusAuthEmail(configuration);
+        // The upstream URL contains AppSecret and the one-time code. Suppress
+        // HttpClient URL logging and redirects for this credential-bearing call.
+        services.AddHttpClient(WeChatMiniProgramLoginService.HttpClientName,
+                client => client.Timeout = TimeSpan.FromSeconds(10))
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<EmailAccountService>();
         services.Configure<NexusAuthSecurityOptions>(configuration.GetSection("Security"));
         services.AddOptions<LoginFlowOptions>()
@@ -50,6 +57,19 @@ public class AppWebModule : LuckAppModule
             .ValidateOnStart();
         services.AddOptions<SelfRegistrationOptions>()
             .Bind(configuration.GetSection(SelfRegistrationOptions.SectionName))
+            .ValidateOnStart();
+        services.AddOptions<WeChatMiniProgramOptions>()
+            .Bind(configuration.GetSection(WeChatMiniProgramOptions.SectionName))
+            .Validate(options => !options.Enabled || !string.IsNullOrWhiteSpace(options.ClientId),
+                "WeChat:MiniProgram:ClientId is required when mini program login is enabled.")
+            .Validate(options => !options.Enabled || !string.IsNullOrWhiteSpace(options.AppId),
+                "WeChat:MiniProgram:AppId is required when mini program login is enabled.")
+            .Validate(options => !options.Enabled || !string.IsNullOrWhiteSpace(options.AppSecret),
+                "WeChat:MiniProgram:AppSecret is required when mini program login is enabled.")
+            .Validate(options => !options.Enabled || (Uri.TryCreate(options.Code2SessionEndpoint, UriKind.Absolute, out var uri)
+                && uri.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(uri.Query)
+                && string.IsNullOrEmpty(uri.Fragment) && string.IsNullOrEmpty(uri.UserInfo)),
+                "WeChat:MiniProgram:Code2SessionEndpoint must be an HTTPS URL without query, fragment or user info.")
             .ValidateOnStart();
         services.AddSingleton<LoginFlowStateProtector>();
         services.AddSingleton<WebAuthnEnrollmentStateProtector>();

@@ -3,6 +3,7 @@
     <ItemGroup>
         <PackageReference Include="BCrypt.Net-Next" />
         <PackageReference Include="Luck.Framework" />
+        <PackageReference Include="Microsoft.Extensions.Http" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
         <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
     </ItemGroup>

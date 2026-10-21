@@ -1,5 +1,7 @@
 namespace NexusAuth.Application.Clients;
 
+using NexusAuth.Application.Services.ExternalIdentity;
+
 public class ClientMetadataService : IClientMetadataService
 {
     public Task<ClientMetadataDto> GetAsync(CancellationToken ct = default)
@@ -32,6 +34,10 @@ public class ClientMetadataService : IClientMetadataService
             new ClientOptionDto("refresh_token", "刷新令牌（refresh_token）", "使用 refresh token 换取新的 access token。"),
             new ClientOptionDto("urn:ietf:params:oauth:grant-type:device_code", "设备码模式（device_code）",
                 "适用于无浏览器或输入受限设备。"),
+            new ClientOptionDto(
+                WeChatMiniProgramGrantTypes.GrantType,
+                "微信小程序登录（wechat_miniprogram）",
+                "使用微信小程序一次性 code 换取 NexusAuth 用户令牌。"),
         ];
     }
 
@@ -47,6 +53,8 @@ public class ClientMetadataService : IClientMetadataService
                 "客户端使用共享密钥签名 JWT，服务端使用已登记共享密钥验签。"),
             new ClientOptionDto(OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, "私钥 JWT 认证（private_key_jwt）",
                 "客户端使用私钥签名 JWT，服务端使用已登记 JWKS 验签。"),
+            new ClientOptionDto(OAuthClient.TokenEndpointAuthMethodNone, "公共客户端（none）",
+                "不进行客户端认证，仅适用于受服务端策略限制的公共客户端。"),
         ];
     }
 }

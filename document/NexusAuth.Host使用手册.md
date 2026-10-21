@@ -690,9 +690,9 @@ Discovery 对外声明的能力以实际实现为准：
 
 - `response_types_supported = ["code"]`
 - `response_modes_supported = ["query", "form_post"]`
-- `grant_types_supported = ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"]`
+- `grant_types_supported` 默认包含 `["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"]`；启用微信小程序登录后追加 `urn:nexusauth:grant-type:wechat_miniprogram`
 - `code_challenge_methods_supported = ["S256"]`
-- `token_endpoint_auth_methods_supported = ["client_secret_post", "client_secret_basic", "client_secret_jwt", "private_key_jwt"]`
+- `token_endpoint_auth_methods_supported` 默认包含 `["client_secret_post", "client_secret_basic", "client_secret_jwt", "private_key_jwt"]`；启用微信小程序登录后追加 `none`
 - `id_token_signing_alg_values_supported` 来自当前活跃签名密钥，默认 RSA 签名为 `RS256`
 - `claims_parameter_supported = true`
 - `request_parameter_supported = false`
@@ -700,7 +700,7 @@ Discovery 对外声明的能力以实际实现为准：
 
 Discovery 中的 issuer 和所有绝对端点地址来自 `Jwt:Issuer`，不是从请求 Host 动态推断。生产环境必须把它配置成浏览器和客户端都能访问、且与 token `iss` 一致的 HTTPS 地址。
 
-### 6.2 四种 grant
+### 6.2 Grant 类型
 
 | `grant_type` | 用途 | 关键要求 |
 | --- | --- | --- |
@@ -708,10 +708,11 @@ Discovery 中的 issuer 和所有绝对端点地址来自 `Jwt:Issuer`，不是�
 | `client_credentials` | 机器对机器访问资源 API | 客户端必须允许该 grant；`scope` 必填；不允许身份 scope；scope 必须对应启用的 API resource |
 | `refresh_token` | 刷新用户 access token | 客户端必须允许该 grant；refresh token 必须属于该客户端；旧 refresh token 轮换后立即失效 |
 | `urn:ietf:params:oauth:grant-type:device_code` | 设备授权码换 token | 客户端必须允许该 grant；必须先完成 `/connect/deviceauthorization` 和用户确认 |
+| `urn:nexusauth:grant-type:wechat_miniprogram` | 微信小程序 `wx.login` code 换 token | 仅用于认证方式为 `none` 的公共客户端；客户端必须只允许该 grant 和可选的 `refresh_token`；Host 必须启用并配置微信小程序；详见[微信小程序接入](微信小程序接入.md) |
 
 授权码和设备码流程只有在请求 scope 包含 `offline_access` 时才签发 refresh token。scope 包含 `openid` 时才签发 ID token。
 
-### 6.3 四种机密客户端认证
+### 6.3 客户端认证
 
 客户端认证实现见：
 
@@ -726,6 +727,7 @@ Discovery 中的 issuer 和所有绝对端点地址来自 `Jwt:Issuer`，不是�
 | `client_secret_post` | 表单 `client_id` + `client_secret` | 必须与该客户端配置的认证方法一致 |
 | `client_secret_jwt` | 表单 `client_assertion_type` + `client_assertion` | JWT 算法必须是 `HS256`；`iss` 和 `sub` 都必须是 client id；`aud` 必须是目标端点 URL；`exp` 必须存在；`jti` 必须存在且防重放 |
 | `private_key_jwt` | 表单 `client_assertion_type` + `client_assertion` | JWT 算法必须是 `RS256`；客户端必须注册 JWK Set；`iss` 和 `sub` 都必须是 client id；`aud` 必须是目标端点 URL；`exp` 必须存在；`jti` 必须存在且防重放 |
+| `none` | 只提交 `client_id` | 仅用于启用的微信小程序公共客户端；不得提交 secret、client assertion 或 Basic Authorization |
 
 客户端断言类型必须是：
 

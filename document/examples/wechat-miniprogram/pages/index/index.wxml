@@ -1,0 +1,29 @@
+<view class="page">
+  <view class="header">
+    <text class="title">WeChat Mini Program</text>
+    <text class="subtitle">NexusAuth.Host 直连示例</text>
+  </view>
+
+  <view class="status">
+    <text class="status-label">状态</text>
+    <text class="status-value">{{status}}</text>
+  </view>
+
+  <view class="actions">
+    <button class="primary" bindtap="onLogin" disabled="{{busy}}">登录</button>
+    <button bindtap="onReadUser" disabled="{{busy}}">读取用户</button>
+    <button bindtap="onRefresh" disabled="{{busy}}">手动刷新</button>
+    <button class="danger" bindtap="onClearSession" disabled="{{busy}}">清除本机会话</button>
+  </view>
+
+  <view class="user" wx:if="{{user}}">
+    <view class="user-row">
+      <text class="user-label">sub</text>
+      <text class="user-value">{{user.sub}}</text>
+    </view>
+    <view class="user-row">
+      <text class="user-label">name</text>
+      <text class="user-value">{{user.name}}</text>
+    </view>
+  </view>
+</view>

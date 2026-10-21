@@ -15,6 +15,7 @@ Host 的启动流程不要求启动 Workbench 或 Dashboard。Workbench 手册�
 
 | 文档 | 范围 |
 | --- | --- |
+| [微信小程序接入](微信小程序接入.md) | `wx.login` 一次性 code、公共客户端、Host 配置、令牌刷新和 UserInfo |
 | [OAuth/OIDC 协议设计](11-OAuth-OIDC协议设计.md) | Host 的端点、参数校验、授权和令牌规则 |
 | [SMTP 配置与发信验证](SMTP发信试验.md) | Host 邮件配置、邮箱业务流程、发信排错与测试 |
 | [Workbench API 统一登录接入模板](Workbench-API统一登录接入模板.md) | 复用 .NET 接入扩展与 BFF 登录流程 |

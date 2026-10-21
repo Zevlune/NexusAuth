@@ -12,10 +12,17 @@ import {
   type Client,
   type CreateClientRequest,
   type GeneratedClientCredential,
+  type TokenEndpointAuthMethod,
   type UpdateClientRequest,
 } from '../../api/client';
 import { getAllApiResources, type ApiResource } from '../../api/api-resource';
 import { getClientMetadata, type ClientMetadata } from '../../api/client-metadata';
+import {
+  authMethodOptions,
+  canManageClientCredentials,
+  grantTypeOptions,
+  mergeOptions,
+} from './client-options';
 import './style.less';
 
 type ClientFormData = {
@@ -28,7 +35,7 @@ type ClientFormData = {
   allowedGrantTypes: string[];
   apiResourceIds: string[];
   requirePkce: boolean;
-  tokenEndpointAuthMethod: string;
+  tokenEndpointAuthMethod: TokenEndpointAuthMethod;
   keyMaterialSource: 'jwks' | 'jwks_uri';
   jwksInputMode: 'auto_generate' | 'manual';
   jwks: string;
@@ -40,19 +47,6 @@ type ClientFormPageProps = {
   mode: 'create' | 'edit';
 };
 
-type FormOption = {
-  label: string;
-  value: string;
-  description?: string;
-};
-
-const authMethodOptions: FormOption[] = [
-  { label: 'client_secret_basic', value: 'client_secret_basic' },
-  { label: 'client_secret_post', value: 'client_secret_post' },
-  { label: 'client_secret_jwt', value: 'client_secret_jwt' },
-  { label: 'private_key_jwt', value: 'private_key_jwt' },
-];
-
 const keyMaterialSourceOptions = [
   { label: 'JWKS', value: 'jwks' },
   { label: 'JWKS URI', value: 'jwks_uri' },
@@ -63,13 +57,7 @@ const jwksInputModeOptions = [
   { label: '手动录入', value: 'manual' },
 ];
 
-const grantTypeOptions: FormOption[] = [
-  { label: 'authorization_code', value: 'authorization_code' },
-  { label: 'client_credentials', value: 'client_credentials' },
-  { label: 'refresh_token', value: 'refresh_token' },
-];
-
-const oauthStandardScopeOptions: FormOption[] = [
+const oauthStandardScopeOptions = [
   { label: 'openid', value: 'openid' },
   { label: 'profile', value: 'profile' },
   { label: 'email', value: 'email' },
@@ -110,17 +98,6 @@ const getRequestErrorMessage = (error: unknown, fallback: string) => {
     || axiosError.response?.data?.message
     || axiosError.response?.data?.title
     || fallback;
-};
-
-const mergeOptions = (...groups: FormOption[][]): FormOption[] => {
-  const merged = new Map<string, FormOption>();
-  groups.flat().forEach((option) => {
-    if (!option.value || merged.has(option.value)) {
-      return;
-    }
-    merged.set(option.value, option);
-  });
-  return Array.from(merged.values());
 };
 
 const formatDateTime = (value?: string) => {
@@ -168,14 +145,25 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
   const [generatedCredential, setGeneratedCredential] = useState<GeneratedClientCredential | null>(null);
 
   const authMethodSelectOptions = useMemo(
-    () => mergeOptions(authMethodOptions, clientMetadata.tokenEndpointAuthMethods, formData.tokenEndpointAuthMethod ? [{ label: formData.tokenEndpointAuthMethod, value: formData.tokenEndpointAuthMethod }] : []),
-    [clientMetadata.tokenEndpointAuthMethods, formData.tokenEndpointAuthMethod],
+    () => {
+      const canSwitchToPublicClient = !editingClient
+        || (editingClient.credentials.length === 0 && !editingClient.jwks && !editingClient.jwksUri);
+      const filterPublicClientOption = (option: { value: string }) =>
+        option.value !== 'none' || canSwitchToPublicClient || formData.tokenEndpointAuthMethod === 'none';
+
+      return mergeOptions(
+        clientMetadata.tokenEndpointAuthMethods.filter(filterPublicClientOption),
+        authMethodOptions.filter(filterPublicClientOption),
+        [{ label: formData.tokenEndpointAuthMethod, value: formData.tokenEndpointAuthMethod }],
+      );
+    },
+    [clientMetadata.tokenEndpointAuthMethods, editingClient, formData.tokenEndpointAuthMethod],
   );
 
   const grantTypeSelectOptions = useMemo(
     () => mergeOptions(
-      grantTypeOptions,
       clientMetadata.grantTypes,
+      grantTypeOptions,
       formData.allowedGrantTypes.map((value) => ({ label: value, value })),
     ),
     [clientMetadata.grantTypes, formData.allowedGrantTypes],
@@ -291,7 +279,11 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     });
   }, [loadingDetail, formData]);
 
-  const handleAuthMethodChange = (value: string) => {
+  const handleAuthMethodChange = (value: TokenEndpointAuthMethod) => {
+    if (value === 'none') {
+      setGeneratedCredential(null);
+    }
+
     setFormData((prev) => ({
       ...prev,
       tokenEndpointAuthMethod: value,
@@ -353,7 +345,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
   };
 
   const handleResetCredential = async () => {
-    if (!editingClient) {
+    if (!editingClient || !canManageClientCredentials(formData.tokenEndpointAuthMethod)) {
       return;
     }
 
@@ -451,7 +443,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
   };
 
   const renderCredentialCard = () => {
-    if (!generatedCredential) {
+    if (!generatedCredential || !canManageClientCredentials(formData.tokenEndpointAuthMethod)) {
       return null;
     }
 
@@ -544,7 +536,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
           <Typography.Paragraph className="client-form-header__description">配置 OAuth/OIDC 应用的基础信息、授权类型、回调地址和客户端认证方式。</Typography.Paragraph>
         </div>
         <div className="client-form-header__actions">
-          {isEditMode && editingClient && formData.tokenEndpointAuthMethod !== 'none' && (
+          {isEditMode && editingClient && canManageClientCredentials(formData.tokenEndpointAuthMethod) && (
             <Popconfirm
               content="重置后旧密钥将立即失效，新密钥只展示一次。确定继续吗？"
               confirmBtn={{ content: '重置', theme: 'primary', size: 'small' }}
@@ -602,7 +594,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
             <Card className="client-form-section" title="客户端认证" bordered headerBordered>
               <div className="client-form-fields">
                 <Form.FormItem label="认证方式" name="tokenEndpointAuthMethod" rules={[{ required: true, message: '请选择认证方式', type: 'error' }]}>
-                  <Select value={formData.tokenEndpointAuthMethod} placeholder="请选择认证方式" options={authMethodSelectOptions} onChange={(value) => handleAuthMethodChange(String(value))} />
+                  <Select value={formData.tokenEndpointAuthMethod} placeholder="请选择认证方式" options={authMethodSelectOptions} onChange={(value) => handleAuthMethodChange(value as TokenEndpointAuthMethod)} />
                 </Form.FormItem>
                 <div className="client-switch-group">
                   <Form.FormItem label="启用 PKCE" name="requirePkce">
