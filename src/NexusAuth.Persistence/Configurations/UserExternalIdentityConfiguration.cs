@@ -15,7 +15,8 @@ public sealed class UserExternalIdentityConfiguration : IEntityTypeConfiguration
         builder.Property(identity => identity.UserId).HasColumnName("user_id").IsRequired();
         builder.Property(identity => identity.Provider).HasColumnName("provider").HasMaxLength(32).IsRequired();
         builder.Property(identity => identity.Issuer).HasColumnName("issuer").HasMaxLength(256).IsRequired();
-        builder.Property(identity => identity.Subject).HasColumnName("subject").HasMaxLength(256).IsRequired();
+        builder.Property(identity => identity.Subject).HasColumnName("subject").HasMaxLength(256).IsRequired()
+            .HasComment("第三方身份提供方签发的用户唯一标识，在同一 provider 和 issuer 下唯一；微信小程序对应 OpenID（issuer 为 AppID）。");
         builder.Property(identity => identity.UnionId).HasColumnName("union_id").HasMaxLength(256);
         builder.Property(identity => identity.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(identity => identity.LastAuthenticatedAt).HasColumnName("last_authenticated_at").IsRequired();

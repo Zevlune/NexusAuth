@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Services;
 using NexusAuth.Application.Services.ExternalIdentity;
+using NexusAuth.Domain.Repositories;
+using System.Text;
 
 namespace NexusAuth.Host.Controllers;
 
@@ -15,16 +17,10 @@ public class TokenController(
     ISecurityPolicyService securityPolicyService,
     IOptions<JwtOptions> jwtOptions,
     IWeChatMiniProgramLoginService weChatMiniProgramLoginService,
-    IOptions<WeChatMiniProgramOptions> weChatOptions) : ControllerBase
+    IOptions<WeChatMiniProgramOptions> weChatOptions,
+    IUserRepository userRepository) : ControllerBase
 {
-    private readonly IAuthorizationService _authorizationService = authorizationService;
-    private readonly ITokenService _tokenService = tokenService;
-    private readonly IDeviceAuthorizationService _deviceAuthorizationService = deviceAuthorizationService;
-    private readonly IClientService _clientService = clientService;
-    private readonly IUserService _userService = userService;
-    private readonly ISecurityPolicyService _securityPolicyService = securityPolicyService;
     private readonly JwtOptions _jwtOptions = jwtOptions.Value;
-    private readonly IWeChatMiniProgramLoginService _weChatMiniProgramLoginService = weChatMiniProgramLoginService;
     private readonly WeChatMiniProgramOptions _weChatOptions = weChatOptions.Value;
 
     /// <summary>
@@ -60,6 +56,7 @@ public class TokenController(
         [FromForm(Name = "device_code")] string? deviceCode = null,
         [FromForm(Name = "client_assertion_type")] string? clientAssertionType = null,
         [FromForm(Name = "client_assertion")] string? clientAssertion = null,
+        [FromForm] string? nickname = null,
         CancellationToken ct = default)
     {
         Response.Headers.CacheControl = "no-store";
@@ -79,7 +76,10 @@ public class TokenController(
                 return InvalidClient();
             }
 
-            return await HandleWeChatMiniProgramAsync(clientId, code, scope, ct);
+            // Preserve explicitly submitted whitespace for validation; form model
+            // binding otherwise converts it to null, which means "keep nickname".
+            nickname ??= Request.Form["nickname"].FirstOrDefault();
+            return await HandleWeChatMiniProgramAsync(clientId, code, scope, nickname, ct);
         }
 
         // 中文注释：统一解析 OAuth2 客户端认证，优先兼容标准的 client_secret_basic，
@@ -112,6 +112,7 @@ public class TokenController(
         string? clientId,
         string? code,
         string? scope,
+        string? nickname,
         CancellationToken ct)
     {
         if (!_weChatOptions.Enabled)
@@ -123,7 +124,7 @@ public class TokenController(
             return InvalidClient();
         }
 
-        var clientAuthentication = await _clientService.AuthenticateClientAsync(
+        var clientAuthentication = await clientService.AuthenticateClientAsync(
             new ClientAuthenticationInput(clientId, null, null, null),
             requireClientAuthentication: false,
             ct);
@@ -133,7 +134,7 @@ public class TokenController(
         if (!string.Equals(clientAuthentication.Client.TokenEndpointAuthMethod, "none", StringComparison.Ordinal))
             return InvalidClient();
 
-        if (!_securityPolicyService.CheckClient(clientId).IsSuccess)
+        if (!securityPolicyService.CheckClient(clientId).IsSuccess)
             return BadRequest(new { error = "unauthorized_client", error_description = "Client is blocked by security policy." });
 
         if (!clientAuthentication.Client.IsGrantTypeAllowed(WeChatMiniProgramGrantTypes.GrantType))
@@ -151,7 +152,7 @@ public class TokenController(
         if (string.IsNullOrWhiteSpace(scope))
             return BadRequest(new { error = "invalid_request", error_description = "scope is required." });
 
-        var scopeValidation = await _clientService.ValidateScopesAsync(clientId, scope, allowIdentityScopes: true, ct);
+        var scopeValidation = await clientService.ValidateScopesAsync(clientId, scope, allowIdentityScopes: true, ct);
         if (!scopeValidation.IsSuccess)
         {
             return BadRequest(new
@@ -172,10 +173,21 @@ public class TokenController(
             });
         }
 
+        if (nickname is not null)
+        {
+            nickname = nickname.Trim();
+            if (nickname.Length < 1 || nickname.EnumerateRunes().Count() > 100)
+                return BadRequest(new { error = "invalid_request", error_description = "Nickname must contain between 1 and 100 characters." });
+
+            if (!scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Contains("profile", StringComparer.Ordinal))
+                return BadRequest(new { error = "invalid_scope", error_description = "The profile scope is required to set a nickname." });
+        }
+
         WeChatMiniProgramLoginResult login;
         try
         {
-            login = await _weChatMiniProgramLoginService.AuthenticateAsync(code, ct);
+            login = await weChatMiniProgramLoginService.AuthenticateAsync(code, ct);
         }
         catch (WeChatMiniProgramLoginException exception)
         {
@@ -183,11 +195,20 @@ public class TokenController(
                 new { error = exception.ErrorCode, error_description = exception.Message });
         }
 
-        var userPolicy = _securityPolicyService.CheckUser(login.User);
+        var userPolicy = securityPolicyService.CheckUser(login.User);
         if (!userPolicy.IsSuccess || !login.User.IsActive)
             return BadRequest(new { error = "invalid_grant", error_description = "The user account is unavailable." });
 
-        var accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(
+        if (nickname is not null && login.User.IsSystemAccount)
+            return BadRequest(new { error = "invalid_grant", error_description = "System account profiles cannot be modified." });
+
+        if (nickname is not null && !string.Equals(login.User.Nickname, nickname, StringComparison.Ordinal))
+        {
+            login.User.UpdateNickname(nickname);
+            await userRepository.UpdateAsync(login.User, ct);
+        }
+
+        var accessTokenResult = await tokenService.IssueAccessTokenWithMetadataAsync(
             clientId,
             scopeValidation.NormalizedScope!,
             null,
@@ -195,14 +216,14 @@ public class TokenController(
             null,
             ct);
         var refreshToken = ShouldIssueRefreshToken(scopeValidation.NormalizedScope!)
-            ? await _tokenService.IssueRefreshTokenAsync(clientId, login.User.Id, scopeValidation.NormalizedScope!, ct)
+            ? await tokenService.IssueRefreshTokenAsync(clientId, login.User.Id, scopeValidation.NormalizedScope!, ct)
             : null;
         var includeIdToken = scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Contains("openid", StringComparer.Ordinal);
         string? idToken = null;
         if (includeIdToken)
         {
-            idToken = await _tokenService.IssueIdTokenAsync(
+            idToken = await tokenService.IssueIdTokenAsync(
                 clientId,
                 login.User.Id,
                 null,
@@ -221,6 +242,11 @@ public class TokenController(
             scope = scopeValidation.NormalizedScope,
             id_token = idToken,
             expires_in = GetAccessTokenLifetimeSeconds(),
+            user = new
+            {
+                sub = login.User.Id.ToString(),
+                name = login.User.Nickname,
+            },
         });
     }
 
@@ -234,7 +260,7 @@ public class TokenController(
         if (string.IsNullOrWhiteSpace(authentication.ClientId))
             return InvalidClient();
 
-        var clientAuthentication = await _clientService.AuthenticateClientAsync(authentication, requireClientAuthentication: true, ct);
+        var clientAuthentication = await clientService.AuthenticateClientAsync(authentication, requireClientAuthentication: true, ct);
         if (!clientAuthentication.IsSuccess)
             return InvalidClient();
 
@@ -244,7 +270,7 @@ public class TokenController(
         if (string.IsNullOrWhiteSpace(redirectUri))
             return BadRequest(new { error = "invalid_request", error_description = "redirect_uri is required." });
 
-        var result = await _authorizationService.ValidateAndConsumeCodeAsync(code, authentication.ClientId, redirectUri, codeVerifier, ct);
+        var result = await authorizationService.ValidateAndConsumeCodeAsync(code, authentication.ClientId, redirectUri, codeVerifier, ct);
 
         if (!result.IsSuccess)
             return BadRequest(new { error = "invalid_grant", error_description = result.Error });
@@ -252,16 +278,16 @@ public class TokenController(
         if (!await IsActiveUserAsync(result.UserId, ct))
             return BadRequest(new { error = "invalid_grant", error_description = "The user account is no longer active." });
 
-        var accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId, result.Scope, null, result.UserId, result.ClaimsJson, ct);
+        var accessTokenResult = await tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId, result.Scope, null, result.UserId, result.ClaimsJson, ct);
         var refreshToken = ShouldIssueRefreshToken(result.Scope)
-            ? await _tokenService.IssueRefreshTokenAsync(result.ClientId, result.UserId, result.Scope, ct)
+            ? await tokenService.IssueRefreshTokenAsync(result.ClientId, result.UserId, result.Scope, ct)
             : null;
         var includeIdToken = result.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
         string? idToken = null;
         if (includeIdToken)
         {
             // 中文注释：授权码里已经保存了 OIDC 上下文，这里在换 token 时继续带到 id_token 里。
-            idToken = await _tokenService.IssueIdTokenAsync(
+            idToken = await tokenService.IssueIdTokenAsync(
                 result.ClientId,
                 result.UserId,
                 result.Nonce,
@@ -292,14 +318,14 @@ public class TokenController(
         if (string.IsNullOrWhiteSpace(authentication.ClientId))
             return InvalidClient();
 
-        var clientAuthentication = await _clientService.AuthenticateClientAsync(authentication, requireClientAuthentication: true, ct);
+        var clientAuthentication = await clientService.AuthenticateClientAsync(authentication, requireClientAuthentication: true, ct);
         if (!clientAuthentication.IsSuccess || clientAuthentication.Client is null)
             return InvalidClient();
 
         if (string.IsNullOrWhiteSpace(scope))
             return BadRequest(new { error = "invalid_request", error_description = "scope is required." });
 
-        var policy = _securityPolicyService.CheckClient(clientAuthentication.Client.ClientId);
+        var policy = securityPolicyService.CheckClient(clientAuthentication.Client.ClientId);
         if (!policy.IsSuccess)
             return BadRequest(new { error = "access_denied", error_description = policy.Error });
 
@@ -312,7 +338,7 @@ public class TokenController(
             });
         }
 
-        var scopeValidation = await _clientService.ValidateScopesAsync(
+        var scopeValidation = await clientService.ValidateScopesAsync(
             clientAuthentication.Client.ClientId,
             scope,
             allowIdentityScopes: false,
@@ -321,7 +347,7 @@ public class TokenController(
         if (!scopeValidation.IsSuccess)
             return BadRequest(new { error = scopeValidation.ErrorCode ?? "invalid_scope", error_description = scopeValidation.Error });
 
-        var accessToken = await _tokenService.IssueAccessTokenAsync(
+        var accessToken = await tokenService.IssueAccessTokenAsync(
             clientAuthentication.Client.ClientId,
             scopeValidation.NormalizedScope!,
             null,
@@ -349,7 +375,7 @@ public class TokenController(
 
         var isConfiguredMiniProgram = _weChatOptions.Enabled
             && string.Equals(authentication.ClientId, _weChatOptions.ClientId, StringComparison.Ordinal);
-        var clientAuthentication = await _clientService.AuthenticateClientAsync(authentication,
+        var clientAuthentication = await clientService.AuthenticateClientAsync(authentication,
             requireClientAuthentication: !isConfiguredMiniProgram, ct);
         if (!clientAuthentication.IsSuccess)
             return InvalidClient();
@@ -361,13 +387,13 @@ public class TokenController(
 
         if (clientAuthentication.Client?.IsGrantTypeAllowed("refresh_token") != true
             || (isConfiguredMiniProgram && !clientAuthentication.Client.IsGrantTypeAllowed(WeChatMiniProgramGrantTypes.GrantType))
-            || !_securityPolicyService.CheckClient(authentication.ClientId!).IsSuccess)
+            || !securityPolicyService.CheckClient(authentication.ClientId!).IsSuccess)
             return BadRequest(new { error = "unauthorized_client", error_description = "Client is not allowed to refresh tokens." });
 
         if (string.IsNullOrWhiteSpace(refreshToken))
             return BadRequest(new { error = "invalid_request", error_description = "refresh_token is required." });
 
-        var result = await _tokenService.RefreshAsync(refreshToken, authentication.ClientId!, ct);
+        var result = await tokenService.RefreshAsync(refreshToken, authentication.ClientId!, ct);
 
         if (!result.IsSuccess)
             return BadRequest(new { error = "invalid_grant", error_description = result.Error });
@@ -393,7 +419,7 @@ public class TokenController(
         if (string.IsNullOrWhiteSpace(deviceCode))
             return BadRequest(new { error = "invalid_request", error_description = "device_code is required." });
 
-        var result = await _deviceAuthorizationService.PollAsync(authentication, deviceCode, ct);
+        var result = await deviceAuthorizationService.PollAsync(authentication, deviceCode, ct);
         if (!result.IsSuccess)
         {
             if (result.ErrorCode == "invalid_client")
@@ -414,14 +440,14 @@ public class TokenController(
         if (!await IsActiveUserAsync(result.UserId, ct))
             return BadRequest(new { error = "invalid_grant", error_description = "The user account is no longer active." });
 
-        var accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId!, result.Scope!, null, result.UserId, null, ct);
+        var accessTokenResult = await tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId!, result.Scope!, null, result.UserId, null, ct);
         var refreshToken = ShouldIssueRefreshToken(result.Scope!)
-            ? await _tokenService.IssueRefreshTokenAsync(result.ClientId!, result.UserId, result.Scope!, ct)
+            ? await tokenService.IssueRefreshTokenAsync(result.ClientId!, result.UserId, result.Scope!, ct)
             : null;
         var includeIdToken = result.Scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
         string? idToken = null;
         if (includeIdToken)
-            idToken = await _tokenService.IssueIdTokenAsync(result.ClientId!, result.UserId, null, accessTokenResult.AccessToken, ct: ct);
+            idToken = await tokenService.IssueIdTokenAsync(result.ClientId!, result.UserId, null, accessTokenResult.AccessToken, ct: ct);
 
         return Ok(new
         {
@@ -456,7 +482,7 @@ public class TokenController(
 
     private async Task<bool> IsActiveUserAsync(Guid userId, CancellationToken ct)
     {
-        return (await _userService.FindByIdAsync(userId, ct))?.IsActive == true;
+        return (await userService.FindByIdAsync(userId, ct))?.IsActive == true;
     }
 
     private IActionResult InvalidClient()

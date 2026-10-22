@@ -135,12 +135,252 @@ public sealed class WeChatMiniProgramHostTests
         Assert.NotEqual(results[0].Id, otherUser.Id);
     }
 
+    [PostgreSqlTheory]
+    [InlineData(true)]
+    public async Task Login_with_nickname_creates_and_updates_user_without_touching_other_users(bool _)
+    {
+        using var harness = await Harness.CreateAsync();
+        using var client = harness.Factory.CreateClient();
+        var maxNickname = new string('昵', 100);
+        var initial = await LoginAndReadUserAsync(
+            harness, client, "nickname-with-nickname", nickname: $"  {maxNickname}  ");
+        var userId = Guid.Parse(initial.Sub);
+        Assert.Equal(maxNickname, initial.Name);
+        await AssertStoredNicknameAsync(userId, maxNickname);
+
+        User firstBefore;
+        User otherBefore;
+        Guid otherUserId;
+        await using (var db = CreateContext())
+        {
+            var first = await db.Users.SingleAsync(value => value.Id == userId);
+            first.UpdateScimProfile(first.Username, first.Nickname, true,
+                externalId: $"external-{Guid.NewGuid():N}",
+                email: $"wechat-profile-{userId:N}@example.test",
+                phoneNumber: $"+86{Random.Shared.NextInt64(13000000000, 19999999999)}",
+                givenName: "Original",
+                title: "WeChat user");
+            var other = User.Create($"other-{Guid.NewGuid():N}", "test-password", "其他用户",
+                email: $"other-{Guid.NewGuid():N}@example.test",
+                phoneNumber: $"+86{Random.Shared.NextInt64(13000000000, 19999999999)}");
+            otherUserId = other.Id;
+            db.Users.Add(other);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+            firstBefore = await db.Users.AsNoTracking().SingleAsync(value => value.Id == userId);
+            otherBefore = await db.Users.AsNoTracking().SingleAsync(value => value.Id == otherUserId);
+        }
+
+        var updated = await LoginAndReadUserAsync(
+            harness, client, "nickname-update", nickname: "  更新昵称  ");
+        Assert.Equal(initial.Sub, updated.Sub);
+        Assert.Equal("更新昵称", updated.Name);
+
+        await using (var db = CreateContext())
+        {
+            var firstAfter = await db.Users.AsNoTracking().SingleAsync(value => value.Id == userId);
+            var otherAfter = await db.Users.AsNoTracking().SingleAsync(value => value.Id == otherUserId);
+            Assert.Equal("更新昵称", firstAfter.Nickname);
+            Assert.True(firstAfter.UpdatedAt > firstBefore.UpdatedAt);
+            Assert.Equal(firstBefore.Username, firstAfter.Username);
+            Assert.Equal(firstBefore.PasswordHash, firstAfter.PasswordHash);
+            Assert.Equal(firstBefore.Email, firstAfter.Email);
+            Assert.Equal(firstBefore.PhoneNumber, firstAfter.PhoneNumber);
+            Assert.Equal(firstBefore.ExternalId, firstAfter.ExternalId);
+            Assert.Equal(firstBefore.GivenName, firstAfter.GivenName);
+            Assert.Equal(firstBefore.Title, firstAfter.Title);
+            Assert.Equal(firstBefore.IsActive, firstAfter.IsActive);
+            Assert.Equal(firstBefore.IsSystemAccount, firstAfter.IsSystemAccount);
+
+            Assert.Equal(otherBefore.Nickname, otherAfter.Nickname);
+            Assert.Equal(otherBefore.Username, otherAfter.Username);
+            Assert.Equal(otherBefore.PasswordHash, otherAfter.PasswordHash);
+            Assert.Equal(otherBefore.Email, otherAfter.Email);
+            Assert.Equal(otherBefore.PhoneNumber, otherAfter.PhoneNumber);
+            Assert.Equal(otherBefore.IsActive, otherAfter.IsActive);
+            Assert.Equal(otherBefore.UpdatedAt, otherAfter.UpdatedAt);
+        }
+
+        var omitted = await LoginAndReadUserAsync(
+            harness, client, "nickname-omitted", nickname: null);
+        Assert.Equal(initial.Sub, omitted.Sub);
+        Assert.Equal("更新昵称", omitted.Name);
+        await AssertStoredNicknameAsync(userId, "更新昵称");
+    }
+
+    [PostgreSqlTheory]
+    [InlineData(true)]
+    public async Task First_login_without_nickname_uses_default_nickname(bool _)
+    {
+        using var harness = await Harness.CreateAsync();
+        using var client = harness.Factory.CreateClient();
+        var login = await LoginAndReadUserAsync(
+            harness, client, "nickname-default", nickname: null);
+
+        Assert.Equal("微信用户", login.Name);
+        await AssertStoredNicknameAsync(Guid.Parse(login.Sub), "微信用户");
+    }
+
+    [PostgreSqlTheory]
+    [InlineData(true)]
+    public async Task Login_rejects_explicit_empty_blank_and_overlong_nicknames_before_upstream(bool _)
+    {
+        using var harness = await Harness.CreateAsync();
+        using var client = harness.Factory.CreateClient();
+        var invalidNicknames = new[]
+        {
+            "",
+            "   ",
+            $"  {new string('x', 101)}  ",
+        };
+
+        foreach (var nickname in invalidNicknames)
+        {
+            using var response = await harness.LoginAsync(
+                client, $"invalid-nickname-{Guid.NewGuid():N}", nickname: nickname);
+            await AssertErrorAsync(response, HttpStatusCode.BadRequest, "invalid_request");
+        }
+
+        Assert.Equal(0, harness.Upstream.Calls);
+        await using var db = CreateContext();
+        Assert.False(await db.UserExternalIdentities.AnyAsync(value => value.Issuer == harness.AppId));
+    }
+
+    [PostgreSqlTheory]
+    [InlineData(true)]
+    public async Task Login_accepts_100_emoji_nickname_and_rejects_101_before_upstream(bool _)
+    {
+        using var harness = await Harness.CreateAsync();
+        using var client = harness.Factory.CreateClient();
+        var acceptedNickname = string.Concat(Enumerable.Repeat("😀", 100));
+        var login = await LoginAndReadUserAsync(
+            harness, client, "nickname-100-emoji", nickname: acceptedNickname);
+
+        Assert.Equal(acceptedNickname, login.Name);
+        await AssertStoredNicknameAsync(Guid.Parse(login.Sub), acceptedNickname);
+        Assert.Equal(1, harness.Upstream.Calls);
+
+        var rejectedNickname = string.Concat(Enumerable.Repeat("😀", 101));
+        using var response = await harness.LoginAsync(
+            client, "nickname-101-emoji", nickname: rejectedNickname);
+        await AssertErrorAsync(response, HttpStatusCode.BadRequest, "invalid_request");
+
+        Assert.Equal(1, harness.Upstream.Calls);
+        await AssertStoredNicknameAsync(Guid.Parse(login.Sub), acceptedNickname);
+    }
+
+    [PostgreSqlTheory]
+    [InlineData(true)]
+    public async Task Login_with_nickname_requires_exact_profile_scope_before_upstream(bool _)
+    {
+        using var harness = await Harness.CreateAsync();
+        using var client = harness.Factory.CreateClient();
+        using var missingProfile = await harness.LoginAsync(
+            client, "nickname-missing-scope", scope: "openid", nickname: "不应写入");
+        await AssertErrorAsync(missingProfile, HttpStatusCode.BadRequest, "invalid_scope");
+
+        using var lookalikeProfile = await harness.LoginAsync(
+            client, "nickname-lookalike-scope", scope: "openid profile.read",
+            nickname: "不应写入");
+        await AssertErrorAsync(lookalikeProfile, HttpStatusCode.BadRequest, "invalid_scope");
+
+        Assert.Equal(0, harness.Upstream.Calls);
+        await using var db = CreateContext();
+        Assert.False(await db.UserExternalIdentities.AnyAsync(value => value.Issuer == harness.AppId));
+    }
+
+    [PostgreSqlTheory]
+    [InlineData(true)]
+    public async Task Invalid_wechat_code_does_not_change_user_nickname(bool _)
+    {
+        using var harness = await Harness.CreateAsync();
+        using var client = harness.Factory.CreateClient();
+        var initial = await LoginAndReadUserAsync(
+            harness, client, "nickname-replayed-code", nickname: "原昵称");
+
+        using var replay = await harness.LoginAsync(
+            client, "nickname-replayed-code", nickname: "失败昵称");
+        await AssertErrorAsync(replay, HttpStatusCode.BadRequest, "invalid_grant");
+
+        Assert.Equal(2, harness.Upstream.Calls);
+        await AssertStoredNicknameAsync(Guid.Parse(initial.Sub), "原昵称");
+        await using var db = CreateContext();
+        Assert.Equal(1, await db.UserExternalIdentities.CountAsync(value => value.Issuer == harness.AppId));
+    }
+
+    [PostgreSqlTheory]
+    [InlineData(true)]
+    public async Task System_account_cannot_update_nickname_during_wechat_login(bool _)
+    {
+        using var harness = await Harness.CreateAsync();
+        using var client = harness.Factory.CreateClient();
+        var user = User.Create($"system-{Guid.NewGuid():N}", "test-password", "系统账号");
+        user.MarkAsSystemAccount();
+        await using (var db = CreateContext())
+        {
+            db.Users.Add(user);
+            db.UserExternalIdentities.Add(UserExternalIdentity.Create(
+                user.Id, "wechat_miniprogram", harness.AppId, harness.OpenId, null));
+            await db.SaveChangesAsync();
+        }
+
+        using var response = await harness.LoginAsync(
+            client, "nickname-system-account", nickname: "不应更新");
+        await AssertErrorAsync(response, HttpStatusCode.BadRequest, "invalid_grant");
+        Assert.Equal(1, harness.Upstream.Calls);
+        await AssertStoredNicknameAsync(user.Id, "系统账号");
+    }
+
+    [PostgreSqlTheory]
+    [InlineData(true)]
+    public async Task Non_wechat_grant_ignores_nickname_and_does_not_update_user(bool _)
+    {
+        using var harness = await Harness.CreateAsync();
+        using var client = harness.Factory.CreateClient();
+        var initial = await LoginAndReadUserAsync(
+            harness, client, "nickname-refresh-grant", nickname: "刷新前昵称");
+
+        using var refreshed = await client.PostAsync("/connect/token", Form(
+            ("grant_type", "refresh_token"),
+            ("client_id", harness.ClientId),
+            ("refresh_token", initial.RefreshToken),
+            ("nickname", "不应写入")));
+        Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
+        await AssertStoredNicknameAsync(Guid.Parse(initial.Sub), "刷新前昵称");
+    }
+
     private static FormUrlEncodedContent Form(params (string Key, string Value)[] values) =>
         new(values.Select(value => new KeyValuePair<string, string>(value.Key, value.Value)));
     private static async Task<JsonElement> ReadAsync(HttpResponseMessage response)
     {
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return json.RootElement.Clone();
+    }
+    private static async Task<(string AccessToken, string RefreshToken, string Sub, string Name)> LoginAndReadUserAsync(
+        Harness harness, HttpClient client, string code, string? nickname,
+        string scopeName = "openid profile offline_access")
+    {
+        using var response = await harness.LoginAsync(client, code, scopeName, nickname);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await ReadAsync(response);
+        var idToken = new JwtSecurityTokenHandler().ReadJwtToken(body.GetProperty("id_token").GetString());
+        var user = body.GetProperty("user");
+        Assert.Equal(idToken.Subject, user.GetProperty("sub").GetString());
+        return (
+            body.GetProperty("access_token").GetString()!,
+            body.GetProperty("refresh_token").GetString()!,
+            idToken.Subject,
+            user.GetProperty("name").GetString()!);
+    }
+    private static async Task AssertErrorAsync(HttpResponseMessage response, HttpStatusCode status, string error)
+    {
+        Assert.Equal(status, response.StatusCode);
+        Assert.Equal(error, (await ReadAsync(response)).GetProperty("error").GetString());
+    }
+    private static async Task AssertStoredNicknameAsync(Guid userId, string nickname)
+    {
+        await using var db = CreateContext();
+        Assert.Equal(nickname, (await db.Users.AsNoTracking().SingleAsync(value => value.Id == userId)).Nickname);
     }
     private static AuthDbContext CreateContext() => new(new DbContextOptionsBuilder<AuthDbContext>()
         .UseNpgsql(Connection()).Options);
@@ -191,15 +431,28 @@ public sealed class WeChatMiniProgramHostTests
         {
             var harness = new Harness();
             await using var db = CreateContext();
-            db.Add(OAuthClient.Create(harness.ClientId, "测试小程序", allowedScopes: ["openid", "profile", "offline_access"],
+            db.Add(OAuthClient.Create(harness.ClientId, "测试小程序",
+                allowedScopes: ["openid", "profile", "profile.read", "offline_access"],
                 allowedGrantTypes: [WeChatMiniProgramGrantTypes.GrantType, "refresh_token"],
                 tokenEndpointAuthMethod: "none", requirePkce: false));
             await db.SaveChangesAsync();
             return harness;
         }
-        public Task<HttpResponseMessage> LoginAsync(HttpClient client, string code, string scope = "openid profile offline_access") =>
-            client.PostAsync("/connect/token", Form(("grant_type", WeChatMiniProgramGrantTypes.GrantType),
-                ("client_id", ClientId), ("code", code), ("scope", scope)));
+        public Task<HttpResponseMessage> LoginAsync(
+            HttpClient client, string code, string scope = "openid profile offline_access", string? nickname = null)
+        {
+            var values = new List<KeyValuePair<string, string>>
+            {
+                new("grant_type", WeChatMiniProgramGrantTypes.GrantType),
+                new("client_id", ClientId),
+                new("code", code),
+                new("scope", scope),
+            };
+            // Keep an explicitly supplied empty value so the host can distinguish it from omission.
+            if (nickname is not null)
+                values.Add(new("nickname", nickname));
+            return client.PostAsync("/connect/token", new FormUrlEncodedContent(values));
+        }
         public void Dispose() { Factory.Dispose(); Upstream.Dispose(); }
     }
     private sealed class UpstreamHandler(string openId) : HttpMessageHandler
@@ -214,8 +467,9 @@ public sealed class WeChatMiniProgramHostTests
             var content = code == "unavailable" ? "{\"errcode\":-1}"
                 : consumed.TryAdd(code, 0) ? JsonSerializer.Serialize(new { openid = openId, session_key = "server-only-session" })
                 : "{\"errcode\":40163}";
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-                { Content = new StringContent(content, Encoding.UTF8, "application/json") });
+            return Task.FromResult(JsonResponse(content));
         }
+        private static HttpResponseMessage JsonResponse(string content) => new(HttpStatusCode.OK)
+            { Content = new StringContent(content, Encoding.UTF8, "application/json") };
     }
 }
