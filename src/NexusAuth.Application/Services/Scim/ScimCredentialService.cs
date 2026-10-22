@@ -2,14 +2,18 @@ namespace NexusAuth.Application.Services.Scim;
 
 public class ScimCredentialService(IScimServicePrincipalCredentialRepository credentialRepository) : IScimCredentialService
 {
-    public async Task<bool> ValidateAsync(string rawToken, string requiredScope, CancellationToken ct = default)
+    public async Task<bool> ValidateAsync(string rawToken, string requiredScope, CancellationToken ct = default) =>
+        await AuthorizeAsync(rawToken, requiredScope, ct) == ScimCredentialValidationResult.Granted;
+
+    public async Task<ScimCredentialValidationResult> AuthorizeAsync(string rawToken, string requiredScope, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(rawToken)) return false;
+        if (string.IsNullOrWhiteSpace(rawToken)) return ScimCredentialValidationResult.InvalidToken;
         var credential = await credentialRepository.FindByTokenHashAsync(ScimServicePrincipalCredential.Hash(rawToken), ct);
-        if (credential is null || !credential.CanAuthenticate() || !credential.Scopes.Contains(requiredScope, StringComparer.Ordinal)) return false;
+        if (credential is null || !credential.CanAuthenticate()) return ScimCredentialValidationResult.InvalidToken;
+        if (!credential.Scopes.Contains(requiredScope, StringComparer.Ordinal)) return ScimCredentialValidationResult.InsufficientScope;
         credential.RecordUse();
         await credentialRepository.UpdateAsync(credential, ct);
-        return true;
+        return ScimCredentialValidationResult.Granted;
     }
 
     public async Task<ScimCredentialCreated> CreateAsync(string name, IReadOnlyCollection<string>? scopes, DateTimeOffset? expiresAt, CancellationToken ct = default)

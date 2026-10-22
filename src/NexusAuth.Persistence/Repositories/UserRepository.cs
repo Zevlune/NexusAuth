@@ -54,7 +54,8 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
         int count,
         CancellationToken ct = default)
     {
-        var query = FindAll();
+        // 中文注释：系统账号（管理员）不通过 SCIM 暴露。
+        var query = FindAll(user => !user.IsSystemAccount);
         if (!string.IsNullOrWhiteSpace(userName))
             query = query.Where(user => user.Username == userName);
         if (!string.IsNullOrWhiteSpace(externalId))
