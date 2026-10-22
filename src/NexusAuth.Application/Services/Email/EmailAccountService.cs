@@ -16,6 +16,12 @@ public sealed class EmailAccountService(
     ISecurityPolicyService policy, ITotpService totp, ITokenService tokens, ISsoSessionService sessions,
     ILogger<EmailAccountService> logger)
 {
+    /// <summary>
+    /// 中文注释：找回密码的所有失败（账号不存在/不可用、邮箱验证码错误、动态码错误）统一返回这一条提示，
+    /// 避免通过不同错误信息判断邮箱是否已注册或账号是否绑定了身份验证器。
+    /// </summary>
+    public const string ResetFailedMessage = "验证码或动态码无效、已过期，或账号不可用。";
+
     public bool IsAvailable => codes.IsAvailable;
     public int CooldownSeconds => codes.CooldownSeconds;
     public int LifetimeMinutes => codes.LifetimeMinutes;
@@ -25,6 +31,7 @@ public sealed class EmailAccountService(
     public async Task SendPublicAsync(string email, string purpose, CancellationToken ct)
     {
         if (purpose is not ("login" or "reset-password")) throw new ArgumentException("验证码用途无效。");
+        if (string.IsNullOrWhiteSpace(email)) throw new ArgumentException("请输入邮箱地址。");
         if (!IsAvailable)
         {
             logger.LogWarning("Email code request rejected because SMTP is disabled. Purpose={Purpose}", purpose);
@@ -52,6 +59,7 @@ public sealed class EmailAccountService(
 
     public async Task<User?> AuthenticateAsync(string email, string code, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(code)) return null;
         var user = await users.FindByEmailAsync(email.Trim(), ct);
         if (!Eligible(user) || !codes.TryConsume(user!.Email!, "login", Binding(user), code)) return null;
         return user;
@@ -59,6 +67,7 @@ public sealed class EmailAccountService(
 
     public async Task SendVerificationAsync(Guid id, string email, string password, string? otp, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(email)) throw new ArgumentException("请输入邮箱地址。");
         var user = await ValidateAccountPasswordAsync(id, password, otp, ct);
         var other = await users.FindByEmailAsync(email.Trim(), ct);
         if (other is not null && other.Id != id) throw new InvalidOperationException("此邮箱无法绑定。");
@@ -99,7 +108,7 @@ public sealed class EmailAccountService(
     public async Task VerifyEmailAsync(Guid id, string email, string code, CancellationToken ct)
     {
         var user = await users.FindByIdAsync(id, ct) ?? throw new InvalidOperationException("账号不存在。");
-        if (!user.IsActive || !policy.CheckUser(user).IsSuccess ||
+        if (!user.IsActive || !policy.CheckUser(user).IsSuccess || string.IsNullOrWhiteSpace(email) ||
             !codes.TryConsume(email, "verify-email", Binding(user), code))
             throw new InvalidOperationException("验证码无效、过期或已使用。");
         var other = await users.FindByEmailAsync(email.Trim(), ct);
@@ -113,13 +122,18 @@ public sealed class EmailAccountService(
 
     public async Task ResetPasswordAsync(string email, string code, string password, string? otp, CancellationToken ct)
     {
-        if (password.Length is < 8 or > 128) throw new ArgumentException("新密码需为 8～128 位。");
+        if (string.IsNullOrWhiteSpace(email)) throw new ArgumentException("请输入邮箱地址。");
+        PasswordPolicy.EnsureValid(password);
         var user = await users.FindByEmailAsync(email.Trim(), ct);
-        if (!Eligible(user)) throw new InvalidOperationException("验证码无效或账号不可用。");
-        if (await totp.IsEnabledAsync(user!.Id, ct) && !await totp.ValidateAsync(user.Id, otp ?? "", ct))
-            throw new InvalidOperationException("动态验证码无效或账号不可用。");
+        // 中文注释：先校验（但不消费）邮箱验证码，再校验动态码。没有邮箱验证码的人无法触达动态码校验，
+        // 也就无法借找回密码接口猜测动态码或恶意触发账号锁定；动态码通过后才真正消费邮箱验证码。
+        if (!Eligible(user) || string.IsNullOrWhiteSpace(code)
+            || !codes.TryVerify(user!.Email!, "reset-password", Binding(user), code))
+            throw new InvalidOperationException(ResetFailedMessage);
+        if (await totp.IsEnabledAsync(user.Id, ct) && !await totp.ValidateAsync(user.Id, otp ?? "", ct))
+            throw new InvalidOperationException(ResetFailedMessage);
         if (!codes.TryConsume(user.Email!, "reset-password", Binding(user), code))
-            throw new InvalidOperationException("验证码无效、过期或已使用。");
+            throw new InvalidOperationException(ResetFailedMessage);
         user.ChangePassword(password);
         user.InvalidateTokens(DateTimeOffset.UtcNow);
         await users.UpdateAsync(user, ct);

@@ -2,15 +2,18 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 using NexusAuth.Domain.AggregateRoots.Users;
+using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Host.Authentication;
 
 /// <summary>
 /// 将已经验证成功的用户转换为 NexusAuth SSO Session 和 Cookie Principal。
 /// 本服务不校验密码或 Passkey，只接收上游已经确认的认证结果。
+/// 登录流程全部完成后在这里清零失败计数：密码步骤成功但动态码尚未通过时不会重置锁定计数。
 /// </summary>
 public sealed class WebSignInService(
     ISsoSessionService sessionService,
+    IUserRepository userRepository,
     IOptions<LoginFlowOptions> flowOptions) : IWebSignInService
 {
     private const string AuthTimeClaimType = "auth_time";
@@ -31,6 +34,7 @@ public sealed class WebSignInService(
         ArgumentException.ThrowIfNullOrWhiteSpace(authenticationMethods);
 
         var issuedAt = DateTimeOffset.UtcNow;
+        await userRepository.ResetLoginFailuresAsync(user.Id, issuedAt, ct);
         var authenticationProperties = _flowOptions.CreateAuthenticationProperties(rememberMe, issuedAt);
         var sessionId = await sessionService.CreateAsync(
             user.Id,

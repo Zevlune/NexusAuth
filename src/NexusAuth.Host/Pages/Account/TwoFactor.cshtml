@@ -34,18 +34,20 @@
             <a href="@Model.OtpAuthUri">打开身份验证器</a>
         </div>
         <form class="password-form" method="post" asp-page-handler="Confirm">
-            <input type="hidden" asp-for="EnrollmentSecret" />
             <input type="hidden" asp-for="ProtectedEnrollmentSecret" />
-            <input type="hidden" asp-for="OtpAuthUri" />
             <div class="field"><label class="field-label" asp-for="Code">动态验证码</label><div class="field-content"><input class="password-input" asp-for="Code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required /></div></div>
             <div class="form-actions"><button class="primary-button" type="submit">确认绑定</button><a class="action-note" href="/account/two-factor">取消</a></div>
         </form>
     }
     else
     {
-        <p class="password-notice">开始绑定前需要重新验证当前密码。每台身份验证器都会创建独立凭据，新密钥只有在动态验证码确认成功后才会生效。</p>
+        <p class="password-notice">开始绑定前需要重新验证当前密码@(Model.IsEnabled ? "和现有身份验证器的动态验证码" : "")。每台身份验证器都会创建独立凭据，新密钥只有在动态验证码确认成功后才会生效。</p>
         <form class="password-form" method="post" asp-page-handler="Begin">
             <div class="field"><label class="field-label" asp-for="CurrentPassword">当前密码</label><div class="field-content"><input class="password-input" asp-for="CurrentPassword" autocomplete="current-password" type="password" required /></div></div>
+            @if (Model.IsEnabled)
+            {
+                <div class="field"><label class="field-label" asp-for="CurrentTotpCode">当前动态验证码</label><div class="field-content"><input class="password-input" asp-for="CurrentTotpCode" autocomplete="one-time-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required /></div></div>
+            }
             <div class="form-actions"><button class="primary-button" type="submit">@(Model.IsEnabled ? "添加身份验证器" : "开始绑定")</button></div>
         </form>
         @if (Model.IsEnabled)
@@ -61,6 +63,7 @@
                             <form method="post" asp-page-handler="Disable">
                                 <input type="hidden" name="CredentialId" value="@credential.Id" />
                                 <input class="password-input" name="CurrentPassword" autocomplete="current-password" type="password" placeholder="当前密码" required />
+                                <input class="password-input" name="CurrentTotpCode" autocomplete="one-time-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="当前动态验证码" required />
                                 <button class="primary-button" type="submit">移除此设备</button>
                             </form>
                         }

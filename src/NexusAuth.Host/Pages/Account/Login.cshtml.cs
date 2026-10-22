@@ -219,6 +219,8 @@ public class LoginModel(
         Mode = "email";
         if (SliderCaptchaEnabled && !sliderCaptchaChallengeProtector.TryValidate(SliderCaptchaToken, SliderCaptchaOffset))
             ErrorMessage = "Please complete the slider verification.";
+        else if (string.IsNullOrWhiteSpace(Username))
+            ErrorMessage = "请输入邮箱地址。";
         else
         {
             try
@@ -264,6 +266,19 @@ public class LoginModel(
             RequiresTotp = false;
             FlowToken = string.Empty;
             ErrorMessage = "The login attempt is no longer valid. Start again.";
+            return Page();
+        }
+
+        // 中文注释：流程令牌在有效期内可重放，因此每次提交动态码都要先检查持久化锁定状态；
+        // 动态码错误由 TotpService 计入同一失败计数，达到阈值后锁定账号。
+        if (user.IsLoginLocked(DateTimeOffset.UtcNow))
+        {
+            await RecordLoginAsync(user.Id, false, "UserLocked");
+            RequiresTotp = false;
+            FlowToken = string.Empty;
+            TotpCode = string.Empty;
+            ErrorMessage = "Too many failed attempts. Try again later.";
+            RefreshSliderCaptchaChallenge();
             return Page();
         }
 
