@@ -324,6 +324,8 @@ const ScimCredentialManagementPage = () => {
         width="560px"
         confirmBtn="关闭"
         cancelBtn={null}
+        closeOnOverlayClick={false}
+        closeOnEscKeydown={false}
         onClose={handleCloseToken}
         onConfirm={handleCloseToken}
       >

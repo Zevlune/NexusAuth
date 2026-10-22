@@ -1,6 +1,6 @@
 import './style.less';
 
-import { Button, Layout, Tabs } from 'tdesign-react';
+import { Alert, Button, Layout, Tabs } from 'tdesign-react';
 import { ChevronLeftIcon, ChevronRightIcon } from 'tdesign-icons-react';
 import { applyThemeMode, getThemeMode } from '../../theme';
 import { getPageLoading, subscribePageLoading } from '../../page-loading';
@@ -16,6 +16,7 @@ import SliderMenu from './side';
 import { getMenuList, type MenuDefinition } from '../../api/auth';
 import useUserDetail from '../common/use-user-detail.';
 import { getContentBreadcrumbs, type ContentMenu } from '../../components/content-header/breadcrumbs';
+import { getCachedAdministratorStatus } from '../../router/auth';
 
 const { Content, Aside, Header } = Layout;
 const { TabPanel } = Tabs;
@@ -260,6 +261,15 @@ const PublicLayout = () => {
 
         <Layout className="layout-main">
           <Content className="layout-content">
+            {/* 仅当后端明确返回 isAdministrator=false 时提示；字段缺失视为未知，不做处理。 */}
+            {getCachedAdministratorStatus() === false && (
+              <Alert
+                className="layout-admin-alert"
+                theme="error"
+                title="当前账号没有管理员权限"
+                message="管理功能需要 NexusAuth 管理员角色，相关接口将拒绝访问。请联系管理员授予权限后重新登录。"
+              />
+            )}
             <div className="layout-content-tabs">
               <Tabs
                 value={pathname}
