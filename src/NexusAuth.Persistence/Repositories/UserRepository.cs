@@ -94,7 +94,7 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
 
         var total = await query.CountAsync(ct);
         var items = await query.OrderByDescending(user => user.CreatedAt)
-            .Skip((page - 1) * pageSize)
+            .Skip((int)Math.Clamp(((long)page - 1) * pageSize, 0, int.MaxValue))
             .Take(pageSize)
             .ToListAsync(ct);
         return (items, total);

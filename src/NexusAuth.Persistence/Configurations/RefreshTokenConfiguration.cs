@@ -34,8 +34,7 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
 
         builder.Property(r => r.IsRevoked)
             .HasColumnName("is_revoked")
-            .IsRequired()
-            .HasDefaultValue(false);
+            .IsRequired();
 
         builder.Property(r => r.ExpiresAt)
             .HasColumnName("expires_at")

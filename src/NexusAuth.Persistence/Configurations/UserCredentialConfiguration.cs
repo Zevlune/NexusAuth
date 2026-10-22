@@ -17,7 +17,7 @@ public sealed class UserCredentialConfiguration : IEntityTypeConfiguration<UserC
         builder.Property(credential => credential.SecretProtected).HasColumnName("secret_protected").HasColumnType("text");
         builder.Property(credential => credential.PendingSecretProtected).HasColumnName("pending_secret_protected").HasColumnType("text");
         builder.Property(credential => credential.PendingExpiresAt).HasColumnName("pending_expires_at");
-        builder.Property(credential => credential.IsEnabled).HasColumnName("is_enabled").HasDefaultValue(false).IsRequired();
+        builder.Property(credential => credential.IsEnabled).HasColumnName("is_enabled").IsRequired();
         builder.Property(credential => credential.LastUsedCounter).HasColumnName("last_used_counter");
         builder.Property(credential => credential.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(credential => credential.UpdatedAt).HasColumnName("updated_at").IsRequired();

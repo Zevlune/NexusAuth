@@ -1,12 +1,15 @@
 -- ============================================================
 -- NexusAuth production schema initialization
 -- 说明：
--- 1) 本脚本使用当前登录用户创建 nexusauth 数据库（如果不存在）并切换到该数据库。
+-- 1) 本脚本不创建数据库，也不切换数据库：它只在“当前连接的数据库”中创建 nexusauth schema、表和索引。
+--    必须先创建 nexusauth 数据库，再连接到该库执行本脚本；连到 postgres 库执行会把 schema 建在 postgres 库里。
 -- 2) 本脚本定义当前最终 schema，不包含任何历史兼容 DDL。
 -- 3) This script is the single source of truth for a fresh database.
 -- 4) 本脚本不写入 demo 用户或初始管理员；初始管理员由 SSO BootstrapAdmin 配置创建。
--- 5) 本脚本使用 psql 元命令，必须通过 psql 执行，不能在 DBeaver SQL 编辑器中直接执行。
--- 6) 执行：psql --username=postgres --dbname=postgres --file=production-init.sql
+-- 5) 本脚本在单个事务中执行；推荐使用 psql 并开启 ON_ERROR_STOP。
+-- 6) 执行（与 docker/postgres-init.sh 一致）：
+--    psql --username=postgres --dbname=postgres --command='CREATE DATABASE nexusauth'
+--    psql --username=postgres --dbname=nexusauth --set=ON_ERROR_STOP=1 --file=production-init.sql
 -- ============================================================
 
 BEGIN;

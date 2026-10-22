@@ -55,27 +55,26 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.Gender)
             .HasColumnName("gender")
             .HasConversion<short>()
-            .IsRequired()
-            .HasDefaultValue(Domain.AggregateRoots.Users.Gender.Unknown);
+            .IsRequired();
 
         builder.Property(u => u.Ethnicity)
             .HasColumnName("ethnicity")
             .HasMaxLength(50);
 
+        // 中文注释：EF 模型中刻意不配置 HasDefaultValue。配置后 EF 会按 sentinel 判断“未设置”并在 INSERT 时省略该列，
+        // 结果取决于 EF 版本约定以及 SQL 默认值是否与模型一致（sentinel 为 false 时，is_active DEFAULT true 会覆盖显式的 false）。
+        // 领域对象总会给这些字段赋值，INSERT 始终显式写入；数据库默认值只保留在 production-init.sql 中。
         builder.Property(u => u.IsActive)
             .HasColumnName("is_active")
-            .IsRequired()
-            .HasDefaultValue(true);
+            .IsRequired();
 
         builder.Property(u => u.IsSystemAccount)
             .HasColumnName("is_system_account")
-            .IsRequired()
-            .HasDefaultValue(false);
+            .IsRequired();
 
         builder.Property(u => u.FailedLoginAttempts)
             .HasColumnName("failed_login_attempts")
-            .IsRequired()
-            .HasDefaultValue(0);
+            .IsRequired();
 
         builder.Property(u => u.LockedUntil)
             .HasColumnName("locked_until");

@@ -32,8 +32,7 @@ public class OAuthClientConfiguration : IEntityTypeConfiguration<OAuthClient>
         builder.Property(c => c.TokenEndpointAuthMethod)
             .HasColumnName("token_endpoint_auth_method")
             .HasMaxLength(64)
-            .IsRequired()
-            .HasDefaultValue(OAuthClient.TokenEndpointAuthMethodClientSecretBasic);
+            .IsRequired();
 
         builder.Property(c => c.Jwks)
             .HasColumnName("jwks")
@@ -78,13 +77,11 @@ public class OAuthClientConfiguration : IEntityTypeConfiguration<OAuthClient>
 
         builder.Property(c => c.RequirePkce)
             .HasColumnName("require_pkce")
-            .IsRequired()
-            .HasDefaultValue(true);
+            .IsRequired();
 
         builder.Property(c => c.IsActive)
             .HasColumnName("is_active")
-            .IsRequired()
-            .HasDefaultValue(true);
+            .IsRequired();
 
         builder.Property(c => c.CreatedAt)
             .HasColumnName("created_at")
