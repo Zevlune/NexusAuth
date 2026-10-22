@@ -1,6 +1,6 @@
 namespace NexusAuth.Application.Users;
 
-public interface ITotpSecretProtector
+public interface ITotpSecretProtector : ISingletonDependency
 {
     string Protect(string plaintext);
 

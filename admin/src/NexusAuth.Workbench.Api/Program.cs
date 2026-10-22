@@ -1,6 +1,7 @@
 using Luck.AutoDependencyInjection;
 using Luck.AspNetCore.Extensions;
 using Luck.Logging.Serilog;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NexusAuth.Persistence;
 using NexusAuth.Workbench.Api;
 
@@ -27,6 +28,8 @@ try
             options.JsonSerializerOptions.Converters.Add(new SystemTextJsonConvert.DateTimeOffsetNullConverter());
         });
     builder.Services.AddApplication<WorkbenchApiModule>();
+    if (builder.Configuration.IsWorkbenchGatewayEnabled())
+        builder.Services.RemoveAll<IWorkbenchCookieAuthenticationEvents>();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(c =>
     {

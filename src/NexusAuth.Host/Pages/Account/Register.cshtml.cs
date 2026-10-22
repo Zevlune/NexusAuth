@@ -15,8 +15,8 @@ public sealed class RegisterModel(
     IUserService userService,
     IWebSignInService webSignInService,
     IAntiforgery antiforgery,
-    WebAuthnEnrollmentStateProtector enrollmentStateProtector,
-    SliderCaptchaChallengeProtector sliderCaptchaChallengeProtector,
+    IWebAuthnEnrollmentStateProtector enrollmentStateProtector,
+    ISliderCaptchaChallengeProtector sliderCaptchaChallengeProtector,
     IOptions<SliderCaptchaOptions> sliderCaptchaOptions,
     IOptions<SelfRegistrationOptions> selfRegistrationOptions,
     IOptions<WebAuthnOptions> webAuthnOptions) : PageModel

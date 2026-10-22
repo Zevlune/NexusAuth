@@ -18,14 +18,14 @@ public sealed class EmailServiceRegistrationTests
             ["Smtp:VerificationCodeCooldownSeconds"] = "60",
             ["Smtp:VerificationCodeLifetimeMinutes"] = "5"
         }).Build();
-        var services = new ServiceCollection();
+        var services = AutoDependencyServices.Create();
         services.AddLogging();
         services.AddNexusAuthEmail(configuration);
         using var provider = services.BuildServiceProvider();
         Assert.IsType<SmtpEmailSender>(provider.GetRequiredService<IEmailSender>());
         Assert.Equal(typeof(SmtpOptions).Assembly, typeof(IEmailSender).Assembly);
         Assert.NotEqual(typeof(AppWebModule).Assembly, typeof(SmtpEmailSender).Assembly);
-        var codes = provider.GetRequiredService<EmailVerificationCodeService>();
+        var codes = provider.GetRequiredService<IEmailVerificationCodeService>();
         Assert.Equal(60, codes.CooldownSeconds);
         Assert.Equal(5, codes.LifetimeMinutes);
 

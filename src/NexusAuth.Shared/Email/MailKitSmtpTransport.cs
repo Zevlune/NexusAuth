@@ -5,12 +5,7 @@ using MimeKit;
 
 namespace NexusAuth.Shared.Email;
 
-public interface ISmtpTransport
-{
-    Task SendAsync(SmtpOptions options, MimeMessage message, CancellationToken ct = default);
-}
-
-public sealed class MailKitSmtpTransport(ILogger<MailKitSmtpTransport> logger) : ISmtpTransport
+public class MailKitSmtpTransport(ILogger<MailKitSmtpTransport> logger) : ISmtpTransport
 {
     public async Task SendAsync(SmtpOptions options, MimeMessage message, CancellationToken ct = default)
     {

@@ -17,23 +17,3 @@ public interface ILoginAuditService : IScopedDependency
         int count,
         CancellationToken ct = default);
 }
-
-public sealed record LoginAuditRecord(
-    string? Username,
-    Guid? UserId,
-    string? ClientId,
-    bool IsSuccessful,
-    string? FailureReason,
-    string? IpAddress,
-    string? UserAgent);
-
-public sealed record LoginAuditLogDto(
-    Guid Id,
-    string Username,
-    Guid? UserId,
-    string? ClientId,
-    bool IsSuccessful,
-    string? FailureReason,
-    string? IpAddress,
-    string? UserAgent,
-    DateTimeOffset OccurredAt);
