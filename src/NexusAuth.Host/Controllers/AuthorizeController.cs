@@ -1,7 +1,11 @@
+using System.Globalization;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Primitives;
 using NexusAuth.Application.Services;
 
 namespace NexusAuth.Host.Controllers;
@@ -9,9 +13,27 @@ namespace NexusAuth.Host.Controllers;
 [ApiController]
 public class AuthorizeController(
     IAuthorizationService authorizationService,
-    IClientService clientService)
+    IClientService clientService,
+    IDataProtectionProvider? dataProtectionProvider = null,
+    IUserService? userService = null,
+    ISecurityPolicyService? securityPolicyService = null)
     : ControllerBase
 {
+    /// <summary>
+    /// 中文注释：强制重新认证（prompt=login / max_age 超时）时附加到 returnUrl 的内部参数。
+    /// 值是受 DataProtection 保护、带有效期的“要求重新认证的时间点”，登录回来后只要 auth_time
+    /// 不早于该时间点即视为已重新认证，避免 prompt=login / max_age=0 无限循环登录。
+    /// </summary>
+    public const string ReauthenticationParameterName = "nexusauth_reauth";
+
+    private const string ReauthenticationProtectorPurpose = "NexusAuth.Authorize.Reauthentication.v1";
+    private static readonly TimeSpan ReauthenticationMarkerLifetime = TimeSpan.FromMinutes(10);
+
+    private readonly ITimeLimitedDataProtector _reauthenticationProtector =
+        (dataProtectionProvider ?? new EphemeralDataProtectionProvider())
+            .CreateProtector(ReauthenticationProtectorPurpose)
+            .ToTimeLimitedDataProtector();
+
     /// <summary>
     /// OAuth2.0 Authorization Endpoint.
     /// Supports response_type=code (Authorization Code flow with optional PKCE).
@@ -198,24 +220,35 @@ public class AuthorizeController(
             }
 
             // Not logged in — redirect to login page with returnUrl (must be relative for Url.IsLocalUrl)
+            // 中文注释：保留可能存在的重新认证标记，用户重新登录后 auth_time 必然晚于该标记。
             var returnUrl = Request.GetEncodedPathAndQuery();
             return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
         }
 
-        if (promptValues.Contains("login", StringComparer.Ordinal))
+        var authenticatedAt = GetAuthenticatedAt();
+        var reauthenticationMarker = Request.Query[ReauthenticationParameterName].ToString();
+        var reauthenticated = IsReauthenticationSatisfied(reauthenticationMarker, authenticatedAt);
+
+        if (promptValues.Contains("login", StringComparer.Ordinal) && !reauthenticated)
         {
             // 中文注释：prompt=login 要求强制用户重新登录，即使当前已经有 Cookie 会话。
-            await HttpContext.SignOutAsync(AppWebModule.AuthenticationScheme);
-            var returnUrl = Request.GetEncodedPathAndQuery();
-            return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
+            // 登录回来后携带受保护的重新认证标记，auth_time 晚于标记即放行，不会再次触发登录。
+            return await ForceReauthenticationAsync();
         }
 
-        if (promptValues.Contains("consent", StringComparer.Ordinal))
+        if (maxAge.HasValue && !reauthenticated && !IsWithinMaxAge(authenticatedAt, maxAge.Value))
         {
-            // 中文注释：当 RP 显式要求 prompt=consent 时，先进入服务端确认页，
-            // 由当前用户确认本次授权的 scope 与 claims，再回到授权端继续签发 code。
-            // 主要调用方：标准 OIDC 客户端，以及后续需要强制重新确认授权的 demo 场景。
-            return Redirect(BuildConsentPageUrl(clientId, redirectUri, scope, state, nonce, prompt, maxAge, responseMode, claims, codeChallenge, codeChallengeMethod));
+            if (promptValues.Contains("none", StringComparer.Ordinal))
+            {
+                return AuthorizationError(
+                    redirectUri,
+                    normalizedResponseMode,
+                    "login_required",
+                    "The current session is too old for max_age.",
+                    state);
+            }
+
+            return await ForceReauthenticationAsync();
         }
 
         // User is authenticated — extract user ID from cookie claims
@@ -223,25 +256,36 @@ public class AuthorizeController(
         if (string.IsNullOrWhiteSpace(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
             return AuthorizationError("server_error", "Unable to identify the authenticated user.");
 
-        var authenticatedAt = GetAuthenticatedAt();
-        if (maxAge.HasValue)
+        if (!await IsUserAllowedAsync(userId, ct))
         {
-            if (!authenticatedAt.HasValue || DateTimeOffset.UtcNow > authenticatedAt.Value.AddSeconds(maxAge.Value))
-            {
-                if (promptValues.Contains("none", StringComparer.Ordinal))
-                {
-                    return AuthorizationError(
-                        redirectUri,
-                        normalizedResponseMode,
-                        "login_required",
-                        "The current session is too old for max_age.",
-                        state);
-                }
+            // 中文注释：已有 Cookie 会话的用户也要满足当前的账号状态与安全策略（黑/白名单）。
+            return AuthorizationError(
+                redirectUri,
+                normalizedResponseMode,
+                "access_denied",
+                "The user account is not allowed to authorize this client.",
+                state);
+        }
 
-                await HttpContext.SignOutAsync(AppWebModule.AuthenticationScheme);
-                var returnUrl = Request.GetEncodedPathAndQuery();
-                return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
-            }
+        if (promptValues.Contains("consent", StringComparer.Ordinal))
+        {
+            // 中文注释：当 RP 显式要求 prompt=consent 时，先进入服务端确认页，
+            // 由当前用户确认本次授权的 scope 与 claims，再回到授权端继续签发 code。
+            // 重新认证标记一并透传，确认后回到授权端不会再次要求登录。
+            // 主要调用方：标准 OIDC 客户端，以及后续需要强制重新确认授权的 demo 场景。
+            return Redirect(BuildConsentPageUrl(
+                clientId,
+                redirectUri,
+                scope,
+                state,
+                nonce,
+                prompt,
+                maxAge,
+                responseMode,
+                claims,
+                codeChallenge,
+                codeChallengeMethod,
+                reauthenticated ? reauthenticationMarker : null));
         }
 
         // Generate authorization code
@@ -291,6 +335,77 @@ public class AuthorizeController(
             return DateTimeOffset.FromUnixTimeSeconds(unixTimeSeconds);
 
         return null;
+    }
+
+    /// <summary>
+    /// 中文注释：auth_time 只精确到秒，按整秒比较 max_age（OIDC Core §3.1.2.1）。
+    /// </summary>
+    private static bool IsWithinMaxAge(DateTimeOffset? authenticatedAt, int maxAge)
+    {
+        if (!authenticatedAt.HasValue)
+            return false;
+
+        var elapsedSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - authenticatedAt.Value.ToUnixTimeSeconds();
+        return elapsedSeconds <= maxAge;
+    }
+
+    private bool IsReauthenticationSatisfied(string? marker, DateTimeOffset? authenticatedAt)
+    {
+        if (string.IsNullOrWhiteSpace(marker) || !authenticatedAt.HasValue)
+            return false;
+
+        try
+        {
+            var payload = _reauthenticationProtector.Unprotect(marker);
+            return long.TryParse(payload, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requiredAfter)
+                && authenticatedAt.Value.ToUnixTimeSeconds() >= requiredAfter;
+        }
+        catch (CryptographicException)
+        {
+            // 中文注释：被篡改或已过期的标记一律视为未重新认证。
+            return false;
+        }
+    }
+
+    private async Task<IActionResult> ForceReauthenticationAsync()
+    {
+        await HttpContext.SignOutAsync(AppWebModule.AuthenticationScheme);
+
+        var marker = _reauthenticationProtector.Protect(
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture),
+            ReauthenticationMarkerLifetime);
+        var returnUrl = BuildCurrentReturnUrl(marker);
+        return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
+    }
+
+    /// <summary>
+    /// 中文注释：重建当前授权请求的本地 URL，并替换（或移除）内部的重新认证标记参数。
+    /// </summary>
+    private string BuildCurrentReturnUrl(string? reauthenticationMarker)
+    {
+        var parameters = Request.Query
+            .Where(pair => !string.Equals(pair.Key, ReauthenticationParameterName, StringComparison.Ordinal))
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(reauthenticationMarker))
+            parameters.Add(new KeyValuePair<string, StringValues>(ReauthenticationParameterName, reauthenticationMarker));
+
+        var path = (Request.PathBase + Request.Path).ToString();
+        return Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(
+            string.IsNullOrEmpty(path) ? "/connect/authorize" : path,
+            parameters);
+    }
+
+    private async Task<bool> IsUserAllowedAsync(Guid userId, CancellationToken ct)
+    {
+        if (userService is null)
+            return true;
+
+        var user = await userService.FindByIdAsync(userId, ct);
+        if (user is null || !user.IsActive)
+            return false;
+
+        return securityPolicyService?.CheckUser(user).IsSuccess ?? true;
     }
 
     private static HashSet<string> ParsePrompt(string? prompt)
@@ -385,7 +500,8 @@ public class AuthorizeController(
         string? responseMode,
         string? claims,
         string? codeChallenge,
-        string? codeChallengeMethod)
+        string? codeChallengeMethod,
+        string? reauthenticationMarker)
     {
         var query = new Dictionary<string, string?>
         {
@@ -395,11 +511,12 @@ public class AuthorizeController(
             ["state"] = state,
             ["nonce"] = nonce,
             ["prompt"] = prompt,
-            ["max_age"] = maxAge?.ToString(),
+            ["max_age"] = maxAge?.ToString(CultureInfo.InvariantCulture),
             ["response_mode"] = responseMode,
             ["claims"] = claims,
             ["code_challenge"] = codeChallenge,
             ["code_challenge_method"] = codeChallengeMethod,
+            [ReauthenticationParameterName] = reauthenticationMarker,
         };
 
         return Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString("/consent", query!);

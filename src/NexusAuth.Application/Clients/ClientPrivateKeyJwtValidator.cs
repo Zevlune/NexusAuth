@@ -14,6 +14,17 @@ public static class ClientPrivateKeyJwtValidator
     /// </summary>
     public static ClientAssertionValidationResult Validate(string assertionJwt, OAuthClient client, string expectedAudience)
     {
+        return Validate(assertionJwt, client, [expectedAudience]);
+    }
+
+    /// <summary>
+    /// 中文注释：aud 只需命中允许集合中的任意一个（issuer 或 token endpoint URL，RFC 7523 §3）。
+    /// </summary>
+    public static ClientAssertionValidationResult Validate(string assertionJwt, OAuthClient client, IReadOnlyCollection<string> expectedAudiences)
+    {
+        if (expectedAudiences.Count == 0)
+            return ClientAssertionValidationResult.Failure("No accepted client assertion audience is configured.");
+
         JwtSecurityToken unvalidatedToken;
         try
         {
@@ -39,6 +50,11 @@ public static class ClientPrivateKeyJwtValidator
         {
             return ClientAssertionValidationResult.Failure("Client JWK set format is invalid.");
         }
+        catch (ArgumentException)
+        {
+            // 中文注释：JsonWebKeySet 对非法 JSON 抛 ArgumentException，必须映射为认证失败而不是 500。
+            return ClientAssertionValidationResult.Failure("Client JWK set format is invalid.");
+        }
 
         if (keys.Count == 0)
             return ClientAssertionValidationResult.Failure("Client JWK set does not contain any key.");
@@ -50,7 +66,7 @@ public static class ClientPrivateKeyJwtValidator
             ValidateIssuer = true,
             ValidIssuer = client.ClientId,
             ValidateAudience = true,
-            ValidAudience = expectedAudience,
+            ValidAudiences = expectedAudiences,
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromMinutes(1),
             RequireSignedTokens = true,

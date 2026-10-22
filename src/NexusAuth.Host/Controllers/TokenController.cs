@@ -91,7 +91,8 @@ public class TokenController(
             clientSecret,
             clientAssertionType,
             clientAssertion,
-            GetEndpointAudience());
+            GetTokenEndpointUrl(),
+            GetAcceptedAssertionAudiences());
 
         if (!resolvedClientAuthentication.IsSuccess || resolvedClientAuthentication.Authentication is null)
             return InvalidClient();
@@ -187,30 +188,39 @@ public class TokenController(
         if (!userPolicy.IsSuccess || !login.User.IsActive)
             return BadRequest(new { error = "invalid_grant", error_description = "The user account is unavailable." });
 
-        var accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(
-            clientId,
-            scopeValidation.NormalizedScope!,
-            null,
-            login.User.Id,
-            null,
-            ct);
-        var refreshToken = ShouldIssueRefreshToken(scopeValidation.NormalizedScope!)
-            ? await _tokenService.IssueRefreshTokenAsync(clientId, login.User.Id, scopeValidation.NormalizedScope!, ct)
-            : null;
-        var includeIdToken = scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Contains("openid", StringComparer.Ordinal);
+        TokenIssueResult accessTokenResult;
+        string? refreshToken;
         string? idToken = null;
-        if (includeIdToken)
+        try
         {
-            idToken = await _tokenService.IssueIdTokenAsync(
+            accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(
                 clientId,
+                scopeValidation.NormalizedScope!,
+                null,
                 login.User.Id,
                 null,
-                accessTokenResult.AccessToken,
-                authenticatedAt: login.AuthenticatedAt,
-                acr: "urn:nexusauth:acr:external",
-                amr: "wechat",
-                ct: ct);
+                ct);
+            refreshToken = ShouldIssueRefreshToken(scopeValidation.NormalizedScope!)
+                ? await _tokenService.IssueRefreshTokenAsync(clientId, login.User.Id, scopeValidation.NormalizedScope!, ct)
+                : null;
+            var includeIdToken = scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Contains("openid", StringComparer.Ordinal);
+            if (includeIdToken)
+            {
+                idToken = await _tokenService.IssueIdTokenAsync(
+                    clientId,
+                    login.User.Id,
+                    null,
+                    accessTokenResult.AccessToken,
+                    authenticatedAt: login.AuthenticatedAt,
+                    acr: "urn:nexusauth:acr:external",
+                    amr: "wechat",
+                    ct: ct);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            return TokenIssuanceFailed();
         }
 
         return Ok(new
@@ -252,25 +262,35 @@ public class TokenController(
         if (!await IsActiveUserAsync(result.UserId, ct))
             return BadRequest(new { error = "invalid_grant", error_description = "The user account is no longer active." });
 
-        var accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId, result.Scope, null, result.UserId, result.ClaimsJson, ct);
-        var refreshToken = ShouldIssueRefreshToken(result.Scope)
-            ? await _tokenService.IssueRefreshTokenAsync(result.ClientId, result.UserId, result.Scope, ct)
-            : null;
-        var includeIdToken = result.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
+        TokenIssueResult accessTokenResult;
+        string? refreshToken;
         string? idToken = null;
-        if (includeIdToken)
+        try
         {
-            // 中文注释：授权码里已经保存了 OIDC 上下文，这里在换 token 时继续带到 id_token 里。
-            idToken = await _tokenService.IssueIdTokenAsync(
-                result.ClientId,
-                result.UserId,
-                result.Nonce,
-                accessTokenResult.AccessToken,
-                result.ClaimsJson,
-                result.AuthenticatedAt,
-                result.Acr,
-                result.Amr,
-                ct);
+            accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId, result.Scope, null, result.UserId, result.ClaimsJson, ct);
+            refreshToken = ShouldIssueRefreshToken(result.Scope)
+                ? await _tokenService.IssueRefreshTokenAsync(result.ClientId, result.UserId, result.Scope, ct)
+                : null;
+            var includeIdToken = result.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
+            if (includeIdToken)
+            {
+                // 中文注释：授权码里已经保存了 OIDC 上下文，这里在换 token 时继续带到 id_token 里。
+                idToken = await _tokenService.IssueIdTokenAsync(
+                    result.ClientId,
+                    result.UserId,
+                    result.Nonce,
+                    accessTokenResult.AccessToken,
+                    result.ClaimsJson,
+                    result.AuthenticatedAt,
+                    result.Acr,
+                    result.Amr,
+                    ct);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // 中文注释：授权码已经被消费，签发失败时返回 OAuth 错误 JSON 而不是框架 500。
+            return TokenIssuanceFailed();
         }
 
         return Ok(new
@@ -321,13 +341,21 @@ public class TokenController(
         if (!scopeValidation.IsSuccess)
             return BadRequest(new { error = scopeValidation.ErrorCode ?? "invalid_scope", error_description = scopeValidation.Error });
 
-        var accessToken = await _tokenService.IssueAccessTokenAsync(
-            clientAuthentication.Client.ClientId,
-            scopeValidation.NormalizedScope!,
-            null,
-            null,
-            null,
-            ct);
+        string accessToken;
+        try
+        {
+            accessToken = await _tokenService.IssueAccessTokenAsync(
+                clientAuthentication.Client.ClientId,
+                scopeValidation.NormalizedScope!,
+                null,
+                null,
+                null,
+                ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = "invalid_scope", error_description = ex.Message });
+        }
 
         return Ok(new
         {
@@ -414,14 +442,23 @@ public class TokenController(
         if (!await IsActiveUserAsync(result.UserId, ct))
             return BadRequest(new { error = "invalid_grant", error_description = "The user account is no longer active." });
 
-        var accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId!, result.Scope!, null, result.UserId, null, ct);
-        var refreshToken = ShouldIssueRefreshToken(result.Scope!)
-            ? await _tokenService.IssueRefreshTokenAsync(result.ClientId!, result.UserId, result.Scope!, ct)
-            : null;
-        var includeIdToken = result.Scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
+        TokenIssueResult accessTokenResult;
+        string? refreshToken;
         string? idToken = null;
-        if (includeIdToken)
-            idToken = await _tokenService.IssueIdTokenAsync(result.ClientId!, result.UserId, null, accessTokenResult.AccessToken, ct: ct);
+        try
+        {
+            accessTokenResult = await _tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId!, result.Scope!, null, result.UserId, null, ct);
+            refreshToken = ShouldIssueRefreshToken(result.Scope!)
+                ? await _tokenService.IssueRefreshTokenAsync(result.ClientId!, result.UserId, result.Scope!, ct)
+                : null;
+            var includeIdToken = result.Scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
+            if (includeIdToken)
+                idToken = await _tokenService.IssueIdTokenAsync(result.ClientId!, result.UserId, null, accessTokenResult.AccessToken, ct: ct);
+        }
+        catch (InvalidOperationException)
+        {
+            return TokenIssuanceFailed();
+        }
 
         return Ok(new
         {
@@ -434,14 +471,23 @@ public class TokenController(
         });
     }
 
-    private string GetEndpointAudience()
+    private string GetTokenEndpointUrl()
     {
-        var request = HttpContext.Request;
-        var host = request.Host.HasValue ? request.Host.Value : null;
-        if (!string.IsNullOrWhiteSpace(host))
-            return $"{request.Scheme}://{host}{request.PathBase}{request.Path}";
+        return GetIssuer() + "/connect/token";
+    }
 
-        return _jwtOptions.Issuer.TrimEnd('/') + "/connect/token";
+    /// <summary>
+    /// 中文注释：client assertion 的 aud 只接受由配置的 Jwt:Issuer 推导出的值（RFC 7523 §3：
+    /// issuer 本身或 token endpoint URL），不再信任可被伪造的 Host 头，也兼容 TLS 反向代理场景。
+    /// </summary>
+    private IReadOnlyList<string> GetAcceptedAssertionAudiences()
+    {
+        return [GetTokenEndpointUrl(), GetIssuer()];
+    }
+
+    private IActionResult TokenIssuanceFailed()
+    {
+        return BadRequest(new { error = "invalid_grant", error_description = "Unable to issue tokens for this grant." });
     }
 
     private string GetIssuer()
@@ -456,7 +502,9 @@ public class TokenController(
 
     private async Task<bool> IsActiveUserAsync(Guid userId, CancellationToken ct)
     {
-        return (await _userService.FindByIdAsync(userId, ct))?.IsActive == true;
+        // 中文注释：换 token 时同时校验账号状态与当前安全策略（黑/白名单）。
+        var user = await _userService.FindByIdAsync(userId, ct);
+        return user is { IsActive: true } && _securityPolicyService.CheckUser(user).IsSuccess;
     }
 
     private IActionResult InvalidClient()

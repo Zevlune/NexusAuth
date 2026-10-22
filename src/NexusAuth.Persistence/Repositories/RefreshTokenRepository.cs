@@ -72,6 +72,17 @@ public class RefreshTokenRepository : EfCoreEntityRepository<RefreshToken, Guid>
                 ct);
     }
 
+    public async Task<int> RevokeAllForUserAndClientAsync(Guid userId, string clientId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
+
+        return await _dbContext.Set<RefreshToken>()
+            .Where(r => r.UserId == userId && r.ClientId == clientId && !r.IsRevoked)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(r => r.IsRevoked, true),
+                ct);
+    }
+
     public Task<RefreshToken?> RotateAsync(
         string tokenHash,
         string clientId,

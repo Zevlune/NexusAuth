@@ -26,6 +26,12 @@ public interface IRefreshTokenRepository : IEntityRepository<RefreshToken, Guid>
     Task RevokeAllForClientAsync(string clientId, CancellationToken ct = default);
 
     /// <summary>
+    /// 中文注释：撤销某个用户在某个客户端下的全部有效 refresh token。
+    /// 主要调用方：refresh token 重放检测（RFC 9700 §4.14.2），返回被撤销的行数。
+    /// </summary>
+    Task<int> RevokeAllForUserAndClientAsync(Guid userId, string clientId, CancellationToken ct = default);
+
+    /// <summary>
     /// Atomically revokes the matching active token and persists replacement
     /// in one database transaction. The replacement is returned only when the
     /// conditional UPDATE matched exactly one row; a concurrent second use

@@ -11,6 +11,17 @@ public static class ClientSecretJwtValidator
 
     public static ClientAssertionValidationResult Validate(string assertionJwt, OAuthClient client, string expectedAudience)
     {
+        return Validate(assertionJwt, client, [expectedAudience]);
+    }
+
+    /// <summary>
+    /// 中文注释：aud 只需命中允许集合中的任意一个（issuer 或 token endpoint URL，RFC 7523 §3）。
+    /// </summary>
+    public static ClientAssertionValidationResult Validate(string assertionJwt, OAuthClient client, IReadOnlyCollection<string> expectedAudiences)
+    {
+        if (expectedAudiences.Count == 0)
+            return ClientAssertionValidationResult.Failure("No accepted client assertion audience is configured.");
+
         JwtSecurityToken unvalidatedToken;
         try
         {
@@ -35,7 +46,7 @@ public static class ClientSecretJwtValidator
             ValidateIssuer = true,
             ValidIssuer = client.ClientId,
             ValidateAudience = true,
-            ValidAudience = expectedAudience,
+            ValidAudiences = expectedAudiences,
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromMinutes(1),
             RequireSignedTokens = true,

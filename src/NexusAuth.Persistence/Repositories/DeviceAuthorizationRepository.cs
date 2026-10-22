@@ -114,6 +114,18 @@ public class DeviceAuthorizationRepository : EfCoreEntityRepository<DeviceAuthor
         return affected == 1;
     }
 
+    public async Task<int> DenyOutstandingForClientAsync(string clientId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
+
+        return await _dbContext.Set<DeviceAuthorization>()
+            .Where(d => d.ClientId == clientId
+                && (d.Status == DeviceAuthorizationStatus.Pending || d.Status == DeviceAuthorizationStatus.Approved))
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(d => d.Status, DeviceAuthorizationStatus.Denied),
+                ct);
+    }
+
     public async Task<DeviceAuthorization?> ConsumeApprovedAsync(
         string deviceCodeHash,
         string clientId,

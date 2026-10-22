@@ -129,6 +129,12 @@ public class AuthorizationService(
             if (!VerifyPkce(codeVerifier, authCode.CodeChallenge, authCode.CodeChallengeMethod))
                 return ConsumeFailure(clientId, "PkceVerificationFailed", "PKCE verification failed.");
         }
+        else if (!string.IsNullOrWhiteSpace(codeVerifier))
+        {
+            // 中文注释：授权请求没有 code_challenge 却在换 token 时带了 code_verifier，
+            // 属于 PKCE 降级攻击特征（RFC 9700 §4.8.2），直接拒绝。
+            return ConsumeFailure(clientId, "UnexpectedCodeVerifier", "code_verifier was supplied but the authorization request did not use PKCE.");
+        }
 
         var consumedCode = await codeRepository.ConsumeAsync(code, clientId, ct);
         if (consumedCode is null)

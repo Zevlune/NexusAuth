@@ -62,6 +62,13 @@ public class ClientApiResourceRepository(IUnitOfWork unitOfWork) : IClientApiRes
         }
     }
 
+    public async Task RemoveByClientIdAsync(Guid clientId, CancellationToken ct = default)
+    {
+        await _dbContext.Set<ClientApiResource>()
+            .Where(x => x.ClientId == clientId)
+            .ExecuteDeleteAsync(ct);
+    }
+
     public async Task RemoveByApiResourceIdAsync(Guid apiResourceId, CancellationToken ct = default)
     {
         var entities = await _dbContext.Set<ClientApiResource>()

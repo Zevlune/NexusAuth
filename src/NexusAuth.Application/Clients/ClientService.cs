@@ -8,8 +8,16 @@ public class ClientService(
     ITokenBlacklistRepository tokenBlacklistRepository,
     IOAuthClientSecretRepository clientSecretRepository,
     IClientApiResourceRepository clientApiResourceRepository,
+    IRefreshTokenRepository refreshTokenRepository,
+    IAuthorizationCodeRepository authorizationCodeRepository,
+    IDeviceAuthorizationRepository deviceAuthorizationRepository,
     ILogger<ClientService> logger) : IClientService
 {
+    // 中文注释：每个活跃共享密钥都会让一次错误认证多做一次 BCrypt(12) 校验，限制数量以避免未认证的 CPU 放大。
+    public const int MaxActiveSharedSecrets = 3;
+
+    private const string MultipleAudiencesError =
+        "Requested scopes span multiple audiences. Please request one resource audience per token.";
 
     #region OAuth 授权服务 (Host API 使用)
 
@@ -90,10 +98,11 @@ public class ClientService(
             if (string.IsNullOrWhiteSpace(input.ClientAssertion))
                 return AuthenticationFailure(client.ClientId, "MissingCredential", "client_assertion is required.");
 
-            if (string.IsNullOrWhiteSpace(input.AssertionAudience))
+            var acceptedAudiences = input.GetAcceptedAssertionAudiences();
+            if (acceptedAudiences.Count == 0)
                 return AuthenticationFailure(client.ClientId, "MissingAssertionAudience", "assertion audience is required for private_key_jwt validation.");
 
-            var assertionValidation = ClientPrivateKeyJwtValidator.Validate(input.ClientAssertion, client, input.AssertionAudience);
+            var assertionValidation = ClientPrivateKeyJwtValidator.Validate(input.ClientAssertion, client, acceptedAudiences);
             if (!assertionValidation.IsSuccess)
                 return AuthenticationFailure(client.ClientId, "InvalidAssertion", assertionValidation.Error ?? "Invalid client assertion.");
 
@@ -119,10 +128,11 @@ public class ClientService(
             if (string.IsNullOrWhiteSpace(input.ClientAssertion))
                 return AuthenticationFailure(client.ClientId, "MissingCredential", "client_assertion is required.");
 
-            if (string.IsNullOrWhiteSpace(input.AssertionAudience))
+            var acceptedAudiences = input.GetAcceptedAssertionAudiences();
+            if (acceptedAudiences.Count == 0)
                 return AuthenticationFailure(client.ClientId, "MissingAssertionAudience", "assertion audience is required for client_secret_jwt validation.");
 
-            var assertionValidation = ClientSecretJwtValidator.Validate(input.ClientAssertion, client, input.AssertionAudience);
+            var assertionValidation = ClientSecretJwtValidator.Validate(input.ClientAssertion, client, acceptedAudiences);
             if (!assertionValidation.IsSuccess)
                 return AuthenticationFailure(client.ClientId, "InvalidAssertion", assertionValidation.Error ?? "Invalid client assertion.");
 
@@ -200,6 +210,14 @@ public class ClientService(
                 && !string.IsNullOrWhiteSpace(codeChallengeMethod))
             {
                 return ClientValidationResult.Failure("invalid_request", "code_challenge_method requires code_challenge.", redirectUriValidated: true);
+            }
+
+            if (!string.IsNullOrWhiteSpace(codeChallenge) && !IsWellFormedCodeChallenge(codeChallenge))
+            {
+                return ClientValidationResult.Failure(
+                    "invalid_request",
+                    "code_challenge must be 43-128 base64url characters.",
+                    redirectUriValidated: true);
             }
         }
 
@@ -285,6 +303,11 @@ public class ClientService(
             if (resource is null || !resource.IsActive)
                 return ScopeValidationResult.Failure("invalid_scope", $"Scope '{requestedScope}' does not correspond to an active resource.");
         }
+
+        // 中文注释：access token 只能携带一个资源 audience（TokenService.ResolveAudienceAsync 的规则）。
+        // 在授权端 / token 端校验 scope 时就拒绝，避免授权码被消费后才在签发阶段抛出 500。
+        if (requestedScopes.Count(requestedScope => !IsIdentityScope(requestedScope)) > 1)
+            return ScopeValidationResult.Failure("invalid_scope", MultipleAudiencesError);
 
         return ScopeValidationResult.Success(string.Join(' ', requestedScopes));
     }
@@ -393,6 +416,7 @@ public class ClientService(
         var tokenEndpointAuthMethod = request.TokenEndpointAuthMethod is null
             ? client.TokenEndpointAuthMethod
             : ResolveTokenEndpointAuthMethod(request.TokenEndpointAuthMethod);
+        var wasActive = client.IsActive;
 
         client.Update(
             request.ClientName,
@@ -408,6 +432,15 @@ public class ClientService(
             jwksUri: request.JwksUri);
 
         await clientRepository.UpdateAsync(client, ct);
+
+        if (wasActive && !client.IsActive)
+        {
+            // 中文注释：停用客户端时撤销其 refresh token，避免重新启用后旧授权自动复活。
+            await refreshTokenRepository.RevokeAllForClientAsync(client.ClientId, ct);
+            logger.LogLuckInformation(
+                "Client deactivated; refresh tokens revoked. ClientId={ClientId} Outcome={Outcome}",
+                [client.ClientId, "ClientRefreshTokensRevoked"]);
+        }
 
         if (apiResourceIds is not null)
         {
@@ -434,6 +467,7 @@ public class ClientService(
     {
         var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new InvalidOperationException($"Client with id {id} not found.");
         var tokenEndpointAuthMethod = ResolveCredentialAuthMethod(client, request.TokenEndpointAuthMethod);
+        EnsureSharedSecretCapacity(client, tokenEndpointAuthMethod);
         var generatedCredential = GenerateCredential(client.Id, tokenEndpointAuthMethod, request.AutoGenerateJwks, request.Description);
         if (generatedCredential.Secret is not null)
         {
@@ -473,6 +507,12 @@ public class ClientService(
 
         await clientSecretRepository.AddAsync(generatedCredential.Secret, ct);
 
+        // 中文注释：重置凭据通常意味着旧凭据可能泄露，用旧凭据换到的 refresh token 一并撤销。
+        await refreshTokenRepository.RevokeAllForClientAsync(client.ClientId, ct);
+        logger.LogLuckInformation(
+            "Client credential reset; refresh tokens revoked. ClientId={ClientId} Outcome={Outcome}",
+            [client.ClientId, "ClientRefreshTokensRevoked"]);
+
         client = await clientRepository.GetByIdAsync(id, ct)
             ?? throw new InvalidOperationException($"Client with id {id} not found.");
 
@@ -484,8 +524,20 @@ public class ClientService(
     public async Task DeleteAsync(Guid id, CancellationToken ct = default)
     {
         var client = await clientRepository.GetByIdAsync(id, ct);
-        if (client is not null)
-            await clientRepository.DeleteAsync(client, ct);
+        if (client is null)
+            return;
+
+        // 中文注释：refresh token / 授权码 / 设备码都按 client_id 字符串关联且没有外键，
+        // 删除客户端前先让这些授权失效，避免以相同 client_id 重建客户端时旧授权复活。
+        await refreshTokenRepository.RevokeAllForClientAsync(client.ClientId, ct);
+        await authorizationCodeRepository.InvalidateUnusedForClientAsync(client.ClientId, ct);
+        await deviceAuthorizationRepository.DenyOutstandingForClientAsync(client.ClientId, ct);
+        await clientApiResourceRepository.RemoveByClientIdAsync(client.Id, ct);
+        await clientRepository.DeleteAsync(client, ct);
+
+        logger.LogLuckInformation(
+            "Client deleted; outstanding grants invalidated. ClientId={ClientId} Outcome={Outcome}",
+            [client.ClientId, "ClientDeleted"]);
     }
 
     #endregion
@@ -521,6 +573,28 @@ public class ClientService(
             || string.Equals(scope, "phone", StringComparison.Ordinal)
             || string.Equals(scope, "address", StringComparison.Ordinal)
             || string.Equals(scope, "offline_access", StringComparison.Ordinal);
+    }
+
+    private static bool IsWellFormedCodeChallenge(string codeChallenge)
+    {
+        // 中文注释：仅支持 S256，code_challenge = BASE64URL(SHA256(verifier))，长度与字符集按 RFC 7636 §4.2 校验。
+        return codeChallenge.Length is >= 43 and <= 128
+            && codeChallenge.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
+    }
+
+    private static void EnsureSharedSecretCapacity(OAuthClient client, string tokenEndpointAuthMethod)
+    {
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal)
+            || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+            return;
+
+        var activeSharedSecrets = client.ClientSecrets.Count(secret =>
+            secret.IsActive && string.Equals(secret.Type, OAuthClientSecret.TypeSharedSecret, StringComparison.Ordinal));
+        if (activeSharedSecrets >= MaxActiveSharedSecrets)
+        {
+            throw new InvalidOperationException(
+                $"A client can have at most {MaxActiveSharedSecrets} active shared secrets. Reset the client credential to replace them.");
+        }
     }
 
     private static string BuildClientAssertionReplayKey(string clientId, string assertionJti)

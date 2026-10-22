@@ -45,6 +45,12 @@ public class ConsentModel(
     [BindProperty(SupportsGet = true, Name = "code_challenge_method")]
     public string? CodeChallengeMethod { get; set; }
 
+    /// <summary>
+    /// 中文注释：授权端在强制重新认证后附带的受保护标记，确认后原样带回授权端，避免再次要求登录。
+    /// </summary>
+    [BindProperty(SupportsGet = true, Name = "nexusauth_reauth")]
+    public string? ReauthenticationMarker { get; set; }
+
     public IReadOnlyList<string> ScopeItems { get; private set; } = [];
 
     public IReadOnlyList<string> ClaimItems { get; private set; } = [];
@@ -111,18 +117,32 @@ public class ConsentModel(
             return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
         }
 
-        var validation = await ValidateAuthorizeRequestAsync(ct);
-        if (!validation.IsSuccess)
+        // 中文注释：只有 client_id 与 redirect_uri 校验通过后才能把错误回传给客户端，
+        // 否则在本地展示错误，避免开放重定向。
+        if (string.IsNullOrWhiteSpace(ClientId) || string.IsNullOrWhiteSpace(RedirectUri))
         {
-            ErrorMessage = validation.Error;
+            ErrorMessage = "授权请求缺少必要参数。";
             return Page();
         }
 
-        return RedirectToPage("/OAuthError", new
+        var redirectValidation = await _clientService.ValidateClientRedirectUriAsync(ClientId, RedirectUri, ct);
+        if (!redirectValidation.IsSuccess)
         {
-            error = "access_denied",
-            error_description = "The resource owner denied the request.",
-        });
+            ErrorMessage = redirectValidation.Error;
+            return Page();
+        }
+
+        // 中文注释：RFC 6749 §4.1.2.1，用户拒绝授权时以 error=access_denied 回到已登记的 redirect_uri，
+        // 并保留 state、遵循 response_mode。
+        return BuildAuthorizationResponse(
+            RedirectUri,
+            ResolveResponseMode(ResponseMode) ?? "query",
+            new Dictionary<string, string?>
+            {
+                ["error"] = "access_denied",
+                ["error_description"] = "The resource owner denied the request.",
+                ["state"] = State,
+            });
     }
 
     private async Task<ClientValidationResult> ValidateAuthorizeRequestAsync(CancellationToken ct)
@@ -216,6 +236,7 @@ public class ConsentModel(
             ["claims"] = Claims,
             ["code_challenge"] = CodeChallenge,
             ["code_challenge_method"] = CodeChallengeMethod,
+            ["nexusauth_reauth"] = string.IsNullOrWhiteSpace(ReauthenticationMarker) ? null : ReauthenticationMarker,
         };
 
         return Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString("/connect/authorize", query!);
