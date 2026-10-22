@@ -11,10 +11,12 @@ namespace Demo.Bff.Services;
 public sealed class OidcSessionCookieEvents : CookieAuthenticationEvents
 {
     private readonly OidcBffService _oidcBffService;
+    private readonly ILogger<OidcSessionCookieEvents> _logger;
 
-    public OidcSessionCookieEvents(OidcBffService oidcBffService)
+    public OidcSessionCookieEvents(OidcBffService oidcBffService, ILogger<OidcSessionCookieEvents> logger)
     {
         _oidcBffService = oidcBffService;
+        _logger = logger;
     }
 
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
@@ -25,7 +27,19 @@ public sealed class OidcSessionCookieEvents : CookieAuthenticationEvents
             return;
         }
 
-        var result = await _oidcBffService.EnsureActiveSessionAsync(context.Principal, context.HttpContext.RequestAborted);
+        SessionRenewalResult? result;
+        try
+        {
+            result = await _oidcBffService.EnsureActiveSessionAsync(context.Principal, context.HttpContext.RequestAborted);
+        }
+        catch (HttpRequestException ex)
+        {
+            // NexusAuth 不可用导致续签失败时按未登录处理（401），而不是让整个请求 500。
+            _logger.LogWarning(ex, "Session renewal failed because the identity provider is unreachable.");
+            context.RejectPrincipal();
+            return;
+        }
+
         if (result is null)
         {
             context.RejectPrincipal();

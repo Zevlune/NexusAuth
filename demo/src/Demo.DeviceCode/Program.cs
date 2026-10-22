@@ -76,6 +76,11 @@ while (true)
         Console.WriteLine("设备授权成功，token 响应如下：");
         PrintJson(pollPayload);
 
+        // 记录最新可用的 refresh_token：刷新时服务端会轮换 refresh_token，旧值随即失效。
+        var latestRefreshToken = pollRoot.TryGetProperty("refresh_token", out var issuedRefreshTokenElement) && issuedRefreshTokenElement.ValueKind == JsonValueKind.String
+            ? issuedRefreshTokenElement.GetString()
+            : null;
+
         if (pollRoot.TryGetProperty("access_token", out var accessTokenElement) && accessTokenElement.ValueKind == JsonValueKind.String)
         {
             var accessToken = accessTokenElement.GetString()!;
@@ -89,53 +94,55 @@ while (true)
 
             Console.WriteLine($"BFF HTTP {(int)apiResponse.StatusCode} {apiResponse.StatusCode}");
             PrintJson(apiPayload);
+        }
 
-        if (pollRoot.TryGetProperty("refresh_token", out var issuedRefreshTokenElement) && issuedRefreshTokenElement.ValueKind == JsonValueKind.String)
+        if (!string.IsNullOrWhiteSpace(latestRefreshToken))
         {
-            var refreshToken = issuedRefreshTokenElement.GetString()!;
+            Console.WriteLine();
+            Console.WriteLine("开始自动验证 refresh_token 流程...");
 
-                Console.WriteLine();
-                Console.WriteLine("开始自动验证 refresh_token 流程...");
+            var refreshForm = new Dictionary<string, string>
+            {
+                ["grant_type"] = "refresh_token",
+                ["refresh_token"] = latestRefreshToken,
+            };
+            await ClientAssertionHelper.AppendPrivateKeyJwtAsync(refreshForm, clientId, tokenEndpoint, privateKeyPath, keyId);
 
-                var refreshForm = new Dictionary<string, string>
+            var refreshResponse = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(refreshForm));
+            var refreshPayload = await refreshResponse.Content.ReadAsStringAsync();
+
+            Console.WriteLine($"Refresh HTTP {(int)refreshResponse.StatusCode} {refreshResponse.StatusCode}");
+            PrintJson(refreshPayload);
+
+            if (refreshResponse.IsSuccessStatusCode)
+            {
+                using var refreshDocument = JsonDocument.Parse(refreshPayload);
+                var refreshRoot = refreshDocument.RootElement;
+
+                if (refreshRoot.TryGetProperty("refresh_token", out var rotatedRefreshTokenElement) && rotatedRefreshTokenElement.ValueKind == JsonValueKind.String)
+                    latestRefreshToken = rotatedRefreshTokenElement.GetString();
+
+                if (refreshRoot.TryGetProperty("access_token", out var refreshedAccessTokenElement) && refreshedAccessTokenElement.ValueKind == JsonValueKind.String)
                 {
-                    ["grant_type"] = "refresh_token",
-                    ["refresh_token"] = refreshToken,
-                };
-                await ClientAssertionHelper.AppendPrivateKeyJwtAsync(refreshForm, clientId, tokenEndpoint, privateKeyPath, keyId);
+                    Console.WriteLine();
+                    Console.WriteLine("开始使用刷新后的 access_token 再次调用 Demo.Bff 接口...");
 
-                var refreshResponse = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(refreshForm));
-                var refreshPayload = await refreshResponse.Content.ReadAsStringAsync();
+                    using var refreshedApiRequest = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+                    refreshedApiRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", refreshedAccessTokenElement.GetString());
+                    var refreshedApiResponse = await http.SendAsync(refreshedApiRequest);
+                    var refreshedApiPayload = await refreshedApiResponse.Content.ReadAsStringAsync();
 
-                Console.WriteLine($"Refresh HTTP {(int)refreshResponse.StatusCode} {refreshResponse.StatusCode}");
-                PrintJson(refreshPayload);
-
-                if (refreshResponse.IsSuccessStatusCode)
-                {
-                    using var refreshDocument = JsonDocument.Parse(refreshPayload);
-                    var refreshRoot = refreshDocument.RootElement;
-                    if (refreshRoot.TryGetProperty("access_token", out var refreshedAccessTokenElement) && refreshedAccessTokenElement.ValueKind == JsonValueKind.String)
-                    {
-                        Console.WriteLine();
-                        Console.WriteLine("开始使用刷新后的 access_token 再次调用 Demo.Bff 接口...");
-
-                        using var refreshedApiRequest = new HttpRequestMessage(HttpMethod.Get, apiUrl);
-                        refreshedApiRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", refreshedAccessTokenElement.GetString());
-                        var refreshedApiResponse = await http.SendAsync(refreshedApiRequest);
-                        var refreshedApiPayload = await refreshedApiResponse.Content.ReadAsStringAsync();
-
-                        Console.WriteLine($"Refreshed BFF HTTP {(int)refreshedApiResponse.StatusCode} {refreshedApiResponse.StatusCode}");
-                        PrintJson(refreshedApiPayload);
-                    }
+                    Console.WriteLine($"Refreshed BFF HTTP {(int)refreshedApiResponse.StatusCode} {refreshedApiResponse.StatusCode}");
+                    PrintJson(refreshedApiPayload);
                 }
             }
         }
 
-        if (pollRoot.TryGetProperty("refresh_token", out var refreshTokenElement) && refreshTokenElement.ValueKind == JsonValueKind.String)
+        if (!string.IsNullOrWhiteSpace(latestRefreshToken))
         {
             Console.WriteLine();
-            Console.WriteLine("可用于 Demo.RefreshToken 的 refresh_token:");
-            Console.WriteLine(refreshTokenElement.GetString());
+            Console.WriteLine("可用于 Demo.RefreshToken 的 refresh_token（最新一次轮换后的值，旧值已失效）:");
+            Console.WriteLine(latestRefreshToken);
         }
 
         break;
