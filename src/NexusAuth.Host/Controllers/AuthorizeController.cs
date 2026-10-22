@@ -220,8 +220,11 @@ public class AuthorizeController(
             }
 
             // Not logged in — redirect to login page with returnUrl (must be relative for Url.IsLocalUrl)
-            // 中文注释：保留可能存在的重新认证标记，用户重新登录后 auth_time 必然晚于该标记。
-            var returnUrl = Request.GetEncodedPathAndQuery();
+            // 中文注释：未登录时接下来的登录本身就是一次全新认证；带 prompt=login / max_age 的请求附上
+            // 重新认证标记，登录回来后不会再被要求登录第二次。
+            var returnUrl = promptValues.Contains("login", StringComparer.Ordinal) || maxAge.HasValue
+                ? BuildCurrentReturnUrl(CreateReauthenticationMarker())
+                : Request.GetEncodedPathAndQuery();
             return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
         }
 
@@ -371,11 +374,15 @@ public class AuthorizeController(
     {
         await HttpContext.SignOutAsync(AppWebModule.AuthenticationScheme);
 
-        var marker = _reauthenticationProtector.Protect(
+        var returnUrl = BuildCurrentReturnUrl(CreateReauthenticationMarker());
+        return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
+    }
+
+    private string CreateReauthenticationMarker()
+    {
+        return _reauthenticationProtector.Protect(
             DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture),
             ReauthenticationMarkerLifetime);
-        var returnUrl = BuildCurrentReturnUrl(marker);
-        return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
     }
 
     /// <summary>

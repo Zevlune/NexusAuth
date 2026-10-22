@@ -55,6 +55,21 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
     }
 
     [Fact]
+    public async Task Anonymous_prompt_login_request_needs_only_the_first_login()
+    {
+        var anonymous = CreateController(new ClaimsPrincipal(new ClaimsIdentity()), AuthorizeUrl("prompt=login"), out var firstAuthentication);
+
+        var returnUrl = ExtractReturnUrl(Assert.IsType<RedirectResult>(await InvokeAsync(anonymous)).Url);
+
+        Assert.Equal(0, firstAuthentication.SignOutCount);
+        Assert.Contains(AuthorizeController.ReauthenticationParameterName, returnUrl);
+        var second = CreateController(Principal(DateTimeOffset.UtcNow), returnUrl, out var secondAuthentication);
+        var callback = Assert.IsType<RedirectResult>(await InvokeAsync(second));
+        Assert.StartsWith(RedirectUri, callback.Url);
+        Assert.Equal(0, secondAuthentication.SignOutCount);
+    }
+
+    [Fact]
     public async Task Reauthentication_marker_does_not_satisfy_a_session_older_than_the_marker()
     {
         var first = CreateController(Principal(DateTimeOffset.UtcNow.AddHours(-1)), AuthorizeUrl("prompt=login"), out _);
