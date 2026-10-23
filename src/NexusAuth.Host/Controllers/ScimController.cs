@@ -54,6 +54,7 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
             var list = await scimUserService.ListAsync(filter, startIndex, count, ct);
             return Scim(new { schemas = new[] { ListSchema }, totalResults = list.TotalResults, startIndex = list.StartIndex, itemsPerPage = list.Resources.Count, Resources = list.Resources.Select(ToResponse) });
         }
+        catch (ScimOperationException exception) { return ScimError(exception); }
         catch (ArgumentException exception) { return ScimError(400, "invalidFilter", exception.Message); }
     }
 
@@ -62,11 +63,11 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
     public async Task<IActionResult> GetUser(Guid id, CancellationToken ct)
     {
         var user = await scimUserService.FindAsync(id, ct);
-        return user is null ? ScimError(404, null, "User was not found.") : ScimUser(user);
+        return user is null ? UserNotFound() : ScimUser(user);
     }
 
     [HttpPost("Users")]
-    [ScimAuthorize("scim:write", StatusCodes.Status403Forbidden)]
+    [ScimAuthorize("scim:write")]
     public async Task<IActionResult> CreateUser([FromBody] ScimUserRequest request, CancellationToken ct)
     {
         try
@@ -77,12 +78,12 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
             Response.Headers.Location = $"{Request.Scheme}://{Request.Host}/scim/v2/Users/{user.Id}";
             return Scim(ToResponse(user), 201, user);
         }
+        catch (ScimOperationException exception) { return ScimError(exception); }
         catch (ArgumentException exception) { return ScimError(400, "invalidValue", exception.Message); }
-        catch (InvalidOperationException exception) { return ScimError(409, "uniqueness", exception.Message); }
     }
 
     [HttpPut("Users/{id:guid}")]
-    [ScimAuthorize("scim:write", StatusCodes.Status403Forbidden)]
+    [ScimAuthorize("scim:write")]
     public async Task<IActionResult> ReplaceUser(Guid id, [FromBody] ScimUserRequest request, CancellationToken ct)
     {
         try
@@ -90,14 +91,14 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
             EnsureSinglePrimaryValue(request.Emails, "emails");
             EnsureSinglePrimaryValue(request.PhoneNumbers, "phoneNumbers");
             var user = await scimUserService.ReplaceAsync(id, ToInput(request), Request.Headers.IfMatch, ct);
-            return user is null ? ScimError(412, null, "User was not found or the ETag does not match.") : ScimUser(user);
+            return user is null ? UserNotFound() : ScimUser(user);
         }
+        catch (ScimOperationException exception) { return ScimError(exception); }
         catch (ArgumentException exception) { return ScimError(400, "invalidValue", exception.Message); }
-        catch (InvalidOperationException exception) { return ScimError(409, "uniqueness", exception.Message); }
     }
 
     [HttpPatch("Users/{id:guid}")]
-    [ScimAuthorize("scim:write", StatusCodes.Status403Forbidden)]
+    [ScimAuthorize("scim:write")]
     public async Task<IActionResult> PatchUser(Guid id, [FromBody] ScimPatchRequest request, CancellationToken ct)
     {
         try
@@ -105,17 +106,21 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
             var operations = request.Operations?.Select(operation => new ScimPatchOperation(operation.Op ?? "", operation.Path, operation.Value)).ToArray() ?? [];
             if (operations.Length == 0) return ScimError(400, "invalidValue", "PATCH Operations is required.");
             var user = await scimUserService.PatchAsync(id, operations, Request.Headers.IfMatch, ct);
-            return user is null ? ScimError(412, null, "User was not found or the ETag does not match.") : ScimUser(user);
+            return user is null ? UserNotFound() : ScimUser(user);
         }
+        catch (ScimOperationException exception) { return ScimError(exception); }
         catch (ArgumentException exception) { return ScimError(400, "invalidValue", exception.Message); }
-        catch (InvalidOperationException exception) { return ScimError(409, "uniqueness", exception.Message); }
     }
 
     [HttpDelete("Users/{id:guid}")]
-    [ScimAuthorize("scim:write", StatusCodes.Status403Forbidden)]
+    [ScimAuthorize("scim:write")]
     public async Task<IActionResult> DeleteUser(Guid id, CancellationToken ct)
     {
-        return await scimUserService.DeleteAsync(id, Request.Headers.IfMatch, ct) ? NoContent() : ScimError(412, null, "User was not found or the ETag does not match.");
+        try
+        {
+            return await scimUserService.DeleteAsync(id, Request.Headers.IfMatch, ct) ? NoContent() : UserNotFound();
+        }
+        catch (ScimOperationException exception) { return ScimError(exception); }
     }
 
     private IActionResult ScimUser(ScimUser user) => Scim(ToResponse(user), 200, user);
@@ -125,6 +130,8 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
         return new JsonResult(value) { StatusCode = status, ContentType = ScimContentType };
     }
     private IActionResult ScimError(int status, string? scimType, string detail) => Scim(new { schemas = new[] { ErrorSchema }, status = status.ToString(), scimType, detail }, status);
+    private IActionResult ScimError(ScimOperationException exception) => ScimError(exception.Status, exception.ScimType, exception.Message);
+    private IActionResult UserNotFound() => ScimError(404, null, "User was not found.");
 
     private object ToResponse(ScimUser user) => new
     {
@@ -140,6 +147,8 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
     private static string? FirstValue(IReadOnlyList<ScimValue>? values) => values?.FirstOrDefault(value => value.Primary == true)?.Value ?? values?.FirstOrDefault()?.Value;
     private static void EnsureSinglePrimaryValue(IReadOnlyList<ScimValue>? values, string attribute)
     {
+        if (values?.Any(value => value is null) == true)
+            throw new ArgumentException($"{attribute} must not contain null values.");
         if (values is { Count: > 1 })
             throw new ArgumentException($"{attribute} currently supports one primary value.");
     }

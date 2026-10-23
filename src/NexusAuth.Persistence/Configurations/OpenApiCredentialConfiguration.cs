@@ -21,7 +21,7 @@ public sealed class OpenApiCredentialConfiguration : IEntityTypeConfiguration<Op
         builder.Property(item => item.TokenHash).HasColumnName("token_hash").HasMaxLength(OpenApiCredential.TokenHashLength).IsRequired();
         builder.Property(item => item.TargetType).HasColumnName("target_type").HasMaxLength(32).IsRequired();
         builder.Property(item => item.Scopes).HasColumnName("scopes").HasColumnType("jsonb").HasConversion(converter).Metadata.SetValueComparer(comparer);
-        builder.Property(item => item.IsActive).HasColumnName("is_active").HasDefaultValue(true).IsRequired();
+        builder.Property(item => item.IsActive).HasColumnName("is_active").IsRequired();
         builder.Property(item => item.ExpiresAt).HasColumnName("expires_at");
         builder.Property(item => item.LastUsedAt).HasColumnName("last_used_at");
         builder.Property(item => item.CreatedAt).HasColumnName("created_at").IsRequired();

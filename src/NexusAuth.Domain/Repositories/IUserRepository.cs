@@ -16,6 +16,9 @@ public interface IUserRepository : IAggregateRootRepository<User, Guid>, IScoped
 
     Task<User?> FindByIdAsync(Guid id, CancellationToken ct = default);
 
+    /// <summary>
+    /// SCIM listing. System accounts are never returned to provisioning clients.
+    /// </summary>
     Task<(IReadOnlyList<User> Items, int Total)> GetScimPagedAsync(
         string? userName,
         string? externalId,

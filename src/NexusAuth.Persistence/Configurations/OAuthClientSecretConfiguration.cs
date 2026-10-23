@@ -39,8 +39,7 @@ public class OAuthClientSecretConfiguration : IEntityTypeConfiguration<OAuthClie
 
         builder.Property(x => x.IsActive)
             .HasColumnName("is_active")
-            .IsRequired()
-            .HasDefaultValue(true);
+            .IsRequired();
 
         builder.Property(x => x.CreatedAt)
             .HasColumnName("created_at")

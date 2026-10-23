@@ -47,8 +47,7 @@ public class ScimServicePrincipalCredentialConfiguration
 
         builder.Property(credential => credential.IsActive)
             .HasColumnName("is_active")
-            .IsRequired()
-            .HasDefaultValue(true);
+            .IsRequired();
 
         builder.Property(credential => credential.ExpiresAt)
             .HasColumnName("expires_at");

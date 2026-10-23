@@ -71,18 +71,30 @@ public sealed class OpenApiCredential : EntityWithIdentity<Guid>
     public void Update(string name, DateTimeOffset? expiresAt, bool isActive)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        if (isActive && RevokedAt is not null)
+            throw new InvalidOperationException("A revoked Open API credential cannot be re-activated. Create a new credential instead.");
         Name = name.Trim();
         ExpiresAt = expiresAt?.ToUniversalTime();
         SetActive(isActive);
     }
 
+    /// <summary>
+    /// Enables or disables the credential. Disabling is reversible; revocation is
+    /// terminal because a revoked token may have leaked.
+    /// </summary>
     public void SetActive(bool isActive)
     {
+        if (isActive && RevokedAt is not null)
+            throw new InvalidOperationException("A revoked Open API credential cannot be re-activated. Create a new credential instead.");
         IsActive = isActive;
-        RevokedAt = isActive ? null : DateTimeOffset.UtcNow;
     }
 
-    public void Revoke() => SetActive(false);
+    /// <summary>Terminal revocation. The first revocation time is kept.</summary>
+    public void Revoke()
+    {
+        IsActive = false;
+        RevokedAt ??= DateTimeOffset.UtcNow;
+    }
 
     public static string NormalizeTargetType(string targetType)
     {

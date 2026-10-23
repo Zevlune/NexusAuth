@@ -54,7 +54,8 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
         int count,
         CancellationToken ct = default)
     {
-        var query = FindAll();
+        // 中文注释：系统账号（管理员）不通过 SCIM 暴露。
+        var query = FindAll(user => !user.IsSystemAccount);
         if (!string.IsNullOrWhiteSpace(userName))
             query = query.Where(user => user.Username == userName);
         if (!string.IsNullOrWhiteSpace(externalId))
@@ -94,7 +95,7 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
 
         var total = await query.CountAsync(ct);
         var items = await query.OrderByDescending(user => user.CreatedAt)
-            .Skip((page - 1) * pageSize)
+            .Skip((int)Math.Clamp(((long)page - 1) * pageSize, 0, int.MaxValue))
             .Take(pageSize)
             .ToListAsync(ct);
         return (items, total);
