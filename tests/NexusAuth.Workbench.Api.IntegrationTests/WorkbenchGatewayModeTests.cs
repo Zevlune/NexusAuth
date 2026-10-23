@@ -75,10 +75,13 @@ public sealed class WorkbenchGatewayModeTests
     [InlineData("POST", "/api/auth/logout")]
     public async Task Gateway_does_not_publish_interactive_login_routes(string method, string path)
     {
-        using var factory = CreateFactory(true);
-        using var client = factory.CreateClient();
-        using var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+        using var configured = new WorkbenchAdministrationAuthorizationFixture("nexusauth.workbench", gatewayEnabled: true);
+        using var anonymous = configured.CreateAnonymousClient();
+        using var denied = await anonymous.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
 
+        using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+        using var response = await administrator.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 

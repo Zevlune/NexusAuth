@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -52,7 +53,7 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
     }
 
     [Fact]
-    public void Every_management_controller_uses_the_administrator_policy()
+    public void Management_controllers_rely_on_the_global_fallback_without_fixed_policy_names()
     {
         var managementControllers = typeof(WorkbenchApiModule).Assembly.GetTypes()
             .Where(type => !type.IsAbstract
@@ -65,10 +66,92 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         Assert.Equal(8, managementControllers.Length);
         Assert.All(managementControllers, type =>
         {
-            var authorize = type.GetCustomAttribute<AuthorizeAttribute>(inherit: true);
-            Assert.NotNull(authorize);
-            Assert.Equal(WorkbenchAuthorizationPolicies.Administrator, authorize.Policy);
+            Assert.Empty(type.GetCustomAttributes<AuthorizeAttribute>(inherit: true));
+            Assert.Empty(type.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
+            Assert.All(type.GetMethods().Where(method => method.DeclaringType == type), method =>
+            {
+                Assert.Empty(method.GetCustomAttributes<AuthorizeAttribute>(inherit: true));
+                Assert.Empty(method.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
+            });
         });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Default_and_fallback_protect_new_endpoints_without_a_named_policy(bool gatewayEnabled)
+    {
+        using var configured = new WorkbenchAdministrationAuthorizationFixture("nexusauth.workbench", gatewayEnabled);
+        using var anonymous = configured.CreateAnonymousClient();
+        using var ordinary = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
+        using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+        foreach (var path in new[] { "/__test/access/default", "/__test/access/fallback" })
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await ordinary.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await administrator.GetAsync(path)).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync("/__test/access/public")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ordinary.GetAsync("/__test/access/named")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await administrator.GetAsync("/__test/access/named")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Hosts_can_replace_the_evaluator_or_policy_provider_without_controller_changes(
+        bool replaceProvider, bool gatewayEnabled)
+    {
+        using var configured = new WorkbenchAdministrationAuthorizationFixture(
+            "nexusauth.workbench", gatewayEnabled, services =>
+            {
+                if (replaceProvider)
+                    services.Replace(ServiceDescriptor.Singleton<IAuthorizationPolicyProvider, TestWorkbenchPolicyProvider>());
+                else
+                    services.Replace(ServiceDescriptor.Scoped<IWorkbenchAccessEvaluator, TestWorkbenchAccessEvaluator>());
+            });
+        using var anonymous = configured.CreateAnonymousClient();
+        using var ordinary = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
+        using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+        foreach (var path in new[]
+        {
+            "/__test/access/default", "/__test/access/fallback", "/api/users",
+            $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}/passkeys",
+        })
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await ordinary.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await administrator.GetAsync(path)).StatusCode);
+        }
+
+        using var me = await ordinary.GetAsync("/api/auth/me");
+        using var body = JsonDocument.Parse(await me.Content.ReadAsStringAsync());
+        Assert.True(body.RootElement.GetProperty("isAdministrator").GetBoolean());
+        using var deniedMe = await administrator.GetAsync("/api/auth/me");
+        using var deniedBody = JsonDocument.Parse(await deniedMe.Content.ReadAsStringAsync());
+        Assert.False(deniedBody.RootElement.GetProperty("isAdministrator").GetBoolean());
+
+        // Write actions must also use the replacement, including both formerly hardcoded controllers.
+        var userPath = $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}";
+        Assert.Equal(HttpStatusCode.NoContent, (await ordinary.DeleteAsync(userPath)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await administrator.DeleteAsync(userPath)).StatusCode);
+        var revokePath = userPath + $"/passkeys/{Guid.NewGuid()}/revoke";
+        Assert.Equal(HttpStatusCode.OK, (await ordinary.PostAsJsonAsync(revokePath, new { reason = "Lost device" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await administrator.PostAsJsonAsync(revokePath, new { reason = "Lost device" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task Ordinary_cookie_users_can_logout_without_management_access()
+    {
+        using var anonymous = fixture.CreateAnonymousClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsync("/api/auth/logout", null)).StatusCode);
+        using var client = fixture.CreateAnonymousClient();
+        await client.GetAsync($"/__test/sign-in/{WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId}");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/users")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/auth/logout", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/auth/me")).StatusCode);
     }
 
     [Theory]
@@ -219,7 +302,8 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
     {
     }
 
-    internal WorkbenchAdministrationAuthorizationFixture(string configuredClientId, bool gatewayEnabled)
+    internal WorkbenchAdministrationAuthorizationFixture(
+        string configuredClientId, bool gatewayEnabled, Action<IServiceCollection>? configureAuthorization = null)
     {
         var administrator = User.Create("administrator", "test-password", "Administrator");
         administrator.MarkAsSystemAccount();
@@ -285,9 +369,12 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                         ? Array.Empty<ScimCredentialSummary>()
                         : null));
                 Replace(services, RecordingDispatchProxy.Create<IPasskeyManagementService>((method, _) =>
-                    method.Name == nameof(IPasskeyManagementService.GetAsync)
-                        ? Array.Empty<WebAuthnCredentialSummary>()
-                        : null));
+                    method.Name switch
+                    {
+                        nameof(IPasskeyManagementService.GetAsync) => Array.Empty<WebAuthnCredentialSummary>(),
+                        nameof(IPasskeyManagementService.RevokeAsync) => true,
+                        _ => null,
+                    }));
                 Replace(services, RecordingDispatchProxy.Create<IUserManagementService>((method, _) =>
                     method.Name == nameof(IUserManagementService.GetPagedAsync)
                         ? new PagedResult<ManagedUserDto>([], 0, 1, 10)
@@ -310,6 +397,9 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                     }));
 
                 services.AddControllers().AddApplicationPart(typeof(TestSessionController).Assembly);
+                services.AddAuthorization(options => options.AddPolicy("test-named", policy => policy
+                    .RequireAuthenticatedUser().RequireClaim("sub", OrdinaryUserId.ToString())));
+                configureAuthorization?.Invoke(services);
                 services.PostConfigure<JwtBearerOptions>(
                     WorkbenchAuthenticationDefaults.BearerScheme,
                     options =>
@@ -408,4 +498,46 @@ public sealed class TestSessionController : ControllerBase
             properties);
         return Ok();
     }
+}
+
+// Test-only controllers prove policy selection through endpoint routing and authorization middleware.
+[ApiController]
+public sealed class TestWorkbenchAccessController : ControllerBase
+{
+    [HttpGet("/__test/access/fallback")]
+    public IActionResult Fallback() => Ok();
+
+    [HttpGet("/__test/access/default")]
+    [Authorize]
+    public IActionResult Default() => Ok();
+
+    [HttpGet("/__test/access/public")]
+    [AllowAnonymous]
+    public IActionResult Public() => Ok();
+
+    [HttpGet("/__test/access/named")]
+    [Authorize(Policy = "test-named")]
+    public IActionResult Named() => Ok();
+}
+
+public sealed class TestWorkbenchAccessEvaluator : IWorkbenchAccessEvaluator
+{
+    public Task<bool> CanAccessAsync(ClaimsPrincipal principal, Microsoft.AspNetCore.Http.HttpContext? httpContext, CancellationToken ct = default)
+        => Task.FromResult(principal.FindFirst("sub")?.Value == WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId.ToString());
+}
+
+public sealed class TestWorkbenchPolicyProvider(IOptions<AuthorizationOptions> options)
+    : IAuthorizationPolicyProvider
+{
+    private readonly DefaultAuthorizationPolicyProvider namedPolicies = new(options);
+
+    public Task<AuthorizationPolicy?> GetPolicyAsync(string policyName) => namedPolicies.GetPolicyAsync(policyName);
+
+    private static readonly AuthorizationPolicy Policy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .RequireClaim("sub", WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId.ToString())
+        .Build();
+
+    public Task<AuthorizationPolicy> GetDefaultPolicyAsync() => Task.FromResult(Policy);
+    public Task<AuthorizationPolicy?> GetFallbackPolicyAsync() => Task.FromResult<AuthorizationPolicy?>(Policy);
 }

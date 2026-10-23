@@ -1,12 +1,10 @@
 using Luck.AspNetCore.ApiResults;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application;
 using NexusAuth.Application.Services.LoginAudits;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
-[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [ApiResultWrap]
 [Route("api/login-audits")]

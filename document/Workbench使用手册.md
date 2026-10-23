@@ -317,8 +317,8 @@ Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便
 | `GET /api/auth/config` | 匿名 | 返回可公开的 `authority`、`clientId`、`redirectUri` |
 | `GET /api/auth/login` | 匿名 | 返回 `authorizeUrl` |
 | `GET /signin-oidc` | 匿名 | OIDC 回调处理 |
-| `GET /api/auth/me` | 匿名 | 返回 `isAuthenticated` 和最小用户信息 |
-| `POST /api/auth/logout` | 需登录 | 清 Cookie，可能返回 `logoutUrl` |
+| `GET /api/auth/me` | 匿名入口，内部执行 Workbench 默认访问策略 | 返回 `isAuthenticated`、最小用户信息和兼容字段 `isAdministrator` |
+| `POST /api/auth/logout` | 需登录（`WorkbenchAuthenticatedUser`） | 清除 Cookie，可能返回 `logoutUrl`；普通用户也可退出 |
 
 ### 6.2 自身 Bootstrap 登记了什么
 
@@ -422,13 +422,13 @@ Dashboard 的菜单和路由都由 `src/api/auth.ts` 里的菜单定义动态生
 - **吊销 token**：`POST /api/users/{id}/revoke-tokens`，吊销该用户在所有客户端的访问令牌、刷新令牌和 SSO 会话，但不禁用账号；用户可重新登录，重新启用账号不会恢复旧令牌。
 - **删除**：`DELETE /api/users/{id}`，同时作废 token 和会话。
 
-约束由 `UsersController` 实现：所有 `/api/users` 操作都要求操作者本身是数据库中启用的系统账号（`IsActive=true` 且 `IsSystemAccount=true`）；系统账号对象不能被这些接口修改、禁用、重置密码、删除或吊销。详见 [10. 权限边界](#10-权限边界)。
+所有 `/api/users` 操作统一受第 10 节的 Workbench 默认访问策略保护；默认 evaluator 要求操作者是数据库中启用的系统账号（`IsActive=true` 且 `IsSystemAccount=true`）。系统账号对象不能被这些接口修改、禁用、重置密码、删除或吊销，该对象保护由用户管理服务执行，控制器不再重复判定操作者权限。详见 [10. 权限边界](#10-权限边界)。
 
 ### 9.2 Passkey 凭据查看与撤销
 
 入口：用户详情抽屉里的“Passkey 凭据”分区。它读取 `GET /api/users/{id}/passkeys`，展示凭据的显示名、创建时间、最近使用、撤销时间、备份资格/是否已备份，并可撤销单个凭据。
 
-撤销调用 `POST /api/users/{id}/passkeys/{credentialId}/revoke`，需要填写原因；撤销后该凭据不能再用于登录，并会退出该用户所有设备、撤销现有令牌。`UserPasskeysController` 同样要求操作者是启用的系统账号。
+撤销调用 `POST /api/users/{id}/passkeys/{credentialId}/revoke`，需要填写原因；撤销后该凭据不能再用于登录，并会退出该用户所有设备、撤销现有令牌。`UserPasskeysController` 与其他管理控制器一样，由 Workbench 默认访问策略统一保护。
 
 ### 9.3 应用（OAuth 客户端）管理
 
@@ -490,17 +490,55 @@ dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTest
 
 ## 10. 权限边界
 
-全部 Workbench 管理控制器统一使用 `WorkbenchAdministrator` 策略。请求必须已认证，并且其 `sub`（或 `NameIdentifier`）对应数据库中启用的系统账号，即 `IsActive=true` 且 `IsSystemAccount=true`。匿名请求返回 401，普通用户或不满足条件的账号返回 403。
+Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `WorkbenchApiModule` 中生效，不影响独立的 `NexusAuth.Host` 站点及其开放 API。`WorkbenchAuthorizationPolicyProvider` 实现 `IAuthorizationPolicyProvider`，命名策略委托给框架的 `DefaultAuthorizationPolicyProvider`，把以下两种入口交给同一个访问策略：
 
-策略覆盖下列入口及其全部读写操作：
+- 没有 `[Authorize]` 或 `[AllowAnonymous]` 的端点，由 `GetFallbackPolicyAsync` 返回 Workbench 访问策略；
+- 只有裸 `[Authorize]` 的端点，由 `GetDefaultPolicyAsync` 返回同一个策略。
+
+该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略则使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 401；已登录但未通过访问评估的请求返回 403。Swagger 也受该策略保护；BFF 模式的匿名浏览器请求会跳转登录，Bearer 请求需要具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 404。
+
+访问判定由 `WorkbenchAccessAuthorizationHandler` 完成，它只把 `ClaimsPrincipal`、当前 `HttpContext` 和取消令牌交给 `IWorkbenchAccessEvaluator.CanAccessAsync`：
+
+```csharp
+Task<bool> CanAccessAsync(
+    ClaimsPrincipal principal,
+    HttpContext? httpContext,
+    CancellationToken cancellationToken = default);
+```
+
+默认实现 `SystemAccountWorkbenchAccessEvaluator` 按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
+
+下列管理入口及其全部读写操作由默认访问策略保护：
 
 - `/api/clients`、`/api/api-resources`、`/api/client-metadata`；
 - `/api/login-audits`、`/api/scim-credentials`、`/api/open-api-credentials`；
 - `/api/users`、`/api/users/{id}/passkeys`。
 
-权限由 `WorkbenchAdministratorAuthorizationHandler` 在每次授权时查库确认。系统账号对象本身的修改与删除保护仍由用户管理服务执行。
+管理控制器不再分别硬编码旧的 Administrator 策略，也不再在 action 内重复执行管理员判定。系统账号对象本身不可被这些用户管理接口修改、禁用、重置密码、删除或吊销的保护仍由用户管理服务执行。
 
-`/api/auth` 登录相关入口保持原有行为；`/api/auth/me` 对已认证用户返回 `isAdministrator`，Dashboard 用于展示无管理权限提示。客户端提示不能代替服务端策略。
+`AddWorkbenchAuthorization()` 负责注册策略、handler 和访问评估器。默认 evaluator 和 policy provider 均通过 `TryAdd` 注册，因此应用可以在调用后替换：
+
+```csharp
+builder.Services.AddWorkbenchAuthorization();
+
+builder.Services.Replace(
+    ServiceDescriptor.Scoped<IWorkbenchAccessEvaluator,
+        CustomWorkbenchAccessEvaluator>());
+```
+
+如需同时改变策略解析规则，也可替换 provider：
+
+```csharp
+builder.Services.Replace(
+    ServiceDescriptor.Singleton<IAuthorizationPolicyProvider,
+        CustomPolicyProvider>());
+```
+
+自定义 provider 应保留或有意重写无授权元数据端点与裸 `[Authorize]` 的默认/fallback 行为。自定义 evaluator 同样必须实现默认拒绝；无法确认访问资格时应返回 `false`。
+
+`/api/auth/config`、`/api/auth/login`、`/signin-oidc` 和 `/api/auth/me` 明确保留 `[AllowAnonymous]`。`POST /api/auth/logout` 显式使用命名策略 `WorkbenchAuthenticatedUser`（`WorkbenchAuthorizationPolicies.AuthenticatedUser`），只要求已登录，因此普通用户也能退出。
+
+`/api/auth/me` 虽然允许匿名访问，但会对当前 Principal 使用 `IAuthorizationService` 和 `provider.GetDefaultPolicyAsync` 主动执行同一访问策略。已登录时，兼容字段 `isAdministrator` 表示“当前 Workbench 管理访问规则是否通过”，不再表示某个单独的管理员策略或控制器内判断；Dashboard 可用它展示提示，但该字段不能代替服务端端点授权。
 
 Bearer 在 BFF 和网关模式下都校验 issuer、audience、有效期及 `token_use=access_token`，随后要求 `client_id` 属于允许列表，再调用 `IUserTokenValidator.IsActiveAsync` 检查用户和吊销状态。默认允许归一化后的 `Auth:ClientId`；其他调用方必须显式加入 `Auth:AllowedBearerClientIds` 数组，例如：
 
@@ -519,12 +557,12 @@ Bearer 在 BFF 和网关模式下都校验 issuer、audience、有效期及 `tok
 设置 `NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED=true`（配置键 `Gateway:Enabled`）后，Workbench API 切换到网关模式：
 
 - 不再注册 Cookie 与本地登录方案，默认认证方案变为 `Workbench.Bearer`，只接受网关转发的 `Authorization: Bearer <access_token>`。
-- `AuthController` 会从控制器特性里移除，因此 `/api/auth/config`、`/api/auth/login`、`/signin-oidc`、`/api/auth/logout` 都会返回 404（实现见 `admin/src/NexusAuth.Workbench.Api/GatewayControllerFeatureProvider.cs`）。
-- `/api/auth/me` 仍在，但只反映 Bearer 身份。
+- `AuthController` 会从控制器特性里移除，因此 `/api/auth/config`、`/api/auth/login`、`/signin-oidc`、`/api/auth/logout` 不再发布；通过默认授权的请求返回 404，匿名请求会先被 fallback 拦截并返回 401（实现见 `admin/src/NexusAuth.Workbench.Api/GatewayControllerFeatureProvider.cs`）。
+- `/api/auth/me` 仍在，但只反映 Bearer 身份，并按同一 Workbench 默认访问策略计算兼容字段 `isAdministrator`。
 - 自身 Bootstrap 仍会登记资源、客户端和密钥，但网关模式下客户端不开放 grant、登录回调或登出回调（`grantTypes`、`redirectUris`、`postLogoutRedirectUris` 为空），避免和网关登录客户端冲突。
 - `Auth:RedirectUri`、`Auth:PostLogoutRedirectUri`、`Auth:Scope` 在网关模式下不再是必填；`Auth:Authority`、`Auth:Audience`、`Auth:ClientId`、`Auth:ClientSecret` 和 Bootstrap 名称仍需配置。
 
-网关必须自己负责浏览器登录、回调、刷新和登出，并把 access token 以 Bearer 形式转发给 Workbench API。根目录 Compose 里的 Dashboard 仍然是 BFF 登录模式，**不会**随这个开关自动切换到网关登录；只改 API 配置会让 Dashboard 的登录端点 404。网关登录客户端需要另行在 Dashboard 创建，不能复用 Workbench 默认客户端；同时将其 ID 加入 `Auth:AllowedBearerClientIds`。切换回非网关模式会恢复默认客户端的授权码和刷新配置。
+网关必须自己负责浏览器登录、回调、刷新和登出，并把 access token 以 Bearer 形式转发给 Workbench API。根目录 Compose 里的 Dashboard 仍然是 BFF 登录模式，**不会**随这个开关自动切换到网关登录；只改 API 配置会让 Dashboard 无法使用原有登录端点。网关登录客户端需要另行在 Dashboard 创建，不能复用 Workbench 默认客户端；同时将其 ID 加入 `Auth:AllowedBearerClientIds`。切换回非网关模式会恢复默认客户端的授权码和刷新配置。
 
 APISIX 相关对接见 [APISIX 网关对接手册](13-APISIX网关对接手册.md)。
 
@@ -567,7 +605,7 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 | 本地 Dashboard 请求失败，命中内网地址 | Vite 代理仍是 `192.168.31.200:9100` | 把 `vite.config.ts` 的 `/api`、`/signin-oidc` 目标改成实际 API |
 | API 报无法访问 Provider Discovery | 服务端访问不到公开 Authority | 配置 `Auth:BackchannelAuthority` 指向内部地址 |
 | Bearer 调用返回 401 | audience/issuer/client_id 不匹配、token 过期或不是 access_token | 核对 audience、issuer、`token_use` 与客户端允许列表 |
-| 管理接口返回 403 | 操作者不是启用的系统账号 | 用 `IsSystemAccount=true` 的账号登录（见第 10 节） |
+| 管理接口返回 403 | 当前访问 evaluator 未通过 | 默认 evaluator 下用启用状态的系统账号登录；自定义 evaluator 时核对其判定（见第 10 节） |
 | 多实例下用户随机被登出 | Data Protection key ring 未共享 | 共享并持久化 key ring |
 | 网关模式后 `/api/auth/login` 返回 404 | 这是网关模式的预期行为 | 由网关实现登录，或关闭网关模式 |
 | 无法查看已创建的 SCIM/开放 API 凭证明文 | 明文只在创建时返回一次 | 重新创建凭证并立即保存 |

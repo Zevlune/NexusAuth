@@ -126,7 +126,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("/api/auth/logout")]
-    [Authorize]
+    [Authorize(Policy = WorkbenchAuthorizationPolicies.AuthenticatedUser)]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
         var logoutUrl = string.Empty;

@@ -1,16 +1,11 @@
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Users;
-using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
-[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [Route("api/users")]
-public sealed class UsersController(
-    IUserManagementService userManagementService,
-    IUserRepository users) : ControllerBase
+public sealed class UsersController(IUserManagementService userManagementService) : ControllerBase
 {
     [HttpGet]
     public Task<IActionResult> GetPaged([FromQuery] string? keyword, [FromQuery] bool? isActive, [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken ct = default)
@@ -46,13 +41,6 @@ public sealed class UsersController(
 
     private async Task<IActionResult> ExecuteAsync(Func<Task<IActionResult>> action, CancellationToken ct)
     {
-        if (!await WorkbenchAdministratorAuthorizationHandler.IsAdministratorAsync(
-                User,
-                users,
-                HttpContext,
-                ct))
-            return Forbid();
-
         Response.Headers.CacheControl = "no-store";
         try { return await action(); }
         catch (KeyNotFoundException exception) { return NotFound(new { message = exception.Message }); }

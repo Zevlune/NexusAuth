@@ -4,7 +4,6 @@ using Luck.Framework.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
 using NexusAuth.Persistence;
@@ -158,11 +157,7 @@ public class WorkbenchApiModule : LuckAppModule
                 };
             });
 
-        services.AddAuthorization(options =>
-            options.AddPolicy(WorkbenchAuthorizationPolicies.Administrator, policy => policy
-                .RequireAuthenticatedUser()
-                .AddRequirements(new WorkbenchAdministratorRequirement())));
-        services.AddScoped<IAuthorizationHandler, WorkbenchAdministratorAuthorizationHandler>();
+        services.AddWorkbenchAuthorization();
         services.Configure<WorkbenchBootstrapOptions>(configuration.GetSection(WorkbenchBootstrapOptions.SectionName));
         services.AddHostedService<WorkbenchClientCredentialHostedService>();
 
