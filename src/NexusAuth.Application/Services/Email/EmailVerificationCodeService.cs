@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Application.Services.Email;
 
-public class EmailVerificationCodeService(
+public sealed class EmailVerificationCodeService(
     IMemoryCache cache,
     IServiceScopeFactory scopeFactory,
     IOptions<SmtpOptions> smtpOptions,

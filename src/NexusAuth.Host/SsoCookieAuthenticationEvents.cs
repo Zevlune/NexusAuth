@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace NexusAuth.Host;
 
-public class SsoCookieAuthenticationEvents(
+public sealed class SsoCookieAuthenticationEvents(
     ISsoSessionService sessionService,
     IUserService userService,
     ISecurityPolicyService securityPolicyService) : CookieAuthenticationEvents, ISsoCookieAuthenticationEvents
