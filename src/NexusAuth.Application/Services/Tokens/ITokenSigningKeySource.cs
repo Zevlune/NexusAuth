@@ -1,13 +1,8 @@
 namespace NexusAuth.Application.Services.Tokens;
 
-public interface ITokenSigningKeySource
+public interface ITokenSigningKeySource : ISingletonDependency
 {
     string Name { get; }
 
     TokenSigningKeyMaterial Load(TokenSigningKeySourceContext context);
 }
-
-public sealed record TokenSigningKeySourceContext(
-    TokenSigningKeyOptions Options,
-    string ContentRootPath,
-    bool IsDevelopment);

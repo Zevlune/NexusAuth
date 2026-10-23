@@ -13,7 +13,7 @@ public sealed record SliderCaptchaChallenge(int TargetOffsetPixels, string Nonce
 
 public sealed record SliderCaptchaChallengeTicket(string Token, string ImageDataUrl, string PieceDataUrl, int PieceTop, int Width, int Height, int PieceSize);
 
-public sealed class SliderCaptchaChallengeProtector
+public class SliderCaptchaChallengeProtector : ISliderCaptchaChallengeProtector
 {
     private const string Purpose = "NexusAuth.SliderCaptcha.Challenge.v1";
 

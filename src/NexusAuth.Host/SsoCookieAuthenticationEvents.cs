@@ -3,9 +3,9 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace NexusAuth.Host;
 
-public sealed class SsoCookieAuthenticationEvents(
+public class SsoCookieAuthenticationEvents(
     ISsoSessionService sessionService,
-    IUserService userService) : CookieAuthenticationEvents
+    IUserService userService) : CookieAuthenticationEvents, ISsoCookieAuthenticationEvents
 {
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {

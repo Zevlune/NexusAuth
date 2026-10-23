@@ -1,11 +1,9 @@
-using NexusAuth.Shared.Email;
+using NexusAuth.Application.Clients.Authentication;
+using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Host.TokenEndpoint;
 using Luck.AppModule;
 using Luck.AutoDependencyInjection;
 using Luck.Framework.Infrastructure;
-using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.RateLimiting;
-using NexusAuth.Application.Services;
 using NexusAuth.Persistence;
 using NexusAuth.Host.Authentication;
 using Microsoft.Extensions.Options;
@@ -33,6 +31,8 @@ public class AppWebModule : LuckAppModule
         var services = context.Services;
         var configuration = services.GetConfiguration();
 
+        services.AddScopeKeyedServices(typeof(IClientAuthenticationStrategy).Assembly);
+        services.AddTokenGrantStrategies();
         services.AddNexusAuthTokenSigning(configuration);
         services.AddNexusAuthEmail(configuration);
         // The upstream URL contains AppSecret and the one-time code. Suppress
@@ -41,17 +41,14 @@ public class AppWebModule : LuckAppModule
                 client => client.Timeout = TimeSpan.FromSeconds(10))
             .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-        services.AddScoped<EmailAccountService>();
         services.Configure<NexusAuthSecurityOptions>(configuration.GetSection("Security"));
         services.AddOptions<LoginFlowOptions>()
             .Bind(configuration.GetSection(LoginFlowOptions.SectionName))
             .PostConfigure(options => options.ApplyDefaults())
             .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<LoginFlowOptions>, LoginFlowOptionsValidator>();
         services.AddOptions<WebAuthnOptions>()
             .Bind(configuration.GetSection(WebAuthnOptions.SectionName))
             .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<WebAuthnOptions>, WebAuthnOptionsValidator>();
         services.AddOptions<LoginPageOptions>()
             .Bind(configuration.GetSection(LoginPageOptions.SectionName))
             .ValidateOnStart();
@@ -71,12 +68,7 @@ public class AppWebModule : LuckAppModule
                 && string.IsNullOrEmpty(uri.Fragment) && string.IsNullOrEmpty(uri.UserInfo)),
                 "WeChat:MiniProgram:Code2SessionEndpoint must be an HTTPS URL without query, fragment or user info.")
             .ValidateOnStart();
-        services.AddSingleton<LoginFlowStateProtector>();
-        services.AddSingleton<WebAuthnEnrollmentStateProtector>();
-        services.AddScoped<IUserService, UserService>();
-        services.AddScoped<ITotpService, TotpService>();
-        services.AddScoped<IWebSignInService, WebSignInService>();
-        services.AddSingleton<Fido2>(serviceProvider =>
+        services.AddSingleton<IFido2>(serviceProvider =>
         {
             var options = serviceProvider.GetRequiredService<IOptions<WebAuthnOptions>>().Value;
             return new Fido2(new Fido2Configuration
@@ -89,9 +81,7 @@ public class AppWebModule : LuckAppModule
         services.AddOptions<SliderCaptchaOptions>()
             .Bind(configuration.GetSection(SliderCaptchaOptions.SectionName))
             .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<SliderCaptchaOptions>, SliderCaptchaOptionsValidator>();
         services.AddMemoryCache();
-        services.AddSingleton<SliderCaptchaChallengeProtector>();
         services.AddOptions<TotpOptions>()
             .Bind(configuration.GetSection(TotpOptions.SectionName))
             .Validate(options => !string.IsNullOrWhiteSpace(options.Issuer), "Totp:Issuer is required.")
@@ -99,10 +89,8 @@ public class AppWebModule : LuckAppModule
                 options => options.EnrollmentLifetimeMinutes is >= 1 and <= 30,
                 "Totp:EnrollmentLifetimeMinutes must be between 1 and 30.")
             .ValidateOnStart();
-        services.AddSingleton<ITotpSecretProtector, TotpSecretProtector>();
         services.Configure<BootstrapAdminOptions>(configuration.GetSection("BootstrapAdmin"));
         services.AddHostedService<BootstrapAdminHostedService>();
-        services.AddScoped<SsoCookieAuthenticationEvents>();
 
         // Keep abuse controls at the host boundary so every sensitive
         // endpoint, including Razor login/device pages, shares one policy.
@@ -140,7 +128,7 @@ public class AppWebModule : LuckAppModule
                 options.LoginPath = "/account/login";
                 options.SlidingExpiration = true;
                 options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
-                options.EventsType = typeof(SsoCookieAuthenticationEvents);
+                options.EventsType = typeof(ISsoCookieAuthenticationEvents);
             });
         services.AddAuthorization();
 

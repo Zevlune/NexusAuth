@@ -11,10 +11,10 @@ using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Application.Services.Email;
 
-public sealed class EmailAccountService(
-    IUserRepository users, IUserService userService, EmailVerificationCodeService codes,
+public class EmailAccountService(
+    IUserRepository users, IUserService userService, IEmailVerificationCodeService codes,
     ISecurityPolicyService policy, ITotpService totp, ITokenService tokens, ISsoSessionService sessions,
-    ILogger<EmailAccountService> logger)
+    ILogger<EmailAccountService> logger) : IEmailAccountService
 {
     public bool IsAvailable => codes.IsAvailable;
     public int CooldownSeconds => codes.CooldownSeconds;

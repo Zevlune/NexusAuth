@@ -64,7 +64,6 @@ public class WorkbenchApiModule : LuckAppModule
                 options.Scope = requiredAuthConfiguration.Scope;
                 options.SignOutProvider = signOutProvider;
             });
-            services.AddScoped<WorkbenchCookieAuthenticationEvents>();
         }
 
         var authentication = services.AddAuthentication(gatewayEnabled
@@ -96,7 +95,7 @@ public class WorkbenchApiModule : LuckAppModule
                     options.LoginPath = "/api/auth/login";
                     options.SlidingExpiration = true;
                     options.ExpireTimeSpan = TimeSpan.FromHours(24);
-                    options.EventsType = typeof(WorkbenchCookieAuthenticationEvents);
+                    options.EventsType = typeof(IWorkbenchCookieAuthenticationEvents);
                 });
         }
         authentication.AddJwtBearer(WorkbenchAuthenticationDefaults.BearerScheme, options =>

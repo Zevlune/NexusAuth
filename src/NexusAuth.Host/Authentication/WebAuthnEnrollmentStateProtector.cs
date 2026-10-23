@@ -8,7 +8,7 @@ namespace NexusAuth.Host.Authentication;
 public sealed record WebAuthnEnrollmentState(Guid UserId, string? ReturnUrl);
 
 /// <summary>使用 ASP.NET Core Data Protection 签名并限时保护建档状态。</summary>
-public sealed class WebAuthnEnrollmentStateProtector
+public class WebAuthnEnrollmentStateProtector : IWebAuthnEnrollmentStateProtector
 {
     private const string Purpose = "WebAuthnNexusAuth.PasskeyEnrollment.v1";
     private readonly ITimeLimitedDataProtector _protector;

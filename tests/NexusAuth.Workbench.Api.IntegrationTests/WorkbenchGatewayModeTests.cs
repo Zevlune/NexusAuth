@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -33,7 +34,7 @@ public sealed class WorkbenchGatewayModeTests
         using var scope = factory.Services.CreateScope();
         Assert.Null(scope.ServiceProvider.GetService<IOidcWorkbenchService>());
         Assert.Null(scope.ServiceProvider.GetService<IFlowStateStore>());
-        Assert.Null(scope.ServiceProvider.GetService<WorkbenchCookieAuthenticationEvents>());
+        Assert.Null(scope.ServiceProvider.GetService<IWorkbenchCookieAuthenticationEvents>());
     }
 
     [Fact]
@@ -45,10 +46,13 @@ public sealed class WorkbenchGatewayModeTests
         Assert.Contains(schemes, scheme => scheme.Name == WorkbenchAuthenticationDefaults.CookieScheme);
         Assert.Contains(schemes, scheme => scheme.Name == WorkbenchAuthenticationDefaults.BearerScheme);
         Assert.Contains(schemes, scheme => scheme.Name == WorkbenchAuthenticationDefaults.Scheme);
+        Assert.Equal(typeof(IWorkbenchCookieAuthenticationEvents), factory.Services
+            .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.CookieScheme).EventsType);
         using var scope = factory.Services.CreateScope();
         Assert.NotNull(scope.ServiceProvider.GetService<IOidcWorkbenchService>());
         Assert.NotNull(scope.ServiceProvider.GetService<IFlowStateStore>());
-        Assert.NotNull(scope.ServiceProvider.GetService<WorkbenchCookieAuthenticationEvents>());
+        Assert.NotNull(scope.ServiceProvider.GetService<IWorkbenchCookieAuthenticationEvents>());
     }
 
     [Fact]

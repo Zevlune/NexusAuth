@@ -12,7 +12,7 @@ public sealed record PendingLoginFlowState(
     long AuthenticatedAtUnixSeconds,
     string AuthenticationMethods = "pwd");
 
-public sealed class LoginFlowStateProtector
+public class LoginFlowStateProtector : ILoginFlowStateProtector
 {
     private const string Purpose = "NexusAuth.LoginFlow.PendingState.v1";
     private readonly ITimeLimitedDataProtector _protector;
