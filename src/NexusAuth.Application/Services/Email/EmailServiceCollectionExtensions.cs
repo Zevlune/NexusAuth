@@ -12,7 +12,6 @@ public static class EmailServiceCollectionExtensions
         services.AddNexusAuthSmtp(configuration);
         services.AddMemoryCache();
         services.TryAddSingleton(TimeProvider.System);
-        services.TryAddSingleton<EmailVerificationCodeService>();
         return services;
     }
 }

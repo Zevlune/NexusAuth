@@ -11,8 +11,8 @@ namespace NexusAuth.Workbench.Api;
 /// <summary>
 /// Keeps the Workbench authentication ticket alive while rotating its OIDC tokens.
 /// </summary>
-public sealed class WorkbenchCookieAuthenticationEvents(
-    IOidcWorkbenchService oidcService) : CookieAuthenticationEvents
+public class WorkbenchCookieAuthenticationEvents(
+    IOidcWorkbenchService oidcService) : CookieAuthenticationEvents, IWorkbenchCookieAuthenticationEvents
 {
     private static readonly TimeSpan AccessTokenRefreshWindow = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan CompletedRefreshRetention = TimeSpan.FromSeconds(5);

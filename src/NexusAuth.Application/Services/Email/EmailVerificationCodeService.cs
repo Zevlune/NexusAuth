@@ -8,12 +8,12 @@ using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Application.Services.Email;
 
-public sealed class EmailVerificationCodeService(
+public class EmailVerificationCodeService(
     IMemoryCache cache,
     IServiceScopeFactory scopeFactory,
     IOptions<SmtpOptions> smtpOptions,
     TimeProvider timeProvider,
-    IOptionsMonitor<SmtpOptions>? liveOptions = null)
+    IOptionsMonitor<SmtpOptions>? liveOptions = null) : IEmailVerificationCodeService
 {
     private static readonly HashSet<string> AllowedPurposes = new(StringComparer.Ordinal)
     {
@@ -114,7 +114,17 @@ public sealed class EmailVerificationCodeService(
         }
     }
 
-    public bool TryConsume(string email, string purpose, string binding, string code)
+    public bool TryConsume(string email, string purpose, string binding, string code) =>
+        TryMatch(email, purpose, binding, code, consume: true);
+
+    /// <summary>
+    /// 中文注释：校验验证码但不消费，用于还需要继续校验其他因素（例如动态码）的流程；
+    /// 错误尝试与 <see cref="TryConsume"/> 共用同一失败次数上限。
+    /// </summary>
+    public bool TryVerify(string email, string purpose, string binding, string code) =>
+        TryMatch(email, purpose, binding, code, consume: false);
+
+    private bool TryMatch(string email, string purpose, string binding, string code, bool consume)
     {
         if (!AllowedPurposes.Contains(purpose)
             || string.IsNullOrWhiteSpace(binding)
@@ -139,7 +149,8 @@ public sealed class EmailVerificationCodeService(
             var candidateHash = Hash(code, challenge.Salt);
             if (CryptographicOperations.FixedTimeEquals(challenge.Hash, candidateHash))
             {
-                cache.Remove(cacheKey);
+                if (consume)
+                    cache.Remove(cacheKey);
                 return true;
             }
 
@@ -160,7 +171,7 @@ public sealed class EmailVerificationCodeService(
             throw new ArgumentException("Unsupported email verification purpose.", nameof(purpose));
     }
 
-    private static string NormalizeEmail(string email)
+    private static string NormalizeEmail(string? email)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
         var normalized = email.Trim();
@@ -172,7 +183,7 @@ public sealed class EmailVerificationCodeService(
         return address.Address.ToLowerInvariant();
     }
 
-    private static bool TryNormalizeEmail(string email, out string normalized)
+    private static bool TryNormalizeEmail(string? email, out string normalized)
     {
         try
         {

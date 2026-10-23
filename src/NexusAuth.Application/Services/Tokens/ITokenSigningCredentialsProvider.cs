@@ -1,6 +1,6 @@
 namespace NexusAuth.Application.Services.Tokens;
 
-public interface ITokenSigningCredentialsProvider
+public interface ITokenSigningCredentialsProvider : ISingletonDependency
 {
     string Algorithm { get; }
 

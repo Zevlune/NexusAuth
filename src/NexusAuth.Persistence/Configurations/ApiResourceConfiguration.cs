@@ -34,8 +34,7 @@ public class ApiResourceConfiguration : IEntityTypeConfiguration<ApiResource>
 
         builder.Property(r => r.IsActive)
             .HasColumnName("is_active")
-            .IsRequired()
-            .HasDefaultValue(true);
+            .IsRequired();
 
         builder.Property(r => r.CreatedAt)
             .HasColumnName("created_at")

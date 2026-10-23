@@ -1,4 +1,5 @@
 using System.Globalization;
+using NexusAuth.Application.Services.Security;
 
 namespace NexusAuth.Application.Users;
 
@@ -6,9 +7,11 @@ public sealed class TotpService(
     IUserRepository userRepository,
     IUserCredentialRepository credentialRepository,
     ITotpSecretProtector secretProtector,
-    IOptions<TotpOptions> options) : ITotpService
+    IOptions<TotpOptions> options,
+    IOptions<NexusAuthSecurityOptions> securityOptions) : ITotpService
 {
     private readonly TotpOptions _options = options.Value;
+    private readonly NexusAuthSecurityOptions _securityOptions = securityOptions.Value;
 
     public async Task<TotpEnrollment> BeginEnrollmentAsync(Guid userId, CancellationToken ct = default)
     {
@@ -24,11 +27,29 @@ public sealed class TotpService(
         var credential = UserCredential.CreatePendingTotp(user.Id, protectedSecret, expiresAt, now: now);
         await credentialRepository.AddAsync(credential, ct);
 
-        var issuer = string.IsNullOrWhiteSpace(_options.Issuer) ? "NexusAuth" : _options.Issuer.Trim();
-        var label = Uri.EscapeDataString($"{issuer}:{user.Username}");
-        var uri = $"otpauth://totp/{label}?secret={secret}"
-            + $"&issuer={Uri.EscapeDataString(issuer)}&algorithm=SHA1&digits=6&period=30";
-        return new TotpEnrollment(credential.Id, protectedSecret, secret, uri);
+        return new TotpEnrollment(credential.Id, protectedSecret, secret, BuildOtpauthUri(user, secret));
+    }
+
+    public async Task<TotpEnrollment?> FindPendingEnrollmentAsync(
+        Guid userId,
+        string protectedSecret,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(protectedSecret))
+            return null;
+
+        var user = await userRepository.FindByIdAsync(userId, ct);
+        if (user is not { IsActive: true })
+            return null;
+
+        // 中文注释：只根据服务端保存的待确认凭据重建展示内容，页面回传的明文密钥或 otpauth 链接一律不信任。
+        var credential = await credentialRepository.FindPendingTotpAsync(userId, protectedSecret, ct);
+        if (credential?.PendingExpiresAt is not { } expiresAt
+            || expiresAt <= DateTimeOffset.UtcNow
+            || !TryUnprotect(protectedSecret, out var secret))
+            return null;
+
+        return new TotpEnrollment(credential!.Id, protectedSecret, secret, BuildOtpauthUri(user, secret));
     }
 
     public async Task<bool> ConfirmEnrollmentAsync(
@@ -74,8 +95,14 @@ public sealed class TotpService(
             return false;
         }
 
+        // 中文注释：动态码与密码共用持久化的失败计数和锁定窗口。锁定期间不再校验任何动态码，
+        // 避免攻击者在已知密码后通过重放登录流程令牌无限次猜测六位验证码。
         var now = DateTimeOffset.UtcNow;
-        foreach (var credential in await credentialRepository.GetEnabledTotpAsync(userId, ct))
+        if (user.IsLoginLocked(now))
+            return false;
+
+        var credentials = await credentialRepository.GetEnabledTotpAsync(userId, ct);
+        foreach (var credential in credentials)
         {
             if (string.IsNullOrWhiteSpace(credential.SecretProtected)
                 || !TryUnprotect(credential.SecretProtected, out var secret)
@@ -86,6 +113,16 @@ public sealed class TotpService(
 
             if (await credentialRepository.TryUseTotpCounterAsync(credential.Id, userId, counter, now, ct))
                 return true;
+        }
+
+        if (credentials.Count > 0)
+        {
+            await userRepository.RegisterFailedLoginAsync(
+                userId,
+                Math.Max(1, _securityOptions.LoginFailureLimit),
+                TimeSpan.FromMinutes(Math.Max(1, _securityOptions.LoginLockoutMinutes)),
+                now,
+                ct);
         }
 
         return false;
@@ -105,6 +142,14 @@ public sealed class TotpService(
     public Task<bool> DisableAsync(Guid userId, Guid credentialId, CancellationToken ct = default)
     {
         return credentialRepository.DisableAsync(credentialId, userId, DateTimeOffset.UtcNow, ct);
+    }
+
+    private string BuildOtpauthUri(User user, string secret)
+    {
+        var issuer = string.IsNullOrWhiteSpace(_options.Issuer) ? "NexusAuth" : _options.Issuer.Trim();
+        var label = Uri.EscapeDataString($"{issuer}:{user.Username}");
+        return $"otpauth://totp/{label}?secret={secret}"
+            + $"&issuer={Uri.EscapeDataString(issuer)}&algorithm=SHA1&digits=6&period=30";
     }
 
     private bool TryUnprotect(string protectedSecret, out string secret)

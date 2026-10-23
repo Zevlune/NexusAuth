@@ -66,8 +66,7 @@ public class AuthorizationCodeConfiguration : IEntityTypeConfiguration<Authoriza
 
         builder.Property(a => a.IsUsed)
             .HasColumnName("is_used")
-            .IsRequired()
-            .HasDefaultValue(false);
+            .IsRequired();
 
         builder.Property(a => a.ExpiresAt)
             .HasColumnName("expires_at")

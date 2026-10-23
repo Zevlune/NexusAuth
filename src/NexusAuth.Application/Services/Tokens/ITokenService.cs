@@ -1,6 +1,6 @@
 namespace NexusAuth.Application.Services.Tokens;
 
-public interface ITokenService
+public interface ITokenService : IScopedDependency
 {
     Task<string> IssueAccessTokenAsync(
         string clientId,

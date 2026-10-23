@@ -29,10 +29,9 @@ public class UserManagementService(
     {
         ValidateRequest(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Username);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.Password);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Nickname);
-        if (Encoding.UTF8.GetByteCount(request.Password) > 72)
-            throw new ArgumentException("密码不能超过 72 个 UTF-8 字节。", nameof(request.Password));
+        // 中文注释：管理员创建账号与自助注册、找回密码使用同一密码策略（至少 8 个字符，最多 72 个 UTF-8 字节）。
+        PasswordPolicy.EnsureValid(request.Password, nameof(request.Password));
 
         var username = request.Username.Trim();
         if (await userRepository.FindByUsernameAsync(username, ct) is not null)
@@ -86,9 +85,7 @@ public class UserManagementService(
     public async Task ResetPasswordAsync(Guid id, ResetManagedUserPasswordRequest request, CancellationToken ct = default)
     {
         ValidateRequest(request);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.NewPassword);
-        if (Encoding.UTF8.GetByteCount(request.NewPassword) > 72)
-            throw new ArgumentException("密码不能超过 72 个 UTF-8 字节。", nameof(request.NewPassword));
+        PasswordPolicy.EnsureValid(request.NewPassword, nameof(request.NewPassword));
 
         var user = await FindManagedUserAsync(id, ct);
         if (user.IsSystemAccount)

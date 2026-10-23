@@ -26,12 +26,21 @@ public sealed class OpenApiCredentialService(IOpenApiCredentialRepository creden
     }
 
     public async Task<IReadOnlyList<OpenApiCredentialSummary>> GetAllAsync(CancellationToken ct = default) => (await credentialRepository.GetAllAsync(ct)).Select(Map).ToArray();
+    /// <summary>
+    /// Updates a credential. <paramref name="expiresAt"/> = null means "never expires" (the dashboard's empty
+    /// expiry field). Disabling is reversible; a revoked credential can never be re-activated.
+    /// </summary>
     public async Task<OpenApiCredentialSummary?> UpdateAsync(Guid id, string name, DateTimeOffset? expiresAt, bool isActive, CancellationToken ct = default)
     {
-        if (expiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow) throw new ArgumentException("expiresAt must be in the future.");
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
         var credential = await credentialRepository.FindByIdAsync(id, ct);
         if (credential is null) return null;
-        var sameName = await credentialRepository.FindByNameAsync(name, ct);
+        // 中文注释：编辑已过期凭证时表单会原样回传旧的过期时间，只有“改成”过去时间才拒绝。
+        if (expiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow && !IsSameInstant(expiry, credential.ExpiresAt))
+            throw new ArgumentException("expiresAt must be in the future.");
+        if (isActive && credential.RevokedAt is not null)
+            throw new InvalidOperationException("A revoked Open API credential cannot be re-activated. Create a new credential instead.");
+        var sameName = await credentialRepository.FindByNameAsync(name.Trim(), ct);
         if (sameName is not null && sameName.Id != id) throw new InvalidOperationException("An Open API credential with this name already exists.");
         credential.Update(name, ToUtc(expiresAt), isActive);
         await credentialRepository.UpdateAsync(credential, ct);
@@ -47,4 +56,7 @@ public sealed class OpenApiCredentialService(IOpenApiCredentialRepository creden
     }
     private static OpenApiCredentialSummary Map(OpenApiCredential item) => new(item.Id, item.Name, item.TargetType, item.Scopes, item.IsActive, item.ExpiresAt, item.LastUsedAt, item.CreatedAt, item.RevokedAt);
     private static DateTimeOffset? ToUtc(DateTimeOffset? value) => value?.ToUniversalTime();
+    // The stored value has microsecond precision and the client may round-trip it with millisecond precision.
+    private static bool IsSameInstant(DateTimeOffset value, DateTimeOffset? current) =>
+        current is { } stored && (value - stored).Duration() < TimeSpan.FromSeconds(1);
 }

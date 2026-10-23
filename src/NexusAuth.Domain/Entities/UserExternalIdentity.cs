@@ -10,6 +10,9 @@ public sealed class UserExternalIdentity : EntityWithIdentity<Guid>
     public Guid UserId { get; private set; }
     public string Provider { get; private set; } = default!;
     public string Issuer { get; private set; } = default!;
+    /// <summary>
+    /// 第三方身份提供方签发的用户唯一标识，在同一 provider 和 issuer 下唯一；微信小程序对应 OpenID（issuer 为 AppID）。
+    /// </summary>
     public string Subject { get; private set; } = default!;
     public string? UnionId { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }

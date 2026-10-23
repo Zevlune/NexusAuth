@@ -1,4 +1,5 @@
 using Luck.DDD.Domain.Domain.AggregateRoots;
+using System.Text;
 
 namespace NexusAuth.Domain.AggregateRoots.Users;
 
@@ -224,6 +225,20 @@ public class User : AggregateRootWithIdentity<Guid>
     public void MarkAsSystemAccount()
     {
         IsSystemAccount = true;
+        UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    public void UpdateNickname(string nickname)
+    {
+        if (IsSystemAccount)
+            throw new InvalidOperationException("System accounts cannot be modified.");
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(nickname);
+        var normalized = nickname.Trim();
+        if (normalized.EnumerateRunes().Count() > 100)
+            throw new ArgumentException("Nickname must contain at most 100 characters.", nameof(nickname));
+
+        Nickname = normalized;
         UpdatedAt = DateTimeOffset.UtcNow;
     }
 

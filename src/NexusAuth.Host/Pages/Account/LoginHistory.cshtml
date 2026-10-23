@@ -5,7 +5,7 @@
     ViewData["Title"] = "登录记录";
 }
 <section class="panel history-panel" aria-labelledby="history-title">
-    <div class="history-header"><h1 id="history-title">登录记录</h1><p>仅显示当前账号最近 20 次成功登录。</p></div>
+    <div class="history-header"><h1 id="history-title">登录记录</h1><p>显示当前账号最近 20 次登录尝试（包括失败记录）。如发现不是本人发起的尝试，请尽快修改密码并绑定身份验证器。</p></div>
     @if (Model.LoginAudits.Count == 0)
     {
         <p class="empty">暂无可显示的登录记录。</p>
@@ -17,7 +17,8 @@
             <tbody>
             @foreach (var audit in Model.LoginAudits)
             {
-                <tr><td><span class="result">成功</span></td><td>@(audit.ClientId ?? "直接登录")</td><td>@(audit.IpAddress ?? "-")</td><td>@audit.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td></tr>
+                var failureReason = LoginHistoryModel.DescribeFailureReason(audit);
+                <tr><td><span class="result@(audit.IsSuccessful ? "" : " failed")">@LoginHistoryModel.DescribeResult(audit)</span>@if (failureReason is not null) {<span class="result-reason">（@failureReason）</span>}</td><td>@(audit.ClientId ?? "直接登录")</td><td>@(audit.IpAddress ?? "-")</td><td>@audit.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td></tr>
             }
             </tbody>
         </table>

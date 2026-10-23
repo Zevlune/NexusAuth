@@ -9,6 +9,14 @@ namespace NexusAuth.Domain.Entities;
 public class ScimServicePrincipalCredential : EntityWithIdentity<Guid>
 {
     public const int TokenHashLength = 43;
+    public const string ScopeRead = "scim:read";
+    public const string ScopeWrite = "scim:write";
+
+    /// <summary>
+    /// The only scopes the SCIM endpoints understand. Anything else is rejected
+    /// instead of being stored as a silently useless grant.
+    /// </summary>
+    public static IReadOnlyList<string> SupportedScopes { get; } = [ScopeRead, ScopeWrite];
 
     public string Name { get; private set; } = default!;
 
@@ -99,6 +107,10 @@ public class ScimServicePrincipalCredential : EntityWithIdentity<Guid>
         RevokedAt ??= revokedAt?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
     }
 
+    /// <summary>
+    /// Updates mutable metadata. A <c>null</c> scope list keeps the current scopes;
+    /// <paramref name="expiresAt"/> follows replace semantics (<c>null</c> = never expires).
+    /// </summary>
     public void Update(
         string name,
         IEnumerable<string>? scopes,
@@ -106,32 +118,41 @@ public class ScimServicePrincipalCredential : EntityWithIdentity<Guid>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
+        var nextScopes = scopes is null ? Scopes : NormalizeScopes(scopes);
         Name = name.Trim();
-        Scopes = NormalizeScopes(scopes);
+        Scopes = nextScopes;
         ExpiresAt = expiresAt?.ToUniversalTime();
     }
 
+    /// <summary>
+    /// Enables or disables the credential. Disabling is reversible; revocation
+    /// (<see cref="Revoke"/>) is terminal and can never be undone here, because a
+    /// revoked token may have leaked.
+    /// </summary>
     public void SetActive(bool isActive)
     {
-        if (isActive)
-        {
-            IsActive = true;
-            RevokedAt = null;
-            return;
-        }
+        if (isActive && RevokedAt is not null)
+            throw new InvalidOperationException("A revoked SCIM credential cannot be re-activated. Create a new credential instead.");
 
-        Revoke();
+        IsActive = isActive;
     }
 
     private static List<string> NormalizeScopes(IEnumerable<string>? scopes)
     {
-        return scopes is null
-            ? []
-            : scopes
-                .Where(scope => !string.IsNullOrWhiteSpace(scope))
-                .Select(scope => scope.Trim())
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
+        if (scopes is null)
+            return [];
+
+        var normalized = scopes
+            .Where(scope => !string.IsNullOrWhiteSpace(scope))
+            .Select(scope => scope.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var unsupported = normalized.Where(scope => !SupportedScopes.Contains(scope, StringComparer.Ordinal)).ToArray();
+        if (unsupported.Length > 0)
+            throw new ArgumentException(
+                $"Unsupported SCIM scope(s): {string.Join(", ", unsupported)}. Supported scopes: {string.Join(", ", SupportedScopes)}.",
+                nameof(scopes));
+        return normalized;
     }
 
     private static string GenerateRawToken()

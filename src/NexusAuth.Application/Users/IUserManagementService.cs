@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using Luck.Framework.Infrastructure.DependencyInjectionModule;
 
 namespace NexusAuth.Application.Users;
@@ -34,7 +33,7 @@ public sealed record UpdateManagedUserRequest(
 
 public sealed record CreateManagedUserRequest(
     [Required, StringLength(100)] string Username,
-    [Required, StringLength(72)] string Password,
+    [Required, StringLength(PasswordPolicy.MaximumUtf8Bytes, MinimumLength = PasswordPolicy.MinimumLength)] string Password,
     [Required, StringLength(100)] string Nickname,
     [EmailAddress, StringLength(256)] string? Email = null,
     [StringLength(20)] string? PhoneNumber = null,
@@ -47,4 +46,4 @@ public sealed record CreateManagedUserRequest(
     [StringLength(100)] string? Timezone = null,
     bool IsActive = true);
 
-public sealed record ResetManagedUserPasswordRequest([Required, StringLength(72)] string NewPassword);
+public sealed record ResetManagedUserPasswordRequest([Required, StringLength(PasswordPolicy.MaximumUtf8Bytes, MinimumLength = PasswordPolicy.MinimumLength)] string NewPassword);

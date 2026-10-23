@@ -259,7 +259,7 @@ public sealed class InMemoryScimUserRepository : IUserRepository
     public Task<(IReadOnlyList<User> Items, int Total)> GetScimPagedAsync(string? userName, string? externalId,
         bool? isActive, string? email, int startIndex, int count, CancellationToken ct = default)
     {
-        var query = Snapshot().AsEnumerable();
+        var query = Snapshot().Where(user => !user.IsSystemAccount);
         if (!string.IsNullOrWhiteSpace(userName)) query = query.Where(user => user.Username == userName);
         if (!string.IsNullOrWhiteSpace(externalId)) query = query.Where(user => user.ExternalId == externalId);
         if (isActive.HasValue) query = query.Where(user => user.IsActive == isActive.Value);
@@ -323,6 +323,16 @@ public sealed class TestScimCredentialService : IScimCredentialService
     public Task<bool> ValidateAsync(string rawToken, string requiredScope, CancellationToken ct = default) =>
         Task.FromResult(rawToken == "integration-read-write-token" ||
             rawToken == "integration-read-only-token" && requiredScope == "scim:read");
+
+    public Task<ScimCredentialValidationResult> AuthorizeAsync(string rawToken, string requiredScope, CancellationToken ct = default) =>
+        Task.FromResult(rawToken switch
+        {
+            "integration-read-write-token" => ScimCredentialValidationResult.Granted,
+            "integration-read-only-token" => requiredScope == "scim:read"
+                ? ScimCredentialValidationResult.Granted
+                : ScimCredentialValidationResult.InsufficientScope,
+            _ => ScimCredentialValidationResult.InvalidToken,
+        });
 
     public Task<ScimCredentialCreated> CreateAsync(string name, IReadOnlyCollection<string>? scopes,
         DateTimeOffset? expiresAt, CancellationToken ct = default) => throw new NotSupportedException();

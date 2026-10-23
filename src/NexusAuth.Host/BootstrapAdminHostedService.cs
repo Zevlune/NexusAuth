@@ -29,8 +29,23 @@ public sealed class BootstrapAdminHostedService(
         {
             if (!existingUser.IsSystemAccount)
             {
+                if (!options.PromoteExistingUser)
+                {
+                    logger.LogError(
+                        "Bootstrap administrator username is already used by a non-system account. UserId={UserId}",
+                        existingUser.Id);
+                    throw new InvalidOperationException(
+                        $"BootstrapAdmin:Username '{username}' is already used by an existing non-system account. "
+                        + "The account was not promoted to system administrator because it may have been created through "
+                        + "self-registration or SCIM provisioning. Configure a different BootstrapAdmin:Username, or set "
+                        + "BootstrapAdmin:PromoteExistingUser=true only after verifying that the existing account is trusted.");
+                }
+
                 existingUser.MarkAsSystemAccount();
                 await userRepository.UpdateAsync(existingUser, cancellationToken);
+                logger.LogWarning(
+                    "Existing account promoted to bootstrap administrator because BootstrapAdmin:PromoteExistingUser is enabled. UserId={UserId}",
+                    existingUser.Id);
             }
 
             logger.LogInformation(

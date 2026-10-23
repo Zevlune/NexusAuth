@@ -15,7 +15,7 @@ public sealed class PasskeysModel(
     IPasskeyManagementService passkeys,
     IUserService users,
     ITotpService totp,
-    WebAuthnEnrollmentStateProtector enrollment,
+    IWebAuthnEnrollmentStateProtector enrollment,
     IOptions<WebAuthnOptions> options,
     IOptions<LoginFlowOptions> loginFlow) : PageModel
 {

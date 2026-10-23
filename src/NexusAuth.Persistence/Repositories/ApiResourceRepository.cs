@@ -99,7 +99,7 @@ public class ApiResourceRepository : EfCoreAggregateRootRepository<ApiResource, 
         var total = await query.CountAsync(ct);
         var items = await query
             .OrderByDescending(r => r.CreatedAt)
-            .Skip((page - 1) * pageSize)
+            .Skip((int)Math.Clamp(((long)page - 1) * pageSize, 0, int.MaxValue))
             .Take(pageSize)
             .ToListAsync(ct);
 

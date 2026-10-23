@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.Extensions.Options;
+using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Host.Authentication;
 
 namespace NexusAuth.Host.Pages.Account;
@@ -15,8 +16,8 @@ public sealed class RegisterModel(
     IUserService userService,
     IWebSignInService webSignInService,
     IAntiforgery antiforgery,
-    WebAuthnEnrollmentStateProtector enrollmentStateProtector,
-    SliderCaptchaChallengeProtector sliderCaptchaChallengeProtector,
+    IWebAuthnEnrollmentStateProtector enrollmentStateProtector,
+    ISliderCaptchaChallengeProtector sliderCaptchaChallengeProtector,
     IOptions<SliderCaptchaOptions> sliderCaptchaOptions,
     IOptions<SelfRegistrationOptions> selfRegistrationOptions,
     IOptions<WebAuthnOptions> webAuthnOptions) : PageModel
@@ -44,7 +45,7 @@ public sealed class RegisterModel(
 
     [BindProperty]
     [Required(ErrorMessage = "请输入密码。")]
-    [StringLength(128, MinimumLength = 8, ErrorMessage = "密码长度至少为 8 个字符。")]
+    [StringLength(PasswordPolicy.MaximumUtf8Bytes, MinimumLength = PasswordPolicy.MinimumLength, ErrorMessage = "密码长度应为 8 到 72 个字符。")]
     public string Password { get; set; } = string.Empty;
 
     [BindProperty]
@@ -116,6 +117,11 @@ public sealed class RegisterModel(
             RefreshSliderCaptchaChallenge();
             return Page();
         }
+
+        // 中文注释：与找回密码、修改密码、管理员重置共用同一密码策略（BCrypt 只使用前 72 个 UTF-8 字节）。
+        if (ModelState.GetFieldValidationState(nameof(Password)) != Microsoft.AspNetCore.Mvc.ModelBinding.ModelValidationState.Invalid
+            && PasswordPolicy.GetValidationError(Password) is { } passwordError)
+            ModelState.AddModelError(nameof(Password), passwordError);
 
         if (!ModelState.IsValid)
         {
