@@ -52,6 +52,17 @@ public class AuthorizationCodeRepository : EfCoreEntityRepository<AuthorizationC
                 ct);
     }
 
+    public async Task<int> InvalidateUnusedForClientAsync(string clientId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
+
+        return await _dbContext.Set<AuthorizationCode>()
+            .Where(a => a.ClientId == clientId && !a.IsUsed)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(a => a.IsUsed, true),
+                ct);
+    }
+
     public Task<AuthorizationCode?> ConsumeByCodeHashAsync(
         string codeHash,
         string clientId,

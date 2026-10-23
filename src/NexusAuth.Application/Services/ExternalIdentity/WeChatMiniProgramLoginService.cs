@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Luck.Logging.Serilog;
+using NexusAuth.Application.Services.Security;
 
 namespace NexusAuth.Application.Services.ExternalIdentity;
 
@@ -9,7 +10,8 @@ public sealed class WeChatMiniProgramLoginService(
     IUserRepository userRepository,
     IUserExternalIdentityRepository externalIdentityRepository,
     IOptions<WeChatMiniProgramOptions> options,
-    ILogger<WeChatMiniProgramLoginService> logger) : IWeChatMiniProgramLoginService
+    ILogger<WeChatMiniProgramLoginService> logger,
+    ISecurityPolicyService? securityPolicyService = null) : IWeChatMiniProgramLoginService
 {
     public const string Provider = "wechat_miniprogram";
     public const string HttpClientName = "WeChatMiniProgram";
@@ -58,12 +60,31 @@ public sealed class WeChatMiniProgramLoginService(
                 session.UnionId);
         }
 
+        if (!options.AutoProvisionUsers)
+        {
+            logger.LogLuckWarning(
+                "External identity login rejected. Provider={Provider} Reason={ReasonCode} Outcome={Outcome}",
+                [Provider, "AutoProvisionDisabled", "ExternalLoginRejected"]);
+            throw new WeChatMiniProgramLoginException("invalid_grant", "No local account is linked to this WeChat identity.");
+        }
+
         // A random, undisclosed password preserves the existing non-null hash schema.
         // No password credential is supplied to the small program.
         var candidate = User.Create(
             $"wx_{Guid.NewGuid():N}",
             Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)),
             "微信用户");
+
+        // 中文注释：在持久化之前执行用户安全策略（例如白名单模式），
+        // 否则每次被拒绝的登录都会留下一个无法使用的 wx_ 账号。
+        if (securityPolicyService is not null && !securityPolicyService.CheckUser(candidate).IsSuccess)
+        {
+            logger.LogLuckWarning(
+                "External identity login rejected. Provider={Provider} Reason={ReasonCode} Outcome={Outcome}",
+                [Provider, "UserPolicyRejected", "ExternalLoginRejected"]);
+            throw new WeChatMiniProgramLoginException("invalid_grant", "The user account is unavailable.");
+        }
+
         var user = await externalIdentityRepository.GetOrCreateUserAsync(
             candidate,
             UserExternalIdentity.Create(candidate.Id, Provider, options.AppId, session.OpenId!, session.UnionId, authenticatedAt),

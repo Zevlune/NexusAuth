@@ -13,7 +13,8 @@ public static class OAuthClientAuthenticationParser
         string? formClientSecret,
         string? formClientAssertionType = null,
         string? formClientAssertion = null,
-        string? assertionAudience = null)
+        string? assertionAudience = null,
+        IReadOnlyList<string>? assertionAudiences = null)
     {
         var hasFormSecret = formClientSecret is not null;
         var hasFormAssertionType = formClientAssertionType is not null;
@@ -35,7 +36,8 @@ public static class OAuthClientAuthenticationParser
                     ? null
                     : hasFormSecret
                         ? OAuthClient.TokenEndpointAuthMethodClientSecretPost
-                        : null));
+                        : null,
+                assertionAudiences));
         }
 
         var header = authorizationHeader.Trim();
@@ -93,7 +95,8 @@ public static class OAuthClientAuthenticationParser
             null,
             null,
             assertionAudience,
-            OAuthClient.TokenEndpointAuthMethodClientSecretBasic));
+            OAuthClient.TokenEndpointAuthMethodClientSecretBasic,
+            assertionAudiences));
     }
 
     private static bool TryDecodeFormComponent(string value, out string decoded)

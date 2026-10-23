@@ -1,5 +1,6 @@
 using Luck.DDD.Domain.Domain.AggregateRoots;
 using System.Linq;
+using System.Text.Json;
 using NexusAuth.Domain.Entities;
 
 namespace NexusAuth.Domain.AggregateRoots.OAuthClients;
@@ -76,8 +77,14 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         var normalizedSecrets = clientSecrets?.ToList() ?? [];
         var normalizedAuthMethod = NormalizeTokenEndpointAuthMethod(tokenEndpointAuthMethod);
         var normalizedGrantTypes = allowedGrantTypes?.ToList() ?? [];
+        var normalizedRedirectUris = redirectUris?.ToList() ?? [];
+        var normalizedPostLogoutRedirectUris = postLogoutRedirectUris?.ToList() ?? [];
         ValidateTokenEndpointAuthentication(normalizedAuthMethod, normalizedSecrets, jwks, jwksUri);
         ValidatePublicClientGrantTypes(normalizedAuthMethod, normalizedGrantTypes);
+        RejectJwksUri(jwksUri);
+        ValidateJwksDocument(NormalizeNullableValue(jwks));
+        ValidateRedirectUris(normalizedRedirectUris, "redirect_uri");
+        ValidateRedirectUris(normalizedPostLogoutRedirectUris, "post_logout_redirect_uri");
 
         var client = new OAuthClient(id)
         {
@@ -88,8 +95,8 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
             JwksUri = NormalizeNullableValue(jwksUri),
             ClientName = clientName,
             Description = description,
-            RedirectUris = redirectUris?.ToList() ?? [],
-            PostLogoutRedirectUris = postLogoutRedirectUris?.ToList() ?? [],
+            RedirectUris = normalizedRedirectUris,
+            PostLogoutRedirectUris = normalizedPostLogoutRedirectUris,
             AllowedScopes = allowedScopes?.ToList() ?? [],
             AllowedGrantTypes = normalizedGrantTypes,
             RequirePkce = requirePkce,
@@ -198,9 +205,19 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
             : [.. ClientSecrets, .. clientSecrets];
         var updatedJwks = jwks is null ? Jwks : NormalizeNullableValue(jwks);
         var updatedJwksUri = jwksUri is null ? JwksUri : NormalizeNullableValue(jwksUri);
+        var updatedRedirectUris = redirectUris?.ToList();
+        var updatedPostLogoutRedirectUris = postLogoutRedirectUris?.ToList();
 
         ValidateTokenEndpointAuthentication(normalizedAuthMethod, updatedSecrets, updatedJwks, updatedJwksUri);
         ValidatePublicClientGrantTypes(normalizedAuthMethod, updatedGrantTypes);
+        // 中文注释：只校验本次显式提交的 jwks / jwks_uri / 回调地址，避免历史数据阻塞无关字段的更新。
+        RejectJwksUri(jwksUri);
+        if (jwks is not null)
+            ValidateJwksDocument(updatedJwks);
+        if (updatedRedirectUris is not null)
+            ValidateRedirectUris(updatedRedirectUris, "redirect_uri");
+        if (updatedPostLogoutRedirectUris is not null)
+            ValidateRedirectUris(updatedPostLogoutRedirectUris, "post_logout_redirect_uri");
 
         if (!string.IsNullOrWhiteSpace(clientName))
             ClientName = clientName;
@@ -208,11 +225,11 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         if (description is { } || clientName is { })
             Description = description;
         
-        if (redirectUris is { })
-            RedirectUris = [.. redirectUris];
-        
-        if (postLogoutRedirectUris is { })
-            PostLogoutRedirectUris = [.. postLogoutRedirectUris];
+        if (updatedRedirectUris is { })
+            RedirectUris = updatedRedirectUris;
+
+        if (updatedPostLogoutRedirectUris is { })
+            PostLogoutRedirectUris = updatedPostLogoutRedirectUris;
         
         if (allowedScopes is { })
             AllowedScopes = [.. allowedScopes];
@@ -244,10 +261,111 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         var normalizedJwksUri = NormalizeNullableValue(jwksUri);
 
         ValidateTokenEndpointAuthentication(TokenEndpointAuthMethod, ClientSecrets, normalizedJwks, normalizedJwksUri);
+        RejectJwksUri(normalizedJwksUri);
+        ValidateJwksDocument(normalizedJwks);
 
         Jwks = normalizedJwks;
         JwksUri = normalizedJwksUri;
     }
+
+    /// <summary>
+    /// 中文注释：远程 jwks_uri 拉取尚未实现（同时也会引入 SSRF 面），
+    /// 客户端只能登记内联 jwks，避免出现“能保存但永远无法认证”的 private_key_jwt 客户端。
+    /// </summary>
+    private static void RejectJwksUri(string? jwksUri)
+    {
+        if (!string.IsNullOrWhiteSpace(jwksUri))
+            throw new ArgumentException("jwks_uri is not supported yet; provide jwks.", nameof(jwksUri));
+    }
+
+    /// <summary>
+    /// 中文注释：保存前校验内联 JWKS：必须是合法 JSON、至少包含一个 RSA 公钥，且不允许携带私钥参数。
+    /// 主要调用方：Create / Update / SetJwks。
+    /// </summary>
+    private static void ValidateJwksDocument(string? jwks)
+    {
+        if (jwks is null)
+            return;
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(jwks);
+        }
+        catch (JsonException)
+        {
+            throw new ArgumentException("jwks must be a valid JSON Web Key Set document.", nameof(jwks));
+        }
+
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("keys", out var keys)
+                || keys.ValueKind != JsonValueKind.Array)
+            {
+                throw new ArgumentException("jwks must be a JSON object with a 'keys' array.", nameof(jwks));
+            }
+
+            var rsaPublicKeyCount = 0;
+            foreach (var key in keys.EnumerateArray())
+            {
+                if (key.ValueKind != JsonValueKind.Object)
+                    throw new ArgumentException("Every jwks entry must be a JSON object.", nameof(jwks));
+
+                if (PrivateJwkParameters.Any(parameter => key.TryGetProperty(parameter, out _)))
+                    throw new ArgumentException("jwks must only contain public keys; private key parameters are not allowed.", nameof(jwks));
+
+                if (key.TryGetProperty("kty", out var kty)
+                    && kty.ValueKind == JsonValueKind.String
+                    && string.Equals(kty.GetString(), "RSA", StringComparison.OrdinalIgnoreCase)
+                    && IsNonEmptyString(key, "n")
+                    && IsNonEmptyString(key, "e"))
+                {
+                    rsaPublicKeyCount++;
+                }
+            }
+
+            if (rsaPublicKeyCount == 0)
+                throw new ArgumentException("jwks must contain at least one RSA public key (kty, n, e).", nameof(jwks));
+        }
+    }
+
+    private static bool IsNonEmptyString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var value)
+            && value.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(value.GetString());
+    }
+
+    /// <summary>
+    /// 中文注释：回调地址必须是绝对 URI，不允许 fragment（RFC 6749 §3.1.2），
+    /// 并拒绝 javascript: / data: / vbscript: / file: 等危险 scheme；
+    /// http(s) 以及原生应用使用的自定义私有 scheme（RFC 8252 §7.1）保持允许。
+    /// </summary>
+    private static void ValidateRedirectUris(IEnumerable<string> uris, string parameterName)
+    {
+        foreach (var uri in uris)
+        {
+            // 中文注释：Unix 上 "/path" 会被 Uri 解析成 file:// 绝对地址，这里先要求显式 scheme。
+            if (string.IsNullOrWhiteSpace(uri)
+                || uri.StartsWith('/')
+                || !Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
+                || string.IsNullOrEmpty(parsed.Scheme))
+            {
+                throw new ArgumentException($"{parameterName} '{uri}' must be an absolute URI.", parameterName);
+            }
+
+            if (uri.Contains('#', StringComparison.Ordinal))
+                throw new ArgumentException($"{parameterName} '{uri}' must not contain a fragment.", parameterName);
+
+            if (DangerousRedirectSchemes.Contains(parsed.Scheme, StringComparer.OrdinalIgnoreCase))
+                throw new ArgumentException($"{parameterName} '{uri}' uses a forbidden scheme '{parsed.Scheme}'.", parameterName);
+        }
+    }
+
+    private static readonly string[] PrivateJwkParameters = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
+
+    private static readonly string[] DangerousRedirectSchemes = ["javascript", "data", "vbscript", "file"];
 
     private static void ValidateTokenEndpointAuthentication(
         string tokenEndpointAuthMethod,

@@ -49,4 +49,10 @@ public interface IAuthorizationCodeRepository : IEntityRepository<AuthorizationC
     /// part of the same UPDATE.
     /// </summary>
     Task MarkUsedAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>
+    /// 中文注释：把某个客户端尚未使用的授权码全部标记为已使用。
+    /// 主要调用方：删除客户端时清理遗留授权，避免同名 client_id 重建后复活旧授权码。
+    /// </summary>
+    Task<int> InvalidateUnusedForClientAsync(string clientId, CancellationToken ct = default);
 }

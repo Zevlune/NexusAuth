@@ -18,4 +18,9 @@ public interface IClientApiResourceRepository : IScopedDependency
     Task RemoveAsync(Guid clientId, Guid apiResourceId, CancellationToken ct = default);
 
     Task RemoveByApiResourceIdAsync(Guid apiResourceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 中文注释：删除某个客户端的全部 API 资源关联（client_api_resources 没有外键级联）。
+    /// </summary>
+    Task RemoveByClientIdAsync(Guid clientId, CancellationToken ct = default);
 }

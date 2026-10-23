@@ -1,6 +1,7 @@
 using Luck.Logging.Serilog;
 using System.Globalization;
 using NexusAuth.Application.Services.OIDC;
+using NexusAuth.Application.Services.Security;
 
 namespace NexusAuth.Application.Services.Tokens;
 
@@ -11,13 +12,19 @@ public class TokenService(
     IApiResourceRepository apiResourceRepository,
     IOptions<JwtOptions> jwtOptions,
     ITokenSigningCredentialsProvider signingCredentialsProvider,
-    ILogger<TokenService> logger) : ITokenService
+    ILogger<TokenService> logger,
+    ISecurityPolicyService? securityPolicyService = null) : ITokenService
 {
+    // 中文注释：refresh token 轮换成功后在黑名单表登记一条“已轮换”标记（不改表结构），
+    // 用于区分“轮换后被重放”与“被显式撤销/登出”的 refresh token。
+    private const string RotatedRefreshTokenMarkerPrefix = "refresh_rotated:";
+    private const string RotatedRefreshTokenMarkerType = "refresh_token_rotated";
+
     private readonly JwtOptions _jwtOptions = jwtOptions.Value;
 
     /// <summary>
     /// </summary>
-    public Task<string> IssueAccessTokenAsync(
+    public async Task<string> IssueAccessTokenAsync(
         string clientId,
         string scope,
         string? audience = null,
@@ -25,8 +32,9 @@ public class TokenService(
         string? claimsJson = null,
         CancellationToken ct = default)
     {
-        return IssueAccessTokenWithMetadataAsync(clientId, scope, audience, userId, claimsJson, ct)
-            .ContinueWith(t => t.Result.AccessToken, ct);
+        // 中文注释：直接 await，保证异常以原始类型抛出（ContinueWith 会包装成 AggregateException）。
+        var result = await IssueAccessTokenWithMetadataAsync(clientId, scope, audience, userId, claimsJson, ct);
+        return result.AccessToken;
     }
 
     /// <summary>
@@ -102,6 +110,9 @@ public class TokenService(
         var user = await userRepository.FindByIdAsync(userId, ct)
                    ?? throw new InvalidOperationException("User not found for id_token issuance.");
         var requestedClaims = OidcRequestedClaims.Parse(claimsJson);
+        // 中文注释：id_token 通过 at_hash 与同时签发的 access token 绑定，该 access token 的 scope
+        // 就是本次实际授予的 scope；用户 claim 只能在这些 scope 覆盖范围内返回（claims 参数不能越权）。
+        var grantedScopes = ReadGrantedScopes(accessToken);
 
         var now = DateTime.UtcNow;
         var claims = new List<Claim>
@@ -111,12 +122,16 @@ public class TokenService(
             new("token_use", "id_token"),
             new(UserTokenValidator.EpochClaim,
                 (user.TokenInvalidBefore?.UtcTicks ?? 0).ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
-            new("preferred_username", user.Username),
-            new("name", user.Nickname),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new(JwtRegisteredClaimNames.Iat, new DateTimeOffset(now).ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64),
             new("at_hash", ComputeTokenHash(accessToken)),
         };
+
+        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("preferred_username", grantedScopes))
+            claims.Add(new("preferred_username", user.Username));
+
+        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("name", grantedScopes))
+            claims.Add(new("name", user.Nickname));
 
         if (authenticatedAt.HasValue)
             claims.Add(new("auth_time", authenticatedAt.Value.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64));
@@ -133,6 +148,7 @@ public class TokenService(
         }
 
         if (!string.IsNullOrWhiteSpace(user.Email)
+            && OidcClaimEmissionPolicy.IsClaimAllowedByScopes("email", grantedScopes)
             && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "email", user.Email)
             && (requestedClaims.RequestsIdTokenClaim("email") || requestedClaims.RequestsIdTokenClaim("email_verified")))
         {
@@ -141,6 +157,7 @@ public class TokenService(
         }
 
         if (!string.IsNullOrWhiteSpace(user.PhoneNumber)
+            && OidcClaimEmissionPolicy.IsClaimAllowedByScopes("phone_number", grantedScopes)
             && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "phone_number", user.PhoneNumber)
             && (requestedClaims.RequestsIdTokenClaim("phone_number") || requestedClaims.RequestsIdTokenClaim("phone_number_verified")))
         {
@@ -148,13 +165,17 @@ public class TokenService(
             claims.Add(new("phone_number_verified", "false", ClaimValueTypes.Boolean));
         }
 
-        if (OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "gender", user.Gender.ToString()))
+        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("gender", grantedScopes)
+            && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "gender", user.Gender.ToString()))
             claims.Add(new("gender", user.Gender.ToString()));
 
-        if (!string.IsNullOrWhiteSpace(user.Ethnicity) && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "ethnicity", user.Ethnicity))
+        if (!string.IsNullOrWhiteSpace(user.Ethnicity)
+            && OidcClaimEmissionPolicy.IsClaimAllowedByScopes("ethnicity", grantedScopes)
+            && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "ethnicity", user.Ethnicity))
             claims.Add(new("ethnicity", user.Ethnicity));
 
-        if (requestedClaims.RequestsIdTokenClaim("nickname"))
+        if (requestedClaims.RequestsIdTokenClaim("nickname")
+            && OidcClaimEmissionPolicy.IsClaimAllowedByScopes("nickname", grantedScopes))
             claims.Add(new("nickname", user.Nickname));
 
         if (!string.IsNullOrWhiteSpace(nonce))
@@ -200,7 +221,9 @@ public class TokenService(
     /// <summary>
     /// 使用 refresh_token 轮换刷新访问令牌
     /// 主要流程
-    /// 1. 查找 refresh_token
+    /// 1. 查找 refresh_token；已轮换的 token 被再次出示时视为重放，撤销该用户在该客户端下的全部 refresh token
+    /// 2. 校验过期、用户状态、安全策略与客户端归属
+    /// 3. 先签发 access token（可能失败的步骤），再原子提交轮换，避免失败时客户端丢失会话
     /// </summary>
     public async Task<RefreshResult> RefreshAsync(
         string refreshTokenString,
@@ -213,7 +236,10 @@ public class TokenService(
             return RefreshFailure(clientId, "RefreshTokenNotFound", "Invalid refresh token.");
 
         if (existingToken.IsRevoked)
+        {
+            await RevokeFamilyOnReuseAsync(existingToken, ct);
             return RefreshFailure(clientId ?? existingToken.ClientId, "RefreshTokenRevoked", "Refresh token has been revoked.");
+        }
 
         if (existingToken.ExpiresAt <= DateTimeOffset.UtcNow)
             return RefreshFailure(clientId ?? existingToken.ClientId, "RefreshTokenExpired", "Refresh token has expired.");
@@ -222,6 +248,9 @@ public class TokenService(
         if (user is null || !user.IsActive)
             return RefreshFailure(clientId ?? existingToken.ClientId, "UserInactive", "The user account is no longer active.");
 
+        if (securityPolicyService is not null && !securityPolicyService.CheckUser(user).IsSuccess)
+            return RefreshFailure(clientId ?? existingToken.ClientId, "UserPolicyRejected", "The user account is not allowed by security policy.");
+
         if (user.TokenInvalidBefore.HasValue && existingToken.CreatedAt <= user.TokenInvalidBefore.Value)
             return RefreshFailure(clientId ?? existingToken.ClientId, "RefreshTokenRevoked", "Refresh token has been revoked.");
 
@@ -229,6 +258,24 @@ public class TokenService(
             && !string.Equals(existingToken.ClientId, clientId, StringComparison.Ordinal))
         {
             return RefreshFailure(clientId, "ClientMismatch", "Refresh token does not belong to the authenticated client.");
+        }
+
+        // 中文注释：access token 是无状态 JWT，先签发它；若因用户状态或资源 audience 变化而失败，
+        // 旧 refresh token 尚未被轮换，客户端不会因此丢失会话，并返回 invalid_grant 而不是 500。
+        string accessToken;
+        try
+        {
+            accessToken = await IssueAccessTokenAsync(
+                existingToken.ClientId,
+                existingToken.Scope,
+                null,
+                existingToken.UserId,
+                null,
+                ct);
+        }
+        catch (InvalidOperationException)
+        {
+            return RefreshFailure(existingToken.ClientId, "AccessTokenIssueFailed", "Unable to issue an access token for this refresh token.");
         }
 
         // The database transaction atomically revokes the old token and stores
@@ -247,14 +294,7 @@ public class TokenService(
         if (rotatedToken is null)
             return RefreshFailure(existingToken.ClientId, "RefreshTokenRotationFailed", "Refresh token has been revoked, expired, or already used.");
 
-        // Issue new access token
-        var accessToken = await IssueAccessTokenAsync(
-            existingToken.ClientId,
-            existingToken.Scope,
-            null,
-            existingToken.UserId,
-            null,
-            ct);
+        await RecordRotationAsync(existingToken, ct);
 
         logger.LogLuckInformation(
             "Refresh token rotation succeeded. ClientId={ClientId} UserId={UserId} Outcome={Outcome}",
@@ -359,6 +399,10 @@ public class TokenService(
                 out var validatedToken);
 
             var jwt = (JwtSecurityToken)validatedToken;
+            // 中文注释：id_token 不是访问凭证，introspection 不应把它报告为 active（RFC 7662 §2.2）。
+            if (string.Equals(principal.FindFirst("token_use")?.Value, "id_token", StringComparison.Ordinal))
+                return TokenIntrospectionResult.Inactive();
+
             if (!await new UserTokenValidator(userRepository, tokenBlacklistRepository).IsActiveAsync(principal, ct))
                 return TokenIntrospectionResult.Inactive();
 
@@ -459,6 +503,72 @@ public class TokenService(
             logger.LogLuckWarning(
                 "Access token revocation skipped. Reason={ReasonCode} Outcome={Outcome}",
                 ["TokenValidationFailed", "TokenValidationFailed"]);
+        }
+    }
+
+    /// <summary>
+    /// 中文注释：已轮换的 refresh token 被再次出示，说明 token 可能已泄露（RFC 9700 §4.14.2）。
+    /// 撤销该用户在该客户端下所有仍有效的 refresh token，攻击者与合法客户端都需要重新授权。
+    /// 被显式撤销（revocation / 登出）的 token 没有轮换标记，只返回失败，不会波及其他会话。
+    /// </summary>
+    private async Task RevokeFamilyOnReuseAsync(RefreshToken presentedToken, CancellationToken ct)
+    {
+        var marker = BuildRotationMarker(presentedToken.TokenHash);
+        if (!await tokenBlacklistRepository.ExistsActiveAsync(marker, DateTimeOffset.UtcNow, ct))
+            return;
+
+        var revokedCount = await refreshTokenRepository.RevokeAllForUserAndClientAsync(
+            presentedToken.UserId,
+            presentedToken.ClientId,
+            ct);
+
+        logger.LogLuckWarning(
+            "Refresh token reuse detected; active refresh tokens for the user and client were revoked. ClientId={ClientId} UserId={UserId} RevokedCount={RevokedCount} Outcome={Outcome}",
+            [presentedToken.ClientId, presentedToken.UserId, revokedCount, "RefreshTokenReuseDetected"]);
+    }
+
+    private async Task RecordRotationAsync(RefreshToken rotatedToken, CancellationToken ct)
+    {
+        try
+        {
+            await tokenBlacklistRepository.AddAsync(
+                TokenBlacklistEntry.Create(
+                    BuildRotationMarker(rotatedToken.TokenHash),
+                    RotatedRefreshTokenMarkerType,
+                    rotatedToken.UserId.ToString(),
+                    rotatedToken.ExpiresAt),
+                ct);
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            // 中文注释：轮换本身已经成功提交；标记写入失败只会让这一枚旧 token 失去重放检测，不影响本次刷新。
+            logger.LogLuckWarning(
+                "Refresh token rotation marker could not be stored. ClientId={ClientId} UserId={UserId} Outcome={Outcome}",
+                [rotatedToken.ClientId, rotatedToken.UserId, "RefreshTokenRotationMarkerFailed"]);
+        }
+    }
+
+    private static string BuildRotationMarker(string tokenHash)
+    {
+        return RotatedRefreshTokenMarkerPrefix + tokenHash;
+    }
+
+    /// <summary>
+    /// 中文注释：读取刚签发的 access token 中的 scope；读取失败时视为没有任何用户信息 scope。
+    /// </summary>
+    private static HashSet<string> ReadGrantedScopes(string accessToken)
+    {
+        try
+        {
+            var scope = new JwtSecurityTokenHandler().ReadJwtToken(accessToken)
+                .Claims
+                .FirstOrDefault(claim => string.Equals(claim.Type, "scope", StringComparison.Ordinal))?
+                .Value;
+            return OidcClaimEmissionPolicy.ParseScopes(scope);
+        }
+        catch (ArgumentException)
+        {
+            return OidcClaimEmissionPolicy.ParseScopes(null);
         }
     }
 

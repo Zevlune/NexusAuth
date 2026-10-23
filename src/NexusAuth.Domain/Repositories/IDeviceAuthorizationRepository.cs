@@ -47,4 +47,10 @@ public interface IDeviceAuthorizationRepository : IEntityRepository<DeviceAuthor
         string clientId,
         DateTimeOffset now,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// 中文注释：把某个客户端仍处于 Pending / Approved（尚未兑换）的设备授权全部置为 Denied。
+    /// 主要调用方：删除客户端时清理遗留授权。
+    /// </summary>
+    Task<int> DenyOutstandingForClientAsync(string clientId, CancellationToken ct = default);
 }

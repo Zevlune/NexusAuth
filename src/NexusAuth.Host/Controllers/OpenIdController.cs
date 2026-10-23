@@ -150,7 +150,8 @@ public class OpenIdController(
             clientSecret,
             clientAssertionType,
             clientAssertion,
-            GetEndpointAudience());
+            GetTokenEndpointUrl(),
+            GetAcceptedAssertionAudiences("/connect/deviceauthorization"));
 
         if (!resolvedClientAuthentication.IsSuccess || resolvedClientAuthentication.Authentication is null)
             return InvalidClient();
@@ -205,7 +206,8 @@ public class OpenIdController(
             clientSecret,
             clientAssertionType,
             clientAssertion,
-            GetEndpointAudience());
+            GetTokenEndpointUrl(),
+            GetAcceptedAssertionAudiences("/connect/introspect"));
 
         if (!resolvedClientAuthentication.IsSuccess || resolvedClientAuthentication.Authentication is null)
             return InvalidClient();
@@ -258,7 +260,8 @@ public class OpenIdController(
             clientSecret,
             clientAssertionType,
             clientAssertion,
-            GetEndpointAudience());
+            GetTokenEndpointUrl(),
+            GetAcceptedAssertionAudiences("/connect/revocation"));
 
         if (!resolvedClientAuthentication.IsSuccess || resolvedClientAuthentication.Authentication is null)
             return InvalidClient();
@@ -273,8 +276,12 @@ public class OpenIdController(
 
         if (!string.IsNullOrWhiteSpace(token))
         {
+            // 中文注释：token_type_hint 只是查找提示；按提示找不到时必须继续尝试其他 token 类型（RFC 7009 §2.1）。
             if (string.Equals(tokenTypeHint, "refresh_token", StringComparison.OrdinalIgnoreCase))
-                await RevokeRefreshTokenForClientAsync(token, authenticationInput.ClientId, ct);
+            {
+                if (!await RevokeRefreshTokenForClientAsync(token, authenticationInput.ClientId, ct))
+                    await _tokenService.RevokeAccessTokenAsync(token, authenticationInput.ClientId, ct);
+            }
             else
             {
                 await tokenService.RevokeAccessTokenAsync(token, authenticationInput.ClientId, ct);
@@ -283,6 +290,28 @@ public class OpenIdController(
         }
 
         return Ok();
+    }
+
+    /// <summary>
+    /// 中文注释：机密客户端必须完成客户端认证；token_endpoint_auth_method=none 的公共客户端
+    /// （例如微信小程序）只能凭 client_id 吊销属于自己的 token（RFC 7009 §2.1），且不得携带任何凭据。
+    /// </summary>
+    private async Task<bool> AuthenticateRevocationClientAsync(ClientAuthenticationInput input, CancellationToken ct)
+    {
+        var lookup = await _clientService.AuthenticateClientAsync(input, requireClientAuthentication: false, ct);
+        if (!lookup.IsSuccess || lookup.Client is null)
+            return false;
+
+        if (string.Equals(lookup.Client.TokenEndpointAuthMethod, Domain.AggregateRoots.OAuthClients.OAuthClient.TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+        {
+            return input.ClientSecret is null
+                && input.ClientAssertion is null
+                && input.ClientAssertionType is null
+                && string.IsNullOrWhiteSpace(Request.Headers.Authorization);
+        }
+
+        var authentication = await _clientService.AuthenticateClientAsync(input, requireClientAuthentication: true, ct);
+        return authentication.IsSuccess;
     }
 
     /// <summary>
@@ -424,42 +453,35 @@ public class OpenIdController(
         return Unauthorized(new { error = "invalid_client" });
     }
 
-    private string GetEndpointAudience()
+    private string GetTokenEndpointUrl()
     {
-        var request = HttpContext.Request;
-        var host = request.Host.HasValue ? request.Host.Value : null;
-        if (!string.IsNullOrWhiteSpace(host))
-            return $"{request.Scheme}://{host}{request.PathBase}{request.Path}";
+        return GetIssuer() + "/connect/token";
+    }
 
-        return GetIssuer();
+    /// <summary>
+    /// 中文注释：client assertion 的 aud 只接受由配置的 Jwt:Issuer 推导出的值：issuer、token endpoint，
+    /// 以及当前端点在 issuer 下的 URL（兼容旧客户端）。不再使用可伪造的 Host 头和反向代理后的 http scheme。
+    /// </summary>
+    private IReadOnlyList<string> GetAcceptedAssertionAudiences(string endpointPath)
+    {
+        var issuer = GetIssuer();
+        return [.. new[] { GetTokenEndpointUrl(), issuer, issuer + endpointPath }.Distinct(StringComparer.Ordinal)];
     }
 
     private static OidcRequestedClaims ResolveRequestedClaims(string? scope, string? claimsJson)
     {
-        // 中文注释：优先使用授权阶段传入的 OIDC claims 参数，
-        // 没有显式 claims 请求时，再按 scope 做基础 claim 回退。
+        // 中文注释：先按已授予的 scope 得到基础 claim，再合并 claims 参数显式请求的 userinfo claim；
+        // 两者都必须被已授予的 scope 覆盖（OIDC Core §5.4 / §5.5），claims 参数不能绕过 scope。
         var requestedClaims = OidcRequestedClaims.Parse(claimsJson);
-        var userInfoClaims = new HashSet<string>(BaseUserInfoClaims, StringComparer.Ordinal);
-        var requestedScopes = scope?
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToHashSet(StringComparer.Ordinal)
-            ?? [];
-
-        if (!requestedScopes.Contains("email"))
-        {
-            userInfoClaims.Remove("email");
-            userInfoClaims.Remove("email_verified");
-        }
-
-        if (!requestedScopes.Contains("phone"))
-        {
-            userInfoClaims.Remove("phone_number");
-            userInfoClaims.Remove("phone_number_verified");
-        }
+        var grantedScopes = OidcClaimEmissionPolicy.ParseScopes(scope);
+        var userInfoClaims = BaseUserInfoClaims
+            .Where(claim => OidcClaimEmissionPolicy.IsClaimAllowedByScopes(claim, grantedScopes))
+            .ToHashSet(StringComparer.Ordinal);
 
         if (requestedClaims.HasExplicitRequests)
         {
-            userInfoClaims.UnionWith(requestedClaims.UserInfoClaims);
+            userInfoClaims.UnionWith(requestedClaims.UserInfoClaims
+                .Where(claim => OidcClaimEmissionPolicy.IsClaimAllowedByScopes(claim, grantedScopes)));
         }
 
         return OidcRequestedClaims.Create(userInfoClaims: userInfoClaims);
@@ -470,9 +492,13 @@ public class OpenIdController(
         var payload = new Dictionary<string, object?>
         {
             ["sub"] = user.Id.ToString(),
-            ["preferred_username"] = user.Username,
-            ["name"] = user.Nickname,
         };
+
+        if (requestedClaims.RequestsUserInfoClaim("preferred_username"))
+            payload["preferred_username"] = user.Username;
+
+        if (requestedClaims.RequestsUserInfoClaim("name"))
+            payload["name"] = user.Nickname;
 
         if (requestedClaims.RequestsUserInfoClaim("nickname"))
             payload["nickname"] = user.Nickname;
@@ -506,11 +532,11 @@ public class OpenIdController(
         return payload;
     }
 
-    private async Task RevokeRefreshTokenForClientAsync(string token, string clientId, CancellationToken ct)
+    private async Task<bool> RevokeRefreshTokenForClientAsync(string token, string clientId, CancellationToken ct)
     {
         var isOwnedByClient = await tokenService.IsRefreshTokenOwnedByClientAsync(token, clientId, ct);
         if (!isOwnedByClient)
-            return;
+            return false;
 
         await tokenService.RevokeRefreshTokenAsync(token, clientId, ct);
     }

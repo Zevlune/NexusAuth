@@ -57,6 +57,10 @@ public class DeviceAuthorizationService(
         if (authorization is null)
             return DeviceAuthorizationSessionResult.Failure("Invalid or expired user code.");
 
+        // 中文注释：登录之后用户可能被停用或被安全策略（黑/白名单）拒绝，批准前重新校验。
+        if (!await IsActiveUserAsync(userId, ct))
+            return DeviceAuthorizationSessionResult.Failure("The user account is not allowed to approve this device.");
+
         var approved = await deviceAuthorizationRepository.ApprovePendingAsync(
             authorization.Id,
             userId,
@@ -246,6 +250,7 @@ public class DeviceAuthorizationService(
 
     private async Task<bool> IsActiveUserAsync(Guid userId, CancellationToken ct)
     {
-        return (await userRepository.FindByIdAsync(userId, ct))?.IsActive == true;
+        var user = await userRepository.FindByIdAsync(userId, ct);
+        return user is { IsActive: true } && securityPolicyService.CheckUser(user).IsSuccess;
     }
 }
