@@ -6,7 +6,7 @@ using NexusAuth.Application.Services.OpenApi;
 namespace NexusAuth.Workbench.Api.Controllers;
 
 /// <summary>Administrative lifecycle management for Host Open API bearer credentials.</summary>
-[Authorize]
+[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [ApiResultWrap]
 [Route("api/open-api-credentials")]

@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
@@ -17,6 +18,7 @@ using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Workbench.Api;
 using NexusAuth.Workbench.Api.Controllers;
 using Xunit;
 
@@ -89,7 +91,11 @@ public sealed class UserRequestValidationTests
             .ConfigureServices(services =>
             {
                 services.AddControllers().AddApplicationPart(typeof(UsersController).Assembly);
-                services.AddAuthorization();
+                services.AddAuthorization(options =>
+                    options.AddPolicy(WorkbenchAuthorizationPolicies.Administrator, policy => policy
+                        .RequireAuthenticatedUser()
+                        .AddRequirements(new WorkbenchAdministratorRequirement())));
+                services.AddScoped<IAuthorizationHandler, WorkbenchAdministratorAuthorizationHandler>();
                 services.AddAuthentication("test")
                     .AddScheme<AuthenticationSchemeOptions, AdministratorAuthenticationHandler>("test", _ => { });
                 services.AddSingleton(userRepository);

@@ -99,6 +99,7 @@ public sealed class WorkbenchTokenRevocationTests
     {
         private const string Issuer = "https://issuer.example.test";
         private const string Audience = "nexusauth.workbench.api";
+        private const string ClientId = "nexusauth.workbench";
         private readonly RSA rsa = RSA.Create(2048);
         private readonly RsaSecurityKey signingKey;
         private readonly WebApplicationFactory<WorkbenchApiModule> factory;
@@ -121,7 +122,7 @@ public sealed class WorkbenchTokenRevocationTests
                     .UseSetting("Gateway:Enabled", gateway.ToString())
                     .UseSetting("Auth:Authority", Issuer)
                     .UseSetting("Auth:Audience", Audience)
-                    .UseSetting("Auth:ClientId", "nexusauth.workbench")
+                    .UseSetting("Auth:ClientId", ClientId)
                     .UseSetting("Auth:ClientSecret", "test-only-secret")
                     .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
                     .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")
@@ -168,7 +169,8 @@ public sealed class WorkbenchTokenRevocationTests
             var claims = new[]
             {
                 new Claim("sub", user.Id.ToString()), new Claim("name", user.Nickname),
-                new Claim("token_use", "access_token"), new Claim("jti", jti ?? Guid.NewGuid().ToString()),
+                new Claim("token_use", "access_token"), new Claim("client_id", ClientId),
+                new Claim("jti", jti ?? Guid.NewGuid().ToString()),
                 new Claim(UserTokenValidator.EpochClaim, (user.TokenInvalidBefore?.UtcTicks ?? 0).ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
                 new Claim("iat", new DateTimeOffset(now).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
             };

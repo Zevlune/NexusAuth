@@ -16,7 +16,7 @@ Host 可以单独部署。Workbench 依赖可用的身份认证服务，当前�
 - **阅读协议细节**：查看 [OAuth/OIDC 协议设计](document/11-OAuth-OIDC协议设计.md)。
 - **接入 APISIX**：查看 [APISIX 网关对接手册](document/13-APISIX网关对接手册.md)，先核对网关模式与默认 BFF 模式的区别。
 
-启动时需要留意当前源码的三个默认值：Host 的 SMTP 已启用但未提供密码；Workbench 的默认 Authority 和 Dashboard 的 Vite 代理指向局域网地址；Compose 中 `admin-api` 没有映射宿主机端口。两套手册分别给出了本地配置和容器配置的具体步骤。
+启动时需要留意当前源码的两个默认值：Workbench 的默认 Authority 和 Dashboard 的 Vite 代理指向局域网地址；Compose 中 `admin-api` 没有映射宿主机端口。Host 的 SMTP 默认关闭，只有显式设置 `NEXUSAUTH_SMTP_ENABLED=true` 并补齐有效邮件配置后才会启用；两套手册分别给出了本地配置和容器配置的具体步骤。
 
 ## 代码结构
 

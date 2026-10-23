@@ -7,7 +7,7 @@ using NexusAuth.Application.Clients;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
-[Authorize]
+[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [ApiResultWrap]
 [Route("api/[controller]")]

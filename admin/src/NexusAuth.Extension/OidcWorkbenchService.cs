@@ -1,5 +1,4 @@
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -27,6 +26,8 @@ public class OidcWorkbenchService(
 
     private readonly FrontendOptions _frontendOptions = new();
     private readonly WorkbenchAuthOptions _options = authOptions.Value;
+    private readonly WorkbenchClientCredentials _credentials =
+        WorkbenchClientCredentials.FromConfiguration(authOptions.Value.ClientId, authOptions.Value.ClientSecret);
 
     /// <summary>
     /// 中文：获取移除末尾斜杠后的前端基础地址。
@@ -38,13 +39,15 @@ public class OidcWorkbenchService(
     public string Authority => _options.Authority;
 
     /// <inheritdoc />
-    public string ClientId => _options.ClientId;
+    public string ClientId => _credentials.ClientId;
 
     /// <summary>
     /// 中文：获取配置的机密客户端凭据。
     /// English: Gets the configured confidential client credential.
     /// </summary>
-    public string? ClientSecret => _options.ClientSecret;
+    public string? ClientSecret => string.IsNullOrWhiteSpace(_credentials.ClientSecret)
+        ? null
+        : _credentials.ClientSecret;
 
     /// <inheritdoc />
     public string RedirectUri => _options.RedirectUri;
@@ -300,13 +303,10 @@ public class OidcWorkbenchService(
     /// <exception cref="InvalidOperationException">中文：未配置客户端密钥。English: The client secret has not been configured.</exception>
     public Task ApplyClientAuthenticationAsync(HttpClient client)
     {
-        var actualClientId = ClientId;
-        var actualClientSecret = ClientSecret;
-        if (string.IsNullOrWhiteSpace(actualClientSecret))
+        if (string.IsNullOrWhiteSpace(_credentials.ClientSecret))
             throw new InvalidOperationException("ClientSecret is required.");
 
-        var credentialBytes = Encoding.UTF8.GetBytes($"{actualClientId}:{actualClientSecret}");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(credentialBytes));
+        client.DefaultRequestHeaders.Authorization = _credentials.CreateBasicAuthenticationHeader();
         return Task.CompletedTask;
     }
 }

@@ -6,7 +6,7 @@ using NexusAuth.Application.Services.LoginAudits;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
-[Authorize]
+[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [ApiResultWrap]
 [Route("api/login-audits")]

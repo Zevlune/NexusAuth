@@ -6,9 +6,9 @@
 
 Host 已通过 `AddNexusAuthSmtp` 注册 `SmtpOptions`、启动校验、`IEmailSender` 和 MailKit SMTP 传输。邮箱验证码已经接入登录、个人邮箱管理和找回密码。注册表单填写邮箱不会自动完成邮箱验证。
 
-当前 [`appsettings.json`](../src/NexusAuth.Host/appsettings.json) 设置了 `Smtp.Enabled=true`、`smtp.qq.com:465`、`SslOnConnect`，但没有密码。启用时缺少必需配置会在 `ValidateOnStart` 阶段报错，不能直接依赖这些占位值启动。
+当前 [`appsettings.json`](../src/NexusAuth.Host/appsettings.json) 默认设置 `Smtp.Enabled=false`，因此未配置邮件服务的本地环境可以直接启动。只有显式启用时才会连接 SMTP；启用后如果缺少 Host、用户名、密码或有效发件人，`ValidateOnStart` 会阻止 Host 启动。
 
-本地只需要密码或 Passkey 登录时，可在启动 Host 的终端设置：
+本地只需要密码或 Passkey 登录时无需额外关闭邮件。若要确认运行进程中的值，可以设置：
 
 ```bash
 export NEXUSAUTH_SMTP_ENABLED=false
@@ -47,9 +47,9 @@ export NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES=5
 
 ## 3. Docker Compose 的环境变量
 
-根 [`docker-compose.yml`](../docker-compose.yml) 的 `sso.environment` **只转发了 `NEXUSAUTH_SMTP_PASSWORD`**；其余邮件配置读取镜像内的 appsettings。项目 `.env` 用于 Compose 插值，不会自动把里面所有变量传给容器。
+根 [`docker-compose.yml`](../docker-compose.yml) 的 `sso.environment` 显式转发 `NEXUSAUTH_SMTP_ENABLED`，默认值为 `false`，同时转发 `NEXUSAUTH_SMTP_PASSWORD`。因此宿主 `.env` 中的 `NEXUSAUTH_SMTP_ENABLED=true` 会进入容器并启用邮件；其余邮件配置仍读取镜像内 appsettings 或 Compose override。
 
-如果使用现有 QQ 配置，除密码外还需要将占位的用户名、发件地址改成真实邮箱。推荐在仓库根目录创建本地覆盖文件 `docker-compose.smtp.local.yml`：
+启用邮件时，需要同时提供真实 SMTP 主机、用户名、密码和发件地址。推荐在仓库根目录创建本地覆盖文件 `docker-compose.smtp.local.yml`：
 
 ```yaml
 services:
@@ -73,16 +73,7 @@ services:
 docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up -d --build db sso
 ```
 
-本地关闭邮件时，同一个覆盖文件只需如下内容：
-
-```yaml
-services:
-  sso:
-    environment:
-      NEXUSAUTH_SMTP_ENABLED: "false"
-```
-
-同样使用两个 `-f` 参数启动。部署整套 Workbench 时也需要带上该覆盖文件，再启动 `admin-api dashboard`。仅在宿主机设置 `NEXUSAUTH_SMTP_ENABLED=false`，现有 Compose 不会将它传入 `sso`。
+不创建覆盖文件时，根 Compose 会以 `NEXUSAUTH_SMTP_ENABLED=false` 启动 Host；部署整套 Workbench 时同样不需要仅为关闭 SMTP 增加本地覆盖。
 
 ## 4. 页面使用步骤
 
@@ -115,7 +106,7 @@ services:
 
 | 现象 | 检查方向 |
 | --- | --- |
-| Host 无法启动，提示 SMTP 配置缺失 | 当前默认启用；补全配置或在进程 / 容器内关闭 |
+| Host 无法启动，提示 SMTP 配置缺失 | 仅当显式启用 SMTP 时发生；补全配置或设置 `NEXUSAUTH_SMTP_ENABLED=false` |
 | 修改 `.env` 后行为不变 | 检查变量是否在 Compose 的 `environment` 中显式传递，容器是否已重建 |
 | 认证失败 | SMTP 服务是否开启；使用授权码；用户名是否为完整邮箱 |
 | TLS 连接失败 | 核对服务商要求的端口与 `Security`，避免混用 465 / StartTls |

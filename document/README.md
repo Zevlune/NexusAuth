@@ -22,6 +22,7 @@ Host 的启动流程不要求启动 Workbench 或 Dashboard。Workbench 手册�
 | [Dashboard 统一登录接入模板](Workbench-Dashboard统一登录接入模板.md) | 前端登录路由、同源代理和回调处理 |
 | [APISIX 网关对接手册](13-APISIX网关对接手册.md) | 外置网关认证模式与信任边界 |
 | [UTC 时间戳发布检查](utc-timestamp-release-check.md) | 持久化与 API 时间格式的发布检查 |
+| [2026-10-23 未关闭 Issue 排期](open-issue-triage-2026-10-23.md) | 29 个开放 Issue 的优先级、本轮修复与后续范围 |
 
 [快速启动旧入口](01-快速启动.md) 已改为两套手册的导航。专题文档用于补充主手册；部署时先按所属应用的主手册完成配置。
 
