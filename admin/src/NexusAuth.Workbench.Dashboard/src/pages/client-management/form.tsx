@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { AxiosError } from 'axios';
 import { AddIcon, DeleteIcon, KeyIcon } from 'tdesign-icons-react';
-import { Alert, Button, Card, Descriptions, Form, Input, Loading, MessagePlugin, Popconfirm, Select, Switch, Tag, Textarea, Tooltip, Typography } from 'tdesign-react';
+import { Alert, Button, Card, Descriptions, Dialog, Form, Input, Loading, MessagePlugin, Popconfirm, Select, Space, Switch, Tag, Textarea, Tooltip, Typography } from 'tdesign-react';
 import type { FormInstanceFunctions } from 'tdesign-react/es/form/type';
 import {
   createClient,
@@ -19,7 +19,7 @@ import { getAllApiResources, type ApiResource } from '../../api/api-resource';
 import { getClientMetadata, type ClientMetadata } from '../../api/client-metadata';
 import {
   authMethodOptions,
-  canManageClientCredentials,
+  canResetClientCredential,
   grantTypeOptions,
   mergeOptions,
 } from './client-options';
@@ -47,9 +47,10 @@ type ClientFormPageProps = {
   mode: 'create' | 'edit';
 };
 
+// jwks_uri 不再支持新配置（服务端不会拉取远程 JWKS），仅用于展示存量应用的已有配置。
 const keyMaterialSourceOptions = [
   { label: 'JWKS', value: 'jwks' },
-  { label: 'JWKS URI', value: 'jwks_uri' },
+  { label: 'JWKS URI（已停用）', value: 'jwks_uri' },
 ];
 
 const jwksInputModeOptions = [
@@ -143,6 +144,8 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingResources, setLoadingResources] = useState(false);
   const [generatedCredential, setGeneratedCredential] = useState<GeneratedClientCredential | null>(null);
+  const [createdClientId, setCreatedClientId] = useState<string | null>(null);
+  const hasLegacyJwksUri = Boolean(editingClient?.jwksUri);
 
   const authMethodSelectOptions = useMemo(
     () => {
@@ -299,7 +302,8 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
       ...prev,
       keyMaterialSource: value,
       jwks: value === 'jwks' ? prev.jwks : '',
-      jwksUri: value === 'jwks_uri' ? prev.jwksUri : '',
+      // 切回 jwks_uri 时恢复展示存量值（该值只读，不会被提交）。
+      jwksUri: value === 'jwks_uri' ? editingClient?.jwksUri ?? '' : '',
     }));
   };
 
@@ -336,8 +340,24 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     if (!value) {
       return;
     }
-    await navigator.clipboard.writeText(value);
-    MessagePlugin.success('已复制');
+
+    try {
+      await navigator.clipboard.writeText(value);
+      MessagePlugin.success('已复制');
+    } catch (error) {
+      console.error('Failed to copy client credential:', error);
+      MessagePlugin.error('复制失败，请手动选中内容复制');
+    }
+  };
+
+  const handleCredentialAcknowledged = () => {
+    // 凭据只展示一次：确认后立即从状态中清除，不在页面中长期保留明文。
+    setGeneratedCredential(null);
+    if (createdClientId) {
+      const clientId = createdClientId;
+      setCreatedClientId(null);
+      navigate(`/oauth/client-management/edit/${clientId}`, { replace: true });
+    }
   };
 
   const handleBackToList = () => {
@@ -345,15 +365,14 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
   };
 
   const handleResetCredential = async () => {
-    if (!editingClient || !canManageClientCredentials(formData.tokenEndpointAuthMethod)) {
+    if (!editingClient || !canResetClientCredential(editingClient.tokenEndpointAuthMethod)) {
       return;
     }
 
     try {
       setSubmitting(true);
       const result = await resetClientCredential(editingClient.id, {
-        tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
-        autoGenerateJwks: formData.tokenEndpointAuthMethod === 'private_key_jwt',
+        tokenEndpointAuthMethod: editingClient.tokenEndpointAuthMethod,
       });
       setEditingClient(result.client);
       setFormData(toFormData(result.client));
@@ -380,31 +399,37 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     const postLogoutRedirectUris = formData.postLogoutRedirectUris.map((uri) => uri.value.trim()).filter(Boolean);
     const requirePkce = Boolean(form.getFieldValue('requirePkce'));
     const isActive = Boolean(form.getFieldValue('isActive'));
+    const isPrivateKeyJwt = formData.tokenEndpointAuthMethod === 'private_key_jwt';
+    const jwks = isPrivateKeyJwt && formData.keyMaterialSource === 'jwks' && formData.jwksInputMode === 'manual'
+      ? formData.jwks.trim() || undefined
+      : undefined;
+
+    if (isEditMode && hasLegacyJwksUri && isPrivateKeyJwt && formData.keyMaterialSource === 'jwks' && !jwks) {
+      MessagePlugin.warning('请录入 JWKS 以替换已停用的 JWKS URI');
+      return;
+    }
 
     try {
       setSubmitting(true);
-      const isPrivateKeyJwt = formData.tokenEndpointAuthMethod === 'private_key_jwt';
-      const jwks = isPrivateKeyJwt && formData.keyMaterialSource === 'jwks' && formData.jwksInputMode === 'manual'
-        ? formData.jwks || undefined
-        : undefined;
-      const jwksUri = isPrivateKeyJwt && formData.keyMaterialSource === 'jwks_uri'
-        ? formData.jwksUri || undefined
-        : undefined;
 
       if (isEditMode && editingClient) {
+        // jwks_uri 已停用，不再提交新值；仅在改用 JWKS 或切换认证方式时清空存量配置。
+        const clearLegacyJwksUri = hasLegacyJwksUri && (!isPrivateKeyJwt || Boolean(jwks));
+        const clearJwks = !isPrivateKeyJwt && Boolean(editingClient.jwks);
         const request: UpdateClientRequest = {
           clientName: formData.clientName,
           description: formData.description || undefined,
-          redirectUris: redirectUris.length > 0 ? redirectUris : undefined,
-          postLogoutRedirectUris: postLogoutRedirectUris.length > 0 ? postLogoutRedirectUris : undefined,
+          // 编辑时始终提交完整列表（允许为空），否则后端会保留原有地址，无法删除最后一个回调地址。
+          redirectUris,
+          postLogoutRedirectUris,
           allowedScopes: formData.allowedScopes,
           allowedGrantTypes: formData.allowedGrantTypes,
           apiResourceIds: formData.apiResourceIds,
           requirePkce,
           isActive,
           tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
-          jwks,
-          jwksUri,
+          jwks: clearJwks ? '' : jwks,
+          jwksUri: clearLegacyJwksUri ? '' : undefined,
         };
         const updated = await updateClient(editingClient.id, request);
         setEditingClient(updated);
@@ -417,8 +442,8 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
         clientId: formData.clientId,
         clientName: formData.clientName,
         description: formData.description || undefined,
-        redirectUris: redirectUris.length > 0 ? redirectUris : undefined,
-        postLogoutRedirectUris: postLogoutRedirectUris.length > 0 ? postLogoutRedirectUris : undefined,
+        redirectUris,
+        postLogoutRedirectUris,
         allowedScopes: formData.allowedScopes,
         allowedGrantTypes: formData.allowedGrantTypes,
         apiResourceIds: formData.apiResourceIds,
@@ -426,14 +451,16 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
         tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
         autoGenerateJwks: isPrivateKeyJwt && formData.keyMaterialSource === 'jwks' && formData.jwksInputMode === 'auto_generate',
         jwks,
-        jwksUri,
       };
       const result = await createClient(request);
-      setEditingClient(result.client);
-      setFormData(toFormData(result.client));
-      setGeneratedCredential(result.generatedCredential ?? null);
-      navigate(`/oauth/client-management/edit/${result.client.id}`, { replace: true });
       MessagePlugin.success('应用已创建');
+      if (result.generatedCredential) {
+        // 先弹窗展示一次性凭据，用户确认已保存后再跳转到编辑页，避免页面切换导致凭据丢失。
+        setCreatedClientId(result.client.id);
+        setGeneratedCredential(result.generatedCredential);
+        return;
+      }
+      navigate(`/oauth/client-management/edit/${result.client.id}`, { replace: true });
     } catch (error) {
       console.error('Failed to save client:', error);
       MessagePlugin.error(getRequestErrorMessage(error, isEditMode ? '更新应用失败' : '创建应用失败'));
@@ -442,32 +469,40 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     }
   };
 
-  const renderCredentialCard = () => {
-    if (!generatedCredential || !canManageClientCredentials(formData.tokenEndpointAuthMethod)) {
-      return null;
-    }
-
-    const value = generatedCredential.clientSecret || generatedCredential.privateKeyPem;
-    const title = generatedCredential.privateKeyPem ? 'Private Key' : 'Client Secret';
+  const renderCredentialDialog = () => {
+    const value = generatedCredential?.clientSecret || generatedCredential?.privateKeyPem;
+    const title = generatedCredential?.privateKeyPem ? 'Private Key' : 'Client Secret';
 
     return (
-      <Alert
-        className="client-credential-alert"
-        theme="warning"
-        title={`${title} 已生成`}
-        message={(
-          <>
-            <div className="client-credential-alert__hint">该凭据只会展示一次。请立即复制并安全保存，离开当前页面后将无法再次查看。</div>
-            {generatedCredential.clientSecret && (
-              <Tag theme="primary" variant="light" size="large" className="client-credential-alert__value">{generatedCredential.clientSecret}</Tag>
-            )}
-            {generatedCredential.privateKeyPem && (
-              <Textarea readonly autosize={{ minRows: 10, maxRows: 16 }} value={generatedCredential.privateKeyPem} />
-            )}
-          </>
-        )}
-        operation={<Button variant="outline" onClick={() => copyCredentialValue(value)}>复制 {title}</Button>}
-      />
+      <Dialog
+        visible={Boolean(generatedCredential)}
+        header={`${title} 已生成`}
+        width="640px"
+        closeBtn={false}
+        closeOnOverlayClick={false}
+        closeOnEscKeydown={false}
+        destroyOnClose
+        confirmBtn="我已安全保存"
+        cancelBtn={null}
+        onConfirm={handleCredentialAcknowledged}
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Alert
+            theme="warning"
+            message={`该 ${title} 只会展示这一次，关闭此窗口后将无法再次查看。请立即复制并妥善保存。`}
+          />
+          {value && (
+            <Textarea
+              readonly
+              value={value}
+              autosize={generatedCredential?.privateKeyPem ? { minRows: 10, maxRows: 16 } : { minRows: 2, maxRows: 4 }}
+            />
+          )}
+          <div>
+            <Button variant="outline" onClick={() => void copyCredentialValue(value)}>复制 {title}</Button>
+          </div>
+        </Space>
+      </Dialog>
     );
   };
 
@@ -536,7 +571,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
           <Typography.Paragraph className="client-form-header__description">配置 OAuth/OIDC 应用的基础信息、授权类型、回调地址和客户端认证方式。</Typography.Paragraph>
         </div>
         <div className="client-form-header__actions">
-          {isEditMode && editingClient && canManageClientCredentials(formData.tokenEndpointAuthMethod) && (
+          {isEditMode && editingClient && canResetClientCredential(editingClient.tokenEndpointAuthMethod) && (
             <Popconfirm
               content="重置后旧密钥将立即失效，新密钥只展示一次。确定继续吗？"
               confirmBtn={{ content: '重置', theme: 'primary', size: 'small' }}
@@ -551,7 +586,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
       </div>
 
       {renderClientOverview()}
-      {renderCredentialCard()}
+      {renderCredentialDialog()}
 
       <Loading loading={loadingDetail} text="正在加载应用详情..." className="client-form-loading">
         <Form key={editingClient?.id ?? 'new-client'} ref={formRef} layout="vertical" labelAlign="top" initialData={formData}>
@@ -609,26 +644,34 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
               {formData.tokenEndpointAuthMethod === 'private_key_jwt' && (
                 <div className="client-jwt-material">
                   <Typography.Text strong className="client-form-section__subheading">JWT 客户端认证材料</Typography.Text>
-                  <div className="client-form-fields">
-                    <Form.FormItem label="公钥来源" name="keyMaterialSource">
-                      <Select value={formData.keyMaterialSource} options={keyMaterialSourceOptions} onChange={(value) => handleKeyMaterialSourceChange(value as 'jwks' | 'jwks_uri')} />
-                    </Form.FormItem>
-                    {formData.keyMaterialSource === 'jwks' && (
-                      <Form.FormItem label="JWKS 配置方式" name="jwksInputMode">
-                        <Select value={formData.jwksInputMode} options={jwksInputModeOptions} onChange={(value) => handleJwksInputModeChange(value as 'auto_generate' | 'manual')} />
-                      </Form.FormItem>
-                    )}
-                  </div>
+                  {(hasLegacyJwksUri || !isEditMode) && (
+                    <div className="client-form-fields">
+                      {hasLegacyJwksUri && (
+                        <Form.FormItem label="公钥来源" name="keyMaterialSource">
+                          <Select value={formData.keyMaterialSource} options={keyMaterialSourceOptions} onChange={(value) => handleKeyMaterialSourceChange(value as 'jwks' | 'jwks_uri')} />
+                        </Form.FormItem>
+                      )}
+                      {/* 自动生成密钥对仅在创建时可用；编辑时后端不会生成，只能手动录入公钥 JWKS。 */}
+                      {!isEditMode && formData.keyMaterialSource === 'jwks' && (
+                        <Form.FormItem label="JWKS 配置方式" name="jwksInputMode">
+                          <Select value={formData.jwksInputMode} options={jwksInputModeOptions} onChange={(value) => handleJwksInputModeChange(value as 'auto_generate' | 'manual')} />
+                        </Form.FormItem>
+                      )}
+                    </div>
+                  )}
                   {formData.keyMaterialSource === 'jwks' ? (
                     formData.jwksInputMode === 'manual' ? (
                       <Form.FormItem label="JWKS" name="jwks">
                         <Textarea value={formData.jwks} placeholder="请输入客户端公钥 JWKS JSON" autosize={{ minRows: 4, maxRows: 10 }} onChange={(value) => setFormData((prev) => ({ ...prev, jwks: value }))} />
                       </Form.FormItem>
-                    ) : <Alert className="client-form-help" theme="info" message="自动生成模式下，创建应用时会由后端生成 RSA 密钥对并登记 JWKS，创建成功后会在本页面一次性展示私钥明文。" />
+                    ) : <Alert className="client-form-help" theme="info" message="自动生成模式下，创建应用时会由后端生成 RSA 密钥对并登记 JWKS，创建成功后会弹窗一次性展示私钥明文，请务必在关闭前保存。" />
                   ) : (
-                    <Form.FormItem label="JWKS URI" name="jwksUri">
-                      <Input value={formData.jwksUri} placeholder="请输入客户端 jwks_uri，例如 https://client.example.com/.well-known/jwks.json" onChange={(value) => setFormData((prev) => ({ ...prev, jwksUri: value }))} />
-                    </Form.FormItem>
+                    <>
+                      <Alert className="client-form-help" theme="warning" message="该应用使用已停用的 JWKS URI 配置：服务端不会拉取远程 JWKS，private_key_jwt 认证无法通过。请将公钥来源切换为 JWKS 并录入客户端公钥。" />
+                      <Form.FormItem label="JWKS URI" name="jwksUri">
+                        <Input value={formData.jwksUri} readonly disabled />
+                      </Form.FormItem>
+                    </>
                   )}
                 </div>
               )}
