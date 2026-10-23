@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Demo.Bff.Models;
 
-public record OidcFlowState(string CodeVerifier, string Nonce);
+public record OidcFlowState(string CodeVerifier, string Nonce, DateTimeOffset ExpiresAtUtc);
 
 public record ValidatedIdToken(string? Subject, string? Name, string? PreferredUsername);
 
