@@ -2,7 +2,14 @@
 
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+        <!-- 中文注释：允许在此固定传递依赖版本，用于覆盖存在已知漏洞的间接依赖。 -->
+        <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
     </PropertyGroup>
+
+    <ItemGroup>
+        <!-- MailKit/MimeKit 4.18.0 传递依赖 10.0.0，受 CVE-2026-84008 / CVE-2026-70162 影响，10.0.13 起修复。 -->
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    </ItemGroup>
 
     <ItemGroup>
         <PackageVersion Include="Luck.Framework" Version="2.0.17" />
