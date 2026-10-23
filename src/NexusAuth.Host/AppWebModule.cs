@@ -46,7 +46,6 @@ public class AppWebModule : LuckAppModule
                 client => client.Timeout = TimeSpan.FromSeconds(10))
             .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-        services.AddScoped<EmailAccountService>();
         services.AddOptions<NexusAuthSecurityOptions>()
             .Bind(configuration.GetSection("Security"))
             .Validate(

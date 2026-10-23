@@ -10,14 +10,14 @@ namespace NexusAuth.Host.IntegrationTests;
 
 public sealed class ScimContainerApiTests
 {
-    private static readonly Uri ContainerScimBaseAddress = new("http://localhost:5100/scim/v2/");
-    private const string ReadOnlyToken = "nexusauth-local-scim-read-token-v1";
-    private const string ReadWriteToken = "nexusauth-local-scim-read-write-token-v1";
+    private const string BaseAddressVariable = "NEXUSAUTH_TEST_SCIM_BASE_URL";
+    private const string ReadOnlyTokenVariable = "NEXUSAUTH_TEST_SCIM_READ_TOKEN";
+    private const string ReadWriteTokenVariable = "NEXUSAUTH_TEST_SCIM_READ_WRITE_TOKEN";
     private const string UserSchema = "urn:ietf:params:scim:schemas:core:2.0:User";
     private const string ListSchema = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
     private const string ErrorSchema = "urn:ietf:params:scim:api:messages:2.0:Error";
 
-    [Fact]
+    [ScimContainerFact]
     [Trait("Category", "Container")]
     public async Task Deployed_host_rejects_an_unauthenticated_scim_request()
     {
@@ -30,11 +30,11 @@ public sealed class ScimContainerApiTests
         Assert.Equal("invalidToken", document.RootElement.GetProperty("scimType").GetString());
     }
 
-    [Fact]
+    [ScimContainerFact]
     [Trait("Category", "Container")]
     public async Task Deployed_host_rejects_read_only_credentials_before_model_binding()
     {
-        using var client = CreateClient(ReadOnlyToken);
+        using var client = CreateClient(RequireEnvironmentVariable(ReadOnlyTokenVariable));
         using var request = new HttpRequestMessage(HttpMethod.Post, "Users")
         {
             Content = new StringContent("{", Encoding.UTF8, "application/scim+json")
@@ -47,11 +47,11 @@ public sealed class ScimContainerApiTests
         Assert.Equal("forbidden", document.RootElement.GetProperty("scimType").GetString());
     }
 
-    [Fact]
+    [ScimContainerFact]
     [Trait("Category", "Container")]
     public async Task Deployed_host_supports_the_complete_scim_user_lifecycle()
     {
-        using var client = CreateClient(ReadWriteToken);
+        using var client = CreateClient(RequireEnvironmentVariable(ReadWriteTokenVariable));
         var runId = $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Environment.ProcessId}-{RandomNumberGenerator.GetInt32(100000)}";
         var userName = $"scim.container.{runId}";
         var externalId = $"scim-container-external-{runId}";
@@ -186,10 +186,32 @@ public sealed class ScimContainerApiTests
 
     private static HttpClient CreateClient(string? bearerToken = null)
     {
-        var client = new HttpClient { BaseAddress = ContainerScimBaseAddress };
+        var client = new HttpClient { BaseAddress = GetContainerScimBaseAddress() };
         if (bearerToken is not null)
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
         return client;
+    }
+
+    private static Uri GetContainerScimBaseAddress()
+    {
+        var value = RequireEnvironmentVariable(BaseAddressVariable);
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var baseAddress)
+            || (baseAddress.Scheme != Uri.UriSchemeHttp && baseAddress.Scheme != Uri.UriSchemeHttps)
+            || !string.IsNullOrEmpty(baseAddress.Query)
+            || !string.IsNullOrEmpty(baseAddress.Fragment))
+        {
+            throw new XunitException($"{BaseAddressVariable} must be an absolute HTTP(S) URL without a query or fragment.");
+        }
+
+        if (!baseAddress.AbsolutePath.EndsWith('/'))
+            baseAddress = new Uri(baseAddress.AbsoluteUri + "/", UriKind.Absolute);
+        return baseAddress;
+    }
+
+    internal static string RequireEnvironmentVariable(string name)
+    {
+        return Environment.GetEnvironmentVariable(name)
+            ?? throw new XunitException($"{name} is required.");
     }
 
     private static async Task<HttpResponseMessage> SendScimAsync(
@@ -220,4 +242,25 @@ public sealed class ScimContainerApiTests
         return response.Headers.ETag?.Tag ?? throw new XunitException("SCIM response did not include an ETag.");
     }
 
+}
+
+public sealed class ScimContainerFactAttribute : FactAttribute
+{
+    private static readonly string[] RequiredVariables =
+    [
+        "NEXUSAUTH_TEST_SCIM_BASE_URL",
+        "NEXUSAUTH_TEST_SCIM_READ_TOKEN",
+        "NEXUSAUTH_TEST_SCIM_READ_WRITE_TOKEN"
+    ];
+
+    public ScimContainerFactAttribute()
+    {
+        var missing = RequiredVariables
+            .Where(name => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name)))
+            .ToArray();
+        if (missing.Length > 0)
+        {
+            Skip = $"Set {string.Join(", ", missing)} to run SCIM container integration tests.";
+        }
+    }
 }

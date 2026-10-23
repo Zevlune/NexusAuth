@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Extension;
 
 namespace NexusAuth.Workbench.Api;
 
@@ -25,8 +26,11 @@ public sealed class WorkbenchClientCredentialHostedService(
             return;
         }
 
-        var clientId = configuration["Auth:ClientId"]?.Trim();
-        var clientSecret = configuration["Auth:ClientSecret"]?.Trim();
+        var credentials = WorkbenchClientCredentials.FromConfiguration(
+            configuration["Auth:ClientId"],
+            configuration["Auth:ClientSecret"]);
+        var clientId = credentials.ClientId;
+        var clientSecret = credentials.ClientSecret;
         var redirectUri = configuration["Auth:RedirectUri"]?.Trim();
         var postLogoutRedirectUri = configuration["Auth:PostLogoutRedirectUri"]?.Trim();
         var audience = configuration["Auth:Audience"]?.Trim();

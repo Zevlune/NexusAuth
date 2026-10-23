@@ -1,11 +1,14 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.Authorization;
+using NexusAuth.Application.Services.DeviceAuthorization;
 using NexusAuth.Application.Services.ExternalIdentity;
+using NexusAuth.Application.Services.Security;
 using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
@@ -13,6 +16,7 @@ using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Host.Controllers;
+using NexusAuth.Host.TokenEndpoint;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -64,7 +68,10 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
     public async Task Token_endpoint_derives_assertion_audiences_from_the_configured_issuer_not_the_host_header()
     {
         var inputs = new List<ClientAuthenticationInput>();
-        var controller = CreateTokenController(HardeningClientServices.AcceptingAuthorizeRequests(inputs), tokenService: null!);
+        using var services = TokenControllerServices(
+            HardeningClientServices.AcceptingAuthorizeRequests(inputs),
+            tokenService: null);
+        var controller = CreateTokenController(services);
         controller.HttpContext.Request.Scheme = "http";
         controller.HttpContext.Request.Host = new HostString("evil.example");
         controller.HttpContext.Request.Path = "/connect/token";
@@ -161,7 +168,8 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
             method.Name == nameof(ITokenService.IssueAccessTokenWithMetadataAsync)
                 ? throw new InvalidOperationException("Requested scopes span multiple audiences.")
                 : null);
-        var controller = CreateTokenController(ConfidentialClient(), tokenService, CodeExchange());
+        using var services = TokenControllerServices(ConfidentialClient(), tokenService, CodeExchange());
+        var controller = CreateTokenController(services);
 
         var result = await controller.Token("authorization_code", "web-client", "secret", "code", RedirectUri);
 
@@ -180,7 +188,8 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
             issued++;
             return null;
         });
-        var controller = CreateTokenController(ConfidentialClient(), tokenService, CodeExchange(), policy);
+        using var services = TokenControllerServices(ConfidentialClient(), tokenService, CodeExchange(), policy);
+        var controller = CreateTokenController(services);
 
         var result = await controller.Token("authorization_code", "web-client", "secret", "code", RedirectUri);
 
@@ -213,24 +222,32 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
                 : ClientAuthenticationResult.Failure("invalid_client", "client_secret is required.");
         });
 
-    private TokenController CreateTokenController(
+    private ServiceProvider TokenControllerServices(
         IClientService clientService,
-        ITokenService tokenService,
+        ITokenService? tokenService,
         IAuthorizationService? authorizationService = null,
         TestSecurityPolicy? policy = null)
     {
         var users = HardeningProxy.Create<IUserService>((method, args) =>
             method.Name == nameof(IUserService.FindByIdAsync) && (Guid)args![0]! == user.Id ? user : null);
-        var controller = new TokenController(
-            authorizationService ?? HardeningProxy.Create<IAuthorizationService>((_, _) => null),
-            tokenService,
-            deviceAuthorizationService: null!,
-            clientService,
-            users,
-            (policy ?? new TestSecurityPolicy()).Service,
-            Options.Create(new JwtOptions { Issuer = Issuer + "/" }),
-            weChatMiniProgramLoginService: null!,
-            Options.Create(new WeChatMiniProgramOptions()));
+        var services = new ServiceCollection();
+        services.AddOptions();
+        services.Configure<JwtOptions>(options => options.Issuer = Issuer + "/");
+        services.AddSingleton(clientService);
+        services.AddSingleton(tokenService ?? HardeningProxy.Create<ITokenService>((_, _) => null));
+        services.AddSingleton(authorizationService ?? HardeningProxy.Create<IAuthorizationService>((_, _) => null));
+        services.AddSingleton(users);
+        services.AddSingleton((policy ?? new TestSecurityPolicy()).Service);
+        services.AddSingleton(HardeningProxy.Create<IDeviceAuthorizationService>((_, _) => null));
+        services.AddSingleton(HardeningProxy.Create<IWeChatMiniProgramLoginService>((_, _) => null));
+        services.AddSingleton(HardeningProxy.Create<IUserRepository>((_, _) => null));
+        services.AddTokenGrantStrategies();
+        return services.BuildServiceProvider();
+    }
+
+    private static TokenController CreateTokenController(IServiceProvider services)
+    {
+        var controller = new TokenController(services);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

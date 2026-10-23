@@ -3,10 +3,10 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace NexusAuth.Host;
 
-public class SsoCookieAuthenticationEvents(
+public sealed class SsoCookieAuthenticationEvents(
     ISsoSessionService sessionService,
     IUserService userService,
-    ISecurityPolicyService securityPolicyService) : CookieAuthenticationEvents
+    ISecurityPolicyService securityPolicyService) : CookieAuthenticationEvents, ISsoCookieAuthenticationEvents
 {
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {

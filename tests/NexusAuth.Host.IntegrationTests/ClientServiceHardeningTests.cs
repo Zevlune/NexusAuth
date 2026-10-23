@@ -3,12 +3,14 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Application.Clients;
 using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.DependencyInjection;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -23,7 +25,7 @@ public sealed class ClientServiceHardeningTests
     public async Task Scope_validation_rejects_scopes_spanning_multiple_resource_audiences()
     {
         var client = OAuthClient.Create("api-client", "API", allowedScopes: ["openid", "profile", "orders.api", "billing.api"]);
-        var harness = new ClientServiceHarness(client);
+        using var harness = new ClientServiceHarness(client);
         harness.Resources.Add(ApiResource.Create("orders", "Orders", "orders.api"));
         harness.Resources.Add(ApiResource.Create("billing", "Billing", "billing.api"));
 
@@ -46,7 +48,7 @@ public sealed class ClientServiceHardeningTests
     public async Task Authorize_validation_rejects_malformed_code_challenge(string codeChallenge)
     {
         var client = OAuthClient.Create("web-client", "Web", redirectUris: ["https://client.example/callback"], allowedGrantTypes: ["authorization_code"]);
-        var harness = new ClientServiceHarness(client);
+        using var harness = new ClientServiceHarness(client);
 
         var result = await harness.Service.ValidateClientForAuthorizationAsync(
             "web-client", "https://client.example/callback", "authorization_code", codeChallenge, "S256");
@@ -60,7 +62,7 @@ public sealed class ClientServiceHardeningTests
     public async Task Authorize_validation_accepts_a_well_formed_s256_code_challenge()
     {
         var client = OAuthClient.Create("web-client", "Web", redirectUris: ["https://client.example/callback"], allowedGrantTypes: ["authorization_code"]);
-        var harness = new ClientServiceHarness(client);
+        using var harness = new ClientServiceHarness(client);
 
         var result = await harness.Service.ValidateClientForAuthorizationAsync(
             "web-client", "https://client.example/callback", "authorization_code", ValidChallenge, "S256");
@@ -72,7 +74,7 @@ public sealed class ClientServiceHardeningTests
     public async Task Generating_credentials_is_capped_at_three_active_shared_secrets()
     {
         var client = OAuthClient.Create("secret-client", "Secrets", allowedGrantTypes: ["client_credentials"]);
-        var harness = new ClientServiceHarness(client);
+        using var harness = new ClientServiceHarness(client);
 
         for (var index = 0; index < ClientService.MaxActiveSharedSecrets; index++)
             await harness.Service.GenerateCredentialAsync(client.Id, new GenerateClientCredentialRequest());
@@ -88,7 +90,7 @@ public sealed class ClientServiceHardeningTests
     public async Task Deleting_a_client_invalidates_its_grants_before_removing_it()
     {
         var client = OAuthClient.Create("doomed-client", "Doomed");
-        var harness = new ClientServiceHarness(client);
+        using var harness = new ClientServiceHarness(client);
 
         await harness.Service.DeleteAsync(client.Id);
 
@@ -107,7 +109,7 @@ public sealed class ClientServiceHardeningTests
     public async Task Deactivating_a_client_revokes_its_refresh_tokens()
     {
         var client = OAuthClient.Create("web-client", "Web");
-        var harness = new ClientServiceHarness(client);
+        using var harness = new ClientServiceHarness(client);
 
         await harness.Service.UpdateAsync(client.Id, Update(isActive: true));
         Assert.DoesNotContain("RevokeAllForClientAsync:web-client", harness.Calls);
@@ -120,7 +122,7 @@ public sealed class ClientServiceHardeningTests
     public async Task Resetting_credentials_revokes_refresh_tokens()
     {
         var client = OAuthClient.Create("web-client", "Web");
-        var harness = new ClientServiceHarness(client);
+        using var harness = new ClientServiceHarness(client);
 
         await harness.Service.ResetCredentialAsync(client.Id, new GenerateClientCredentialRequest());
 
@@ -130,7 +132,7 @@ public sealed class ClientServiceHardeningTests
     [Fact]
     public async Task Creating_a_client_with_jwks_uri_is_rejected()
     {
-        var harness = new ClientServiceHarness(null);
+        using var harness = new ClientServiceHarness(null);
 
         var exception = await Assert.ThrowsAsync<ArgumentException>(() => harness.Service.CreateAsync(new CreateClientRequest(
             "pk-client",
@@ -164,7 +166,7 @@ public sealed class ClientServiceHardeningTests
             allowedGrantTypes: ["client_credentials"],
             tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
             jwks: PublicJwks(rsa));
-        var harness = new ClientServiceHarness(client);
+        using var harness = new ClientServiceHarness(client);
         var input = new ClientAuthenticationInput(
             "pk-client",
             null,
@@ -195,6 +197,45 @@ public sealed class ClientServiceHardeningTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal("Client JWK set format is invalid.", result.Error);
+    }
+
+    [Theory]
+    [InlineData("legacy-secret", null, null, true)]
+    [InlineData("legacy-secret", "client_secret_post", null, true)]
+    [InlineData("wrong-secret", null, "Invalid client secret.", false)]
+    [InlineData(null, null, "client_secret is required.", false)]
+    public async Task Legacy_unknown_auth_method_preserves_pr_shared_secret_fallback(
+        string? secret, string? suppliedMethod, string? expectedError, bool expectedSuccess)
+    {
+        var client = OAuthClient.Create("legacy-client", "Legacy");
+        client.ClientSecrets.Add(OAuthClientSecret.CreateSharedSecret(client.Id, "legacy-secret"));
+        typeof(OAuthClient).GetProperty(nameof(OAuthClient.TokenEndpointAuthMethod))!
+            .SetValue(client, "legacy_unknown");
+        using var harness = new ClientServiceHarness(client);
+
+        var result = await harness.Service.AuthenticateClientAsync(
+            new ClientAuthenticationInput("legacy-client", secret, null, null,
+                TokenEndpointAuthMethod: suppliedMethod),
+            requireClientAuthentication: true);
+
+        Assert.Equal(expectedSuccess, result.IsSuccess);
+        Assert.Equal(expectedError, result.Error);
+    }
+
+    [Fact]
+    public async Task Legacy_unknown_auth_method_rejects_assertions()
+    {
+        var client = OAuthClient.Create("legacy-client", "Legacy");
+        typeof(OAuthClient).GetProperty(nameof(OAuthClient.TokenEndpointAuthMethod))!
+            .SetValue(client, "legacy_unknown");
+        using var harness = new ClientServiceHarness(client);
+
+        var result = await harness.Service.AuthenticateClientAsync(
+            new ClientAuthenticationInput("legacy-client", null, OAuthClient.ClientAssertionTypeJwtBearer, "assertion"),
+            requireClientAuthentication: true);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("This client requires client secret authentication.", result.Error);
     }
 
     private static UpdateClientRequest Update(bool? isActive) =>
@@ -237,7 +278,7 @@ public sealed class ClientServiceHardeningTests
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    private sealed class ClientServiceHarness
+    private sealed class ClientServiceHarness : IDisposable
     {
         public ClientServiceHarness(OAuthClient? client)
         {
@@ -304,17 +345,26 @@ public sealed class ClientServiceHardeningTests
             });
             var blacklist = HardeningProxy.Create<ITokenBlacklistRepository>((_, _) => null);
 
+            _serviceProvider = new ServiceCollection()
+                .AddSingleton(blacklist)
+                .AddScopeKeyedServices(typeof(ClientService).Assembly)
+                .BuildServiceProvider();
+
             Service = new ClientService(
                 clients,
                 resources,
-                blacklist,
                 secrets,
                 associations,
                 refreshTokens,
                 codes,
                 devices,
+                _serviceProvider,
                 NullLogger<ClientService>.Instance);
         }
+
+        private readonly ServiceProvider _serviceProvider;
+
+        public void Dispose() => _serviceProvider.Dispose();
 
         public ClientService Service { get; }
 

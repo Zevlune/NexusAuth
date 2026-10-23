@@ -23,6 +23,7 @@ public sealed class WorkbenchGatewayModeTests
 {
     private const string Authority = "https://issuer.example.test";
     private const string Audience = "nexusauth.workbench.api";
+    private const string ClientId = "nexusauth.workbench";
 
     [Fact]
     public async Task Gateway_registers_only_bearer_and_no_interactive_login_services()
@@ -112,7 +113,12 @@ public sealed class WorkbenchGatewayModeTests
         using var client = factory.CreateClient();
         var token = new JwtSecurityToken(
             issuer, audience,
-            [new Claim("sub", "gateway-user"), new Claim("name", "Gateway User"), new Claim("token_use", tokenUse)],
+            [
+                new Claim("sub", "gateway-user"),
+                new Claim("name", "Gateway User"),
+                new Claim("client_id", ClientId),
+                new Claim("token_use", tokenUse),
+            ],
             DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow.AddMinutes(5),
             new SigningCredentials(signingKey, SecurityAlgorithms.RsaSha256));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(token));
@@ -140,7 +146,12 @@ public sealed class WorkbenchGatewayModeTests
         var untrustedKey = new RsaSecurityKey(otherRsa) { KeyId = "test-key" };
         using var factory = CreateFactory(true, signingKey: trustedKey);
         using var client = factory.CreateClient();
-        var claims = new List<Claim> { new("sub", "gateway-user"), new("name", "Gateway User") };
+        var claims = new List<Claim>
+        {
+            new("sub", "gateway-user"),
+            new("name", "Gateway User"),
+            new("client_id", ClientId),
+        };
         if (scenario != "missing-token-use")
             claims.Add(new Claim("token_use", "access_token"));
         var now = DateTime.UtcNow;
@@ -217,7 +228,7 @@ public sealed class WorkbenchGatewayModeTests
                 .UseSetting("Gateway:Enabled", gateway.ToString())
                 .UseSetting("Auth:Authority", Authority)
                 .UseSetting("Auth:Audience", Audience)
-                .UseSetting("Auth:ClientId", "nexusauth.workbench")
+                .UseSetting("Auth:ClientId", ClientId)
                 .UseSetting("Auth:ClientSecret", "test-only-secret")
                 .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
                 .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")

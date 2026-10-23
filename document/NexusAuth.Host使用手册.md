@@ -60,16 +60,15 @@ Host 镜像构建见 [`src/NexusAuth.Host/Dockerfile`](../src/NexusAuth.Host/Doc
 
 ### 2.2 只启动 db 和 sso 的 Compose 流程
 
-仓库根目录的 [`docker-compose.yml`](../docker-compose.yml) 同时定义了 `db`、`sso`、`admin-api` 和 `dashboard`。只启动 Host 所需的数据库和认证服务时，要显式指定 `db` 和 `sso`，并先处理 SMTP 启动前提。当前镜像内的 `Smtp:Enabled` 默认为 `true`，而仓库没有默认 SMTP 密码；如果容器中没有可用的完整 SMTP 配置，Host 会在启动校验阶段失败。启动前二选一：
+仓库根目录的 [`docker-compose.yml`](../docker-compose.yml) 同时定义了 `db`、`sso`、`admin-api` 和 `dashboard`。只启动 Host 所需的数据库和认证服务时，要显式指定 `db` 和 `sso`。当前镜像内的 `Smtp:Enabled` 默认为 `false`，Compose 也通过 `NEXUSAUTH_SMTP_ENABLED=${NEXUSAUTH_SMTP_ENABLED:-false}` 显式保持关闭，因此可以直接启动；需要邮件功能时再配置完整的可用 SMTP。
 
-1. 按 [Host SMTP 配置与发信验证](SMTP发信试验.md) 配置完整的可用 SMTP；
-2. 按该专题创建本地 `docker-compose.smtp.local.yml`，至少包含：
+需要邮件功能时，按 [Host SMTP 配置与发信验证](SMTP发信试验.md) 配置完整的可用 SMTP。启用后任何必需项缺失仍会被 `ValidateOnStart` 立即拒绝。也可以创建本地 `docker-compose.smtp.local.yml`，至少包含：
 
 ```yaml
 services:
   sso:
     environment:
-      NEXUSAUTH_SMTP_ENABLED: "false"
+      NEXUSAUTH_SMTP_ENABLED: "true"
 ```
 
 随后使用显式两个 `-f` 参数启动：
@@ -134,7 +133,7 @@ docker compose up -d db
 
 开发环境配置在 [`src/NexusAuth.Host/appsettings.Development.json`](../src/NexusAuth.Host/appsettings.Development.json) 中指向 `127.0.0.1:33210`。使用的启动配置见 [`src/NexusAuth.Host/Properties/launchSettings.json`](../src/NexusAuth.Host/Properties/launchSettings.json)。
 
-当前源码的默认 SMTP 配置有一个重要启动约束：`Smtp:Enabled` 为 `true`，但仓库默认没有 `Smtp:Password`。SMTP 的 `ValidateOnStart` 会因此阻止 Host 启动。无邮件环境可以先关闭 SMTP：
+当前源码默认关闭 SMTP，可以直接运行。下面的命令显式保留关闭状态，避免从 shell 或本机配置继承意外的启用值：
 
 ```bash
 ASPNETCORE_ENVIRONMENT=Development \
@@ -200,8 +199,8 @@ Jwt__SigningKeys__0__Path=/run/secrets/current.pfx
 | `Jwt:Issuer` | `http://localhost:5100` | 不覆盖 | Compose 默认 `http://localhost:5100` |
 | `Jwt:SigningMode` | `Certificate` | `Certificate` | Host/Compose 默认 `Certificate` |
 | `Jwt:SigningPassword` | 未设置 | `nexusauth-development` | Compose 默认 `nexusauth-compose-dev` |
-| `Smtp:Enabled` | `true` | 不覆盖 | Compose 不显式传 `Enabled`；默认沿用 `true` |
-| `Smtp:Password` | 未设置 | 不覆盖 | Compose 只透传 `NEXUSAUTH_SMTP_PASSWORD` |
+| `Smtp:Enabled` | `false` | 不覆盖 | Compose 显式传入 `NEXUSAUTH_SMTP_ENABLED`，默认 `false` |
+| `Smtp:Password` | 未设置 | 不覆盖 | Compose 透传 `NEXUSAUTH_SMTP_PASSWORD` |
 | `SelfRegistration:Enabled` | `false` | 不覆盖 | launch profile 和 Compose 默认 `true` |
 | `WebAuthn:Enabled` | `false` | 不覆盖 | launch profile 和 Compose 默认 `true` |
 | `WebAuthn:Origins` | `http://localhost:5200` | 不覆盖 | launch profile 和 Compose 默认 `http://localhost:5100` |
@@ -268,29 +267,25 @@ SMTP 配置在 [`src/NexusAuth.Shared/Email/SmtpOptions.cs`](../src/NexusAuth.Sh
 - 验证码有效期为 1 到 60 分钟；
 - 冷却时间不得超过验证码有效期。
 
-当前 `appsettings.json` 把 `Smtp:Enabled` 设为 `true`，但没有提供 `Smtp:Password`。因此无论是否使用邮箱功能，默认直接启动都会在选项校验阶段失败。可以选择：
+当前 `appsettings.json` 和根 Compose 默认把 `Smtp:Enabled` 设为 `false`，无邮件环境可以直接启动。需要邮件功能时显式启用并补齐配置：
 
 ```bash
-export NEXUSAUTH_SMTP_ENABLED=false
-```
-
-或完整提供 SMTP 密码：
-
-```bash
+export NEXUSAUTH_SMTP_ENABLED=true
 export NEXUSAUTH_SMTP_PASSWORD='smtp-authorization-code'
 ```
 
-Compose 的 SMTP 注入范围很窄。根 [`docker-compose.yml`](../docker-compose.yml) 只给 `sso` 容器显式转发了 `NEXUSAUTH_SMTP_PASSWORD`：
+启用状态下，验证器仍会在启动时要求 Host、端口、TLS 模式、用户名、密码和发件地址有效。根 [`docker-compose.yml`](../docker-compose.yml) 给 `sso` 容器显式转发开关和密码：
 
 ```yaml
+NEXUSAUTH_SMTP_ENABLED: ${NEXUSAUTH_SMTP_ENABLED:-false}
 NEXUSAUTH_SMTP_PASSWORD: ${NEXUSAUTH_SMTP_PASSWORD:-}
 ```
 
 因此：
 
-- 在宿主 `.env` 中设置 `NEXUSAUTH_SMTP_PASSWORD`，可以通过 Compose 插值进入容器；
-- 在宿主 `.env` 中设置 `NEXUSAUTH_SMTP_ENABLED=false`、`NEXUSAUTH_SMTP_HOST=...` 等变量，不会自动进入 `sso` 容器，因为没有写进该服务的 `environment`；
-- 如果要在 Compose 中关闭 SMTP 或改 Host、端口、发件人，需要在 Compose override 或服务配置中显式增加相应环境变量，或修改镜像内使用的 `appsettings.json` 后重建镜像。
+- 不设置 `NEXUSAUTH_SMTP_ENABLED` 时，Compose 以 `false` 启动；
+- 设置 `NEXUSAUTH_SMTP_ENABLED=true` 会进入容器并启用验证；
+- 改 Host、端口、用户名或发件人时，仍需在 Compose override 或服务配置中显式增加相应环境变量，或修改镜像内使用的 `appsettings.json` 后重建镜像。
 
 标准双下划线变量如 `Smtp__Enabled=false` 也只有在它们实际传入容器环境时才生效。
 
@@ -1051,15 +1046,35 @@ curl -sS -X PATCH 'http://localhost:5100/scim/v2/Users/<user-id>' \
 
 ### 7.6 SCIM 凭证从哪来
 
-Host 没有 SCIM 凭证管理端点。实际凭证通过 Workbench 管理界面或共享的应用/持久化代码创建。`ScimCredentialService` 默认创建的 scopes 是：
+Host 没有 SCIM 凭证管理端点。实际凭证应通过受保护、需要先登录的 Workbench 创建：打开“应用中心 → SCIM 凭证”（`/oauth/scim-credential-management`），分别创建仅含 `scim:read` 的测试凭证和同时含 `scim:read`、`scim:write` 的测试凭证。原始 token 各自只在创建时显示一次；命名应明确标为测试用途，并设置短有效期，用完后立即在 Workbench 撤销。
+
+默认数据库初始化和根 Compose 都不会写入 SCIM 测试 token。`docker/postgres-init.sh` 只创建数据库并加载 schema；删除 volume 后重新初始化也不会生成公开测试凭据。
+
+`ScimContainerApiTests` 从以下三个进程环境变量读取连接信息，没有默认地址或默认 token：
+
+```text
+NEXUSAUTH_TEST_SCIM_BASE_URL
+NEXUSAUTH_TEST_SCIM_READ_TOKEN
+NEXUSAUTH_TEST_SCIM_READ_WRITE_TOKEN
+```
+
+将从 Workbench 创建时显示的两个 token 仅通过当前测试进程环境传入，例如：
+
+```bash
+NEXUSAUTH_TEST_SCIM_BASE_URL=http://localhost:5100/scim/v2/ \
+NEXUSAUTH_TEST_SCIM_READ_TOKEN='<read-only-token>' \
+NEXUSAUTH_TEST_SCIM_READ_WRITE_TOKEN='<read-write-token>' \
+dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTests.csproj \
+  --filter 'FullyQualifiedName~ScimContainerApiTests'
+```
+
+只要缺少任一变量，这些容器用例会以 xUnit Skip 结束。不要把测试 token 写入仓库 `.env`、Compose `environment` 或数据库初始化脚本。`ScimCredentialService` 默认创建的 scopes 是：
 
 ```text
 scim:read scim:write
 ```
 
 调用方应按最小权限创建只读凭证。原始 token 只在创建时返回一次。
-
-根 Compose 的全新数据库卷还会由 [`docker/postgres-init.sh`](../docker/postgres-init.sh) 写入两个本地集成测试凭证的哈希。它们只用于本地 Compose 和集成测试，原始 token 位于测试代码中，不能用于生产。不要把本地测试凭证当作正式部署的凭证管理方式。
 
 ## 8. 只读 Open API
 
@@ -1152,9 +1167,9 @@ Host 在 [`src/NexusAuth.Host/AppWebModule.cs`](../src/NexusAuth.Host/AppWebModu
 
 先看进程输出和 `logs/nexusauth-sso-*.log`，再检查以下常见原因：
 
-1. `Smtp:Enabled=true` 但没有 `Smtp:Password`。
-   - 无邮件环境：设置 `NEXUSAUTH_SMTP_ENABLED=false`。
-   - 有邮件环境：补全 SMTP 密码和发件人。
+1. 显式设置 `Smtp:Enabled=true`，但 SMTP 配置不完整。
+   - 无邮件环境：删除启用值或设置 `NEXUSAUTH_SMTP_ENABLED=false`。
+   - 有邮件环境：补全 SMTP 主机、用户名、密码和发件人。
 
 2. `BootstrapAdmin:Username` 或 `BootstrapAdmin:Password` 为空。
    - 两项必须同时配置。已有用户不会用新配置密码覆盖。
@@ -1248,8 +1263,8 @@ Host 在 [`src/NexusAuth.Host/AppWebModule.cs`](../src/NexusAuth.Host/AppWebModu
 
 - Host 不提供客户端、API 资源、SCIM 凭证或 Open API 凭证管理端点。
 - Host 不执行数据库自动迁移。
-- 默认 `Smtp:Enabled=true` 且没有密码，不调整配置时无法直接启动。
-- 根 Compose 只向 `sso` 容器转发 SMTP 密码，其他 SMTP 变量不会从宿主 `.env` 自动进入容器。
+- `Smtp:Enabled` 默认 `false`；显式启用后若配置不完整，启动校验会失败。
+- 根 Compose 默认关闭 SMTP，并向 `sso` 转发开关和密码；其他 SMTP 变量不会从宿主 `.env` 自动进入容器。
 - `private_key_jwt` 当前只读取已登记的 JWK Set，不远程下载 `JwksUri`。
 - OIDC 只支持授权码流程，不支持隐式、混合、`request` 或 `request_uri`。
 - SCIM 只实现 User resource，过滤字段有限，不提供 Group。

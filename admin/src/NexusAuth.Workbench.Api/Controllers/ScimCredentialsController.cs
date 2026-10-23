@@ -6,7 +6,7 @@ using NexusAuth.Application.Services.Scim;
 namespace NexusAuth.Workbench.Api.Controllers;
 
 /// <summary>Internal-only management surface. Raw bearer tokens are returned once at creation.</summary>
-[Authorize]
+[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [ApiResultWrap]
 [Route("api/scim-credentials")]

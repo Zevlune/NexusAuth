@@ -1,6 +1,6 @@
 using Luck.Logging.Serilog;
+using Microsoft.Extensions.DependencyInjection;
 using NexusAuth.Application.Clients.Authentication;
-using NexusAuth.Shared.DependencyInjection;
 
 namespace NexusAuth.Application.Clients;
 
@@ -9,9 +9,18 @@ public class ClientService(
     IApiResourceRepository apiResourceRepository,
     IOAuthClientSecretRepository clientSecretRepository,
     IClientApiResourceRepository clientApiResourceRepository,
+    IRefreshTokenRepository refreshTokenRepository,
+    IAuthorizationCodeRepository authorizationCodeRepository,
+    IDeviceAuthorizationRepository deviceAuthorizationRepository,
     IServiceProvider serviceProvider,
     ILogger<ClientService> logger) : IClientService
 {
+    // 中文注释：每个活跃共享密钥都会让一次错误认证多做一次 BCrypt(12) 校验，限制数量以避免未认证的 CPU 放大。
+    public const int MaxActiveSharedSecrets = 3;
+
+    private const string MultipleAudiencesError =
+        "Requested scopes span multiple audiences. Please request one resource audience per token.";
+
     #region OAuth 授权服务 (Host API 使用)
 
     public async Task<OAuthClient> RegisterClientAsync(
@@ -83,10 +92,16 @@ public class ClientService(
         if (hasAssertion && hasSecret)
             return AuthenticationFailure(client.ClientId, "MultipleMethods", "Multiple client authentication methods were supplied.");
 
-        var authenticationStrategy = serviceProvider.ResolveKeyed<IClientAuthenticationStrategy>(
-            client.TokenEndpointAuthMethod);
-        if (authenticationStrategy is null)
-            return AuthenticationFailure(client.ClientId, "WrongAuthMethod", "This client requires client secret authentication.");
+        // Preserve the PR's shared-secret fallback for legacy authentication methods.
+        var strategyKey = client.TokenEndpointAuthMethod switch
+        {
+            OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt
+                or OAuthClient.TokenEndpointAuthMethodClientSecretJwt
+                or OAuthClient.TokenEndpointAuthMethodClientSecretBasic
+                or OAuthClient.TokenEndpointAuthMethodClientSecretPost => client.TokenEndpointAuthMethod,
+            _ => OAuthClient.TokenEndpointAuthMethodNone,
+        };
+        var authenticationStrategy = serviceProvider.GetRequiredKeyedService<IClientAuthenticationStrategy>(strategyKey);
 
         var strategyResult = await authenticationStrategy.AuthenticateAsync(input, client, ct);
         if (!strategyResult.IsSuccess)
@@ -494,6 +509,28 @@ public class ClientService(
             || string.Equals(scope, "phone", StringComparison.Ordinal)
             || string.Equals(scope, "address", StringComparison.Ordinal)
             || string.Equals(scope, "offline_access", StringComparison.Ordinal);
+    }
+
+    private static bool IsWellFormedCodeChallenge(string codeChallenge)
+    {
+        // 中文注释：仅支持 S256，code_challenge = BASE64URL(SHA256(verifier))，长度与字符集按 RFC 7636 §4.2 校验。
+        return codeChallenge.Length is >= 43 and <= 128
+            && codeChallenge.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
+    }
+
+    private static void EnsureSharedSecretCapacity(OAuthClient client, string tokenEndpointAuthMethod)
+    {
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal)
+            || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+            return;
+
+        var activeSharedSecrets = client.ClientSecrets.Count(secret =>
+            secret.IsActive && string.Equals(secret.Type, OAuthClientSecret.TypeSharedSecret, StringComparison.Ordinal));
+        if (activeSharedSecrets >= MaxActiveSharedSecrets)
+        {
+            throw new InvalidOperationException(
+                $"A client can have at most {MaxActiveSharedSecrets} active shared secrets. Reset the client credential to replace them.");
+        }
     }
 
     private static GeneratedCredential GenerateCredential(Guid clientId, string tokenEndpointAuthMethod, bool? autoGenerateJwks, string? description)

@@ -21,6 +21,3 @@ public enum ScimCredentialValidationResult
     InsufficientScope,
     Granted,
 }
-
-public sealed record ScimCredentialCreated(ScimCredentialSummary Credential, string Token);
-public sealed record ScimCredentialSummary(Guid Id, string Name, IReadOnlyList<string> Scopes, bool IsActive, DateTimeOffset? ExpiresAt, DateTimeOffset? LastUsedAt, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt);

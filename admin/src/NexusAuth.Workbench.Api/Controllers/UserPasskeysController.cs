@@ -8,7 +8,7 @@ using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
-[Authorize]
+[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [ApiResultWrap]
 [Route("api/users/{id:guid}/passkeys")]
@@ -41,10 +41,8 @@ public sealed class UserPasskeysController(IPasskeyManagementService passkeys, I
     private Guid ActorId => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id)
         ? id : Guid.Empty;
 
-    // The project currently identifies its bootstrap administrator through
-    // IsSystemAccount; a logged-in ordinary user is not an administrator.
-    private async Task<bool> IsAdministratorAsync(CancellationToken ct) =>
-        ActorId != Guid.Empty && await users.FindByIdAsync(ActorId, ct) is { IsActive: true, IsSystemAccount: true };
+    private Task<bool> IsAdministratorAsync(CancellationToken ct) =>
+        WorkbenchAdministratorAuthorizationHandler.IsAdministratorAsync(User, users, HttpContext, ct);
 }
 
 public sealed record RevokePasskeyRequest([Required, StringLength(500)] string Reason);

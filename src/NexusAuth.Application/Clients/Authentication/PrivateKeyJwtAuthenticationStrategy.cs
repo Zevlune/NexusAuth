@@ -15,8 +15,8 @@ internal class PrivateKeyJwtAuthenticationStrategy(
     protected override ClientAssertionValidationResult ValidateAssertion(
         string assertionJwt,
         OAuthClient client,
-        string expectedAudience)
+        IReadOnlyCollection<string> expectedAudiences)
     {
-        return ClientPrivateKeyJwtValidator.Validate(assertionJwt, client, expectedAudience);
+        return ClientPrivateKeyJwtValidator.Validate(assertionJwt, client, expectedAudiences);
     }
 }

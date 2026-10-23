@@ -82,10 +82,11 @@ Workbench 的默认模式（BFF 模式）需要 Host 提供 OIDC 登录。请先
 - Host 的 `Jwt:Issuer` 与 Workbench 配置的 `Auth:Authority` 一致，因为 Workbench 同时用它做浏览器跳转和 issuer 校验。
 - Workbench API 所在进程能访问 Host 的令牌和内省端点；容器或跨网段时用 `Auth:BackchannelAuthority` 指向内部地址。
 
-Host 源码方式的启动有一个必须注意的前提：仓库当前的 `src/NexusAuth.Host/appsettings.json` 默认 `Smtp.Enabled=true`，但 `Smtp.Password` 为空。Host 的 SMTP 选项以 `ValidateOnStart` 在启动时校验，缺 `Smtp.Password` 会直接启动失败。源码方式运行 Host 时必须二选一：
+Host 源码方式默认关闭 SMTP，因此没有邮件配置也能启动。只有需要邮件功能时，才显式设置 `NEXUSAUTH_SMTP_ENABLED=true` 并提供完整配置；启用后 `ValidateOnStart` 仍会在任何必需项缺失时立即阻止启动：
 
 ```bash
 # 方式一：提供完整可用的 SMTP 配置，并配置初始管理员
+NEXUSAUTH_SMTP_ENABLED=true \
 NEXUSAUTH_SMTP_PASSWORD=你的授权码 \
 NEXUSAUTH_SMTP_HOST=smtp.example.com \
 NEXUSAUTH_SMTP_PORT=465 \
@@ -96,20 +97,14 @@ NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME=admin \
 NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD=请替换为强密码 \
 dotnet run --project src/NexusAuth.Host
 
-# 方式二：本地不验证邮件时，显式关闭 SMTP（初始管理员仍必填）
+# 方式二：本地不验证邮件时保持默认关闭（初始管理员仍必填）
 NEXUSAUTH_SMTP_ENABLED=false \
 NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME=admin \
 NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD=请替换为强密码 \
 dotnet run --project src/NexusAuth.Host
 ```
 
-Compose 方式下根 `docker-compose.yml` 只为 Host 显式转发了 `NEXUSAUTH_SMTP_PASSWORD`。也就是说，`Smtp.Enabled`、Host、端口等仍取 `appsettings.json`，将 `NEXUSAUTH_SMTP_ENABLED=false` 写进根目录 `.env` **不能**关闭容器内 SMTP：`.env` 只提供变量替换值，进入容器的键必须在 Compose 的 `environment:` 里出现。正确做法是新建本地覆盖文件（如 `docker-compose.smtp.local.yml`），在 `sso.environment` 里写入 `NEXUSAUTH_SMTP_ENABLED: "false"`，然后带上该文件启动整套服务：
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up --build
-```
-
-覆盖文件的完整写法和真实 SMTP 参数见 [SMTP 配置与发信验证](SMTP发信试验.md) 第 3 节。不要用 `docker compose run` 临时改环境变量当作启动方式。
+Compose 方式下 `docker-compose.yml` 显式传入 `NEXUSAUTH_SMTP_ENABLED=${NEXUSAUTH_SMTP_ENABLED:-false}`，所以默认不启用邮件。需要邮件时，可按 [SMTP 配置与发信验证](SMTP发信试验.md) 第 3 节设置 `NEXUSAUTH_SMTP_ENABLED=true`，并用 Compose override 提供完整 SMTP 配置。
 
 ## 3. 用根目录 Docker Compose 启动
 
@@ -117,13 +112,13 @@ docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up --build
 
 ### 3.1 一套命令启动全部
 
-Host 镜像内 `appsettings.json` 默认 `Smtp.Enabled=true`；除非已补齐真实的 SMTP 用户名、密码和发件地址，否则需要带上本地覆盖文件（写法见 [SMTP 配置与发信验证](SMTP发信试验.md) 第 3 节）：
+Host 镜像内 `appsettings.json` 和 Compose 默认关闭 SMTP，无邮件配置也可以启动整套服务：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up --build
+docker compose up --build
 ```
 
-如果生产 Compose 已经通过 Secret 提供了完整 SMTP 配置，可以省略第二个 `-f`，直接 `docker compose up --build`。本文后续命令统一带两个 `-f` 参数，保持与本地覆盖一致。
+需要邮件功能时，设置 `NEXUSAUTH_SMTP_ENABLED=true` 并按 [SMTP 配置与发信验证](SMTP发信试验.md) 第 3 节提供完整配置。
 
 会启动四个服务：
 
@@ -140,7 +135,7 @@ Compose 为 Workbench API 注入的关键值（见根 `docker-compose.yml` 的 `
 
 - `Auth:Authority` 取 `${NEXUSAUTH_JWT_ISSUER:-http://localhost:5100}`，与 Host 的 issuer 对齐；
 - `Auth:BackchannelAuthority` 默认 `http://sso:8080`，让容器内的服务端请求走 Compose 网络；
-- `Auth:RedirectUri` 默认 `http://localhost:5560/signin-oidc`，`Auth:PostLogoutRedirectUri` 默认 `http://localhost:5560/`；
+- `Auth:RedirectUri` 默认 `http://localhost:5560/signin-oidc`；`Auth:PostLogoutRedirectUri` 默认 `http://localhost:5560/`，可通过 `NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI` 覆盖；
 - `Auth:ClientSecret` 由 `${WORKBENCH_CLIENT_SECRET:-c57cf0e110c54ad2ac5591b99801b852}` 注入；
 - 连接串与 Bootstrap 名称也由环境变量提供。
 
@@ -149,9 +144,9 @@ Compose 为 Workbench API 注入的关键值（见根 `docker-compose.yml` 的 `
 ### 3.2 拆分启动
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up --build -d db sso admin-api dashboard
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml logs -f admin-api
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml down
+docker compose up --build -d db sso admin-api dashboard
+docker compose logs -f admin-api
+docker compose down
 ```
 
 `admin-api` 依赖 `db` 健康且 `sso` 健康后才启动；`dashboard` 依赖 `admin-api` 健康。已有数据卷时，`db` 的健康检查仍会通过，但初始化脚本不会再跑。需要重建数据库时删除卷 `nexusauth-db-data`（会丢数据，谨慎操作）。
@@ -249,6 +244,7 @@ npm --prefix admin/src/NexusAuth.Workbench.Dashboard run dev
 | `Auth:RequireHttpsMetadata` | `false` | 是否强制 Discovery 用 HTTPS，生产应设 `true` |
 | `Auth:ClientId` | `nexusauth.workbench` | Workbench 客户端 ID |
 | `Auth:ClientSecret` | 空 | 机密客户端密钥，必须通过环境变量或 Secret 注入 |
+| `Auth:AllowedBearerClientIds` | 空数组 | 额外允许的 Bearer 客户端 ID；始终允许 `Auth:ClientId` |
 | `Auth:RedirectUri` | `http://localhost:5051/signin-oidc` | 登录回调 |
 | `Auth:PostLogoutRedirectUri` | `http://localhost:5273/` | 登出后回到的前端地址 |
 | `Auth:Scope` | `openid profile offline_access nexusauth.workbench.api` | 申请的 scope |
@@ -284,6 +280,8 @@ Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便
 `NEXUSAUTH_LUCK_LOGGING_*` 覆盖 `LuckLogging:*` 日志配置。未列入单下划线映射的键可以用标准 .NET 双下划线形式（例如 `Auth__BackchannelAuthority`），或者由编排直接注入配置键。
 
 启动时 `RequireAuthConfiguration` 会集中校验：`Authority` 必须是非空绝对 HTTP(S) URI；非网关模式下 `RedirectUri`、`PostLogoutRedirectUri`、`Scope` 必须有值；`BackchannelAuthority` 必须是合法的绝对 HTTP(S) 基础地址（不含用户信息、查询、片段）。任何一项不满足都会抛出异常并阻止启动。
+
+`Auth:ClientId` 和 `Auth:ClientSecret` 的配置首尾空白在启动校验、Bootstrap 和协议调用中统一去除；内部空格与其他字符保持原样。发送 Basic 认证时，ID 与密钥分别做表单编码后再拼接和 Base64 编码。
 
 ### 5.3 公开 Authority 与 BackchannelAuthority 的区别
 
@@ -464,6 +462,18 @@ Dashboard 的菜单和路由都由 `src/api/auth.ts` 里的菜单定义动态生
 - 更新可改名称、scope、过期时间和启用状态；撤销调用 `POST /api/scim-credentials/{id}/revoke`。
 - 对应的 Host 端（按 HTTP 方法分档）：`GET /scim/v2/ServiceProviderConfig`、`GET /scim/v2/ResourceTypes`、`GET /scim/v2/Schemas`、`GET /scim/v2/Schemas/{id}`、`GET /scim/v2/Users`、`GET /scim/v2/Users/{id}` 需要 `scim:read`；`POST /scim/v2/Users`、`PUT /scim/v2/Users/{id}`、`PATCH /scim/v2/Users/{id}`、`DELETE /scim/v2/Users/{id}` 需要 `scim:write`。只带 `scim:read` 的凭证调用写方法会返回 403。
 
+运行仓库的 SCIM 容器回归时，先登录受保护的 Workbench，不要复用正式集成凭据。分别创建名为 `scim-container-read`（仅 `scim:read`）和 `scim-container-read-write`（`scim:read` + `scim:write`）的短有效期测试凭据，把创建时各显示一次的 token 仅传入测试进程：
+
+```bash
+NEXUSAUTH_TEST_SCIM_BASE_URL=http://localhost:5100/scim/v2/ \
+NEXUSAUTH_TEST_SCIM_READ_TOKEN='<read-only-token>' \
+NEXUSAUTH_TEST_SCIM_READ_WRITE_TOKEN='<read-write-token>' \
+dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTests.csproj \
+  --filter 'FullyQualifiedName~ScimContainerApiTests'
+```
+
+缺少任一变量时测试会以 xUnit Skip 结束。默认 Compose、`postgres-init.sh` 和已有数据库卷都不会恢复或播种固定测试 token；测试结束后在 Workbench 撤销专用凭据。
+
 ### 9.7 开放 API 凭证
 
 入口：“应用中心 → 开放 API 凭据”（`/oauth/open-api-credential-management`）。开放 API 凭证用于机器读取 **Host** 的只读目录接口。
@@ -480,29 +490,29 @@ Dashboard 的菜单和路由都由 `src/api/auth.ts` 里的菜单定义动态生
 
 ## 10. 权限边界
 
-这一点必须区分清楚：**Workbench 管理接口并非全部是“系统管理员专属”**。当前实现分两档。
+全部 Workbench 管理控制器统一使用 `WorkbenchAdministrator` 策略。请求必须已认证，并且其 `sub`（或 `NameIdentifier`）对应数据库中启用的系统账号，即 `IsActive=true` 且 `IsSystemAccount=true`。匿名请求返回 401，普通用户或不满足条件的账号返回 403。
 
-第一档：普通已登录用户即可访问（控制器只标 `[Authorize]`，默认策略没有额外要求）：
+策略覆盖下列入口及其全部读写操作：
 
-- `/api/clients`（应用管理）：查询、创建、更新、凭据生成/重置、删除；
-- `/api/api-resources`（服务资源）：查询、创建、更新、启停、删除；
-- `/api/client-metadata`：读取客户端元数据；
-- `/api/login-audits`：查询登录审计；
-- `/api/scim-credentials`：SCIM 凭证查询、创建、更新、撤销；
-- `/api/open-api-credentials`：开放 API 凭证查询、创建、更新、撤销。
+- `/api/clients`、`/api/api-resources`、`/api/client-metadata`；
+- `/api/login-audits`、`/api/scim-credentials`、`/api/open-api-credentials`；
+- `/api/users`、`/api/users/{id}/passkeys`。
 
-只要持有有效的 Workbench Cookie 或合法的 Workbench Bearer access token，就能调用这些接口。
+权限由 `WorkbenchAdministratorAuthorizationHandler` 在每次授权时查库确认。系统账号对象本身的修改与删除保护仍由用户管理服务执行。
 
-第二档：额外要求操作者是启用的系统账号（`IsSystemAccount=true`），否则返回 403：
+`/api/auth` 登录相关入口保持原有行为；`/api/auth/me` 对已认证用户返回 `isAdministrator`，Dashboard 用于展示无管理权限提示。客户端提示不能代替服务端策略。
 
-- `/api/users` 全部操作（查询、创建、更新、启停、重置密码、删除、吊销 token）；
-- `/api/users/{id}/passkeys`（查看与撤销 Passkey）。
+Bearer 在 BFF 和网关模式下都校验 issuer、audience、有效期及 `token_use=access_token`，随后要求 `client_id` 属于允许列表，再调用 `IUserTokenValidator.IsActiveAsync` 检查用户和吊销状态。默认允许归一化后的 `Auth:ClientId`；其他调用方必须显式加入 `Auth:AllowedBearerClientIds` 数组，例如：
 
-判断逻辑见 `UsersController.ExecuteAsync` 与 `UserPasskeysController.IsAdministratorAsync`：从声明中取 `sub`，再回库确认该用户 `IsActive=true`、`IsSystemAccount=true`；系统账号对象本身受保护，不能被这些接口改写或删除。
+```json
+{
+  "Auth": {
+    "AllowedBearerClientIds": ["my-gateway-client"]
+  }
+}
+```
 
-也就是说，SCIM 凭证、开放 API 凭证、应用管理、服务资源、审计和客户端元数据当前对**任何已登录用户**开放；只有用户与 Passkey 管理是系统管理员专属。生产环境如果要收紧，需要自行在控制器或授权策略层增加校验，不要把“已登录”当成“系统管理员”。
-
-Bearer 校验（两种模式都适用）要求：issuer、audience、有效期正确，`token_use=access_token`（ID Token 会被拒绝），并且回调里调用 `IUserTokenValidator.IsActiveAsync` 校验 token 未被吊销、用户仍启用。
+也可设置标准 .NET 环境变量 `Auth__AllowedBearerClientIds__0=my-gateway-client`。缺少或不匹配的 `client_id` 返回 401；允许列表不会授予普通用户管理权限。
 
 ## 11. 网关模式边界
 
@@ -514,7 +524,7 @@ Bearer 校验（两种模式都适用）要求：issuer、audience、有效期�
 - 自身 Bootstrap 仍会登记资源、客户端和密钥，但网关模式下客户端不开放 grant、登录回调或登出回调（`grantTypes`、`redirectUris`、`postLogoutRedirectUris` 为空），避免和网关登录客户端冲突。
 - `Auth:RedirectUri`、`Auth:PostLogoutRedirectUri`、`Auth:Scope` 在网关模式下不再是必填；`Auth:Authority`、`Auth:Audience`、`Auth:ClientId`、`Auth:ClientSecret` 和 Bootstrap 名称仍需配置。
 
-网关必须自己负责浏览器登录、回调、刷新和登出，并把 access token 以 Bearer 形式转发给 Workbench API。根目录 Compose 里的 Dashboard 仍然是 BFF 登录模式，**不会**随这个开关自动切换到网关登录；只改 API 配置会让 Dashboard 的登录端点 404。网关登录客户端需要另行在 Dashboard 创建，不能复用 Workbench 默认客户端。切换回非网关模式会恢复默认客户端的授权码和刷新配置。
+网关必须自己负责浏览器登录、回调、刷新和登出，并把 access token 以 Bearer 形式转发给 Workbench API。根目录 Compose 里的 Dashboard 仍然是 BFF 登录模式，**不会**随这个开关自动切换到网关登录；只改 API 配置会让 Dashboard 的登录端点 404。网关登录客户端需要另行在 Dashboard 创建，不能复用 Workbench 默认客户端；同时将其 ID 加入 `Auth:AllowedBearerClientIds`。切换回非网关模式会恢复默认客户端的授权码和刷新配置。
 
 APISIX 相关对接见 [APISIX 网关对接手册](13-APISIX网关对接手册.md)。
 
@@ -556,8 +566,8 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 | 浏览器登录后立刻跳回登录页 | 回调地址、Issuer 或 Cookie 域不一致 | 核对第 4.4 节的四处地址，确认 `Authority` 与 Host issuer 一致 |
 | 本地 Dashboard 请求失败，命中内网地址 | Vite 代理仍是 `192.168.31.200:9100` | 把 `vite.config.ts` 的 `/api`、`/signin-oidc` 目标改成实际 API |
 | API 报无法访问 Provider Discovery | 服务端访问不到公开 Authority | 配置 `Auth:BackchannelAuthority` 指向内部地址 |
-| Bearer 调用返回 401 | audience/issuer 不匹配、token 过期或不是 access_token | 核对 `Auth:Audience` 与资源 audience、issuer、`token_use` |
-| 用户接口返回 403 | 操作者不是启用的系统账号 | 用 `IsSystemAccount=true` 的账号登录（见第 10 节） |
+| Bearer 调用返回 401 | audience/issuer/client_id 不匹配、token 过期或不是 access_token | 核对 audience、issuer、`token_use` 与客户端允许列表 |
+| 管理接口返回 403 | 操作者不是启用的系统账号 | 用 `IsSystemAccount=true` 的账号登录（见第 10 节） |
 | 多实例下用户随机被登出 | Data Protection key ring 未共享 | 共享并持久化 key ring |
 | 网关模式后 `/api/auth/login` 返回 404 | 这是网关模式的预期行为 | 由网关实现登录，或关闭网关模式 |
 | 无法查看已创建的 SCIM/开放 API 凭证明文 | 明文只在创建时返回一次 | 重新创建凭证并立即保存 |

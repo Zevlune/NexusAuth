@@ -11,7 +11,7 @@ using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Application.Services.Email;
 
-public class EmailAccountService(
+public sealed class EmailAccountService(
     IUserRepository users, IUserService userService, IEmailVerificationCodeService codes,
     ISecurityPolicyService policy, ITotpService totp, ITokenService tokens, ISsoSessionService sessions,
     ILogger<EmailAccountService> logger) : IEmailAccountService

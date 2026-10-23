@@ -4,6 +4,7 @@ using Luck.Framework.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
 using NexusAuth.Persistence;
@@ -50,6 +51,13 @@ public class WorkbenchApiModule : LuckAppModule
             scope,
             audience,
             gatewayEnabled);
+        var allowedBearerClientIds = configuration
+            .GetSection("Auth:AllowedBearerClientIds")
+            .GetChildren()
+            .Select(entry => entry.Value?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.Ordinal);
+        allowedBearerClientIds.Add(requiredAuthConfiguration.ClientId);
 
         if (!gatewayEnabled)
         {
@@ -135,6 +143,14 @@ public class WorkbenchApiModule : LuckAppModule
                             return;
                         }
 
+                        var tokenClientId = context.Principal?.FindFirst("client_id")?.Value;
+                        if (string.IsNullOrWhiteSpace(tokenClientId)
+                            || !allowedBearerClientIds.Contains(tokenClientId))
+                        {
+                            context.Fail("The token was issued to an unauthorized client.");
+                            return;
+                        }
+
                         var validator = context.HttpContext.RequestServices.GetRequiredService<IUserTokenValidator>();
                         if (context.Principal is null || !await validator.IsActiveAsync(context.Principal, context.HttpContext.RequestAborted))
                             context.Fail("The token has been revoked or the user is inactive.");
@@ -142,7 +158,11 @@ public class WorkbenchApiModule : LuckAppModule
                 };
             });
 
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+            options.AddPolicy(WorkbenchAuthorizationPolicies.Administrator, policy => policy
+                .RequireAuthenticatedUser()
+                .AddRequirements(new WorkbenchAdministratorRequirement())));
+        services.AddScoped<IAuthorizationHandler, WorkbenchAdministratorAuthorizationHandler>();
         services.Configure<WorkbenchBootstrapOptions>(configuration.GetSection(WorkbenchBootstrapOptions.SectionName));
         services.AddHostedService<WorkbenchClientCredentialHostedService>();
 
@@ -190,11 +210,12 @@ public class WorkbenchApiModule : LuckAppModule
         if (errors.Count > 0)
             throw new InvalidOperationException(string.Join(" ", errors));
 
+        var credentials = WorkbenchClientCredentials.FromConfiguration(clientId, clientSecret);
         return new RequiredAuthConfiguration(
             authority ?? throw new InvalidOperationException("Authority is required."),
             backchannelAuthority,
-            clientId ?? throw new InvalidOperationException("ClientId is required."),
-            clientSecret ?? throw new InvalidOperationException("ClientSecret is required."),
+            credentials.ClientId,
+            credentials.ClientSecret,
             redirectUri ?? string.Empty,
             postLogoutRedirectUri ?? string.Empty,
             scope ?? string.Empty);

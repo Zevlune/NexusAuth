@@ -11,6 +11,7 @@ public class AuthorizationCodeGrantStrategy(
     ITokenService tokenService,
     IClientService clientService,
     IUserService userService,
+    ISecurityPolicyService securityPolicyService,
     IOptions<JwtOptions> jwtOptions)
     : ITokenGrantStrategy
 {
@@ -41,28 +42,39 @@ public class AuthorizationCodeGrantStrategy(
         if (!result.IsSuccess)
             return new BadRequestObjectResult(new { error = "invalid_grant", error_description = result.Error });
 
-        if ((await userService.FindByIdAsync(result.UserId, ct))?.IsActive != true)
+        var user = await userService.FindByIdAsync(result.UserId, ct);
+        if (user is not { IsActive: true } || !securityPolicyService.CheckUser(user).IsSuccess)
             return new BadRequestObjectResult(new { error = "invalid_grant", error_description = "The user account is no longer active." });
 
-        var accessTokenResult = await tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId, result.Scope, null, result.UserId, result.ClaimsJson, ct);
-        var refreshToken = ShouldIssueRefreshToken(result.Scope)
-            ? await tokenService.IssueRefreshTokenAsync(result.ClientId, result.UserId, result.Scope, ct)
-            : null;
-        var includeIdToken = result.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
+        TokenIssueResult accessTokenResult;
+        string? refreshToken;
         string? idToken = null;
-        if (includeIdToken)
+        try
         {
-            // 中文注释：授权码里已经保存了 OIDC 上下文，这里在换 token 时继续带到 id_token 里。
-            idToken = await tokenService.IssueIdTokenAsync(
-                result.ClientId,
-                result.UserId,
-                result.Nonce,
-                accessTokenResult.AccessToken,
-                result.ClaimsJson,
-                result.AuthenticatedAt,
-                result.Acr,
-                result.Amr,
-                ct);
+            accessTokenResult = await tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId, result.Scope, null, result.UserId, result.ClaimsJson, ct);
+            refreshToken = ShouldIssueRefreshToken(result.Scope)
+                ? await tokenService.IssueRefreshTokenAsync(result.ClientId, result.UserId, result.Scope, ct)
+                : null;
+            var includeIdToken = result.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
+            if (includeIdToken)
+            {
+                // 中文注释：授权码里已经保存了 OIDC 上下文，这里在换 token 时继续带到 id_token 里。
+                idToken = await tokenService.IssueIdTokenAsync(
+                    result.ClientId,
+                    result.UserId,
+                    result.Nonce,
+                    accessTokenResult.AccessToken,
+                    result.ClaimsJson,
+                    result.AuthenticatedAt,
+                    result.Acr,
+                    result.Amr,
+                    ct);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // 中文注释：授权码已经被消费，签发失败时返回 OAuth 错误 JSON 而不是框架 500。
+            return TokenIssuanceFailed();
         }
 
         return new OkObjectResult(new

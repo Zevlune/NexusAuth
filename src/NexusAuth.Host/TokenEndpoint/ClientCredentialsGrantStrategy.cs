@@ -52,13 +52,21 @@ public class ClientCredentialsGrantStrategy(
         if (!scopeValidation.IsSuccess)
             return new BadRequestObjectResult(new { error = scopeValidation.ErrorCode ?? "invalid_scope", error_description = scopeValidation.Error });
 
-        var accessToken = await tokenService.IssueAccessTokenAsync(
-            clientAuthentication.Client.ClientId,
-            scopeValidation.NormalizedScope!,
-            null,
-            null,
-            null,
-            ct);
+        string accessToken;
+        try
+        {
+            accessToken = await tokenService.IssueAccessTokenAsync(
+                clientAuthentication.Client.ClientId,
+                scopeValidation.NormalizedScope!,
+                null,
+                null,
+                null,
+                ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new BadRequestObjectResult(new { error = "invalid_scope", error_description = ex.Message });
+        }
 
         return new OkObjectResult(new
         {

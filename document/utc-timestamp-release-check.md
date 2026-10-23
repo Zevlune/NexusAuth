@@ -59,4 +59,4 @@ dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTest
 
 重新构建并发布 SSO Host 和 Workbench API，两者均使用本次修改的 Domain/Persistence 程序集。只重启旧镜像不会应用修复。此次时间修复无需重新初始化已有数据库。
 
-真实生产环境的证书、邮件和对外 HTTPS 地址没有在本次验证中接入。部署示例 `deploy/direct/sso.env.example` 为本地快速启动而设置 `ASPNETCORE_ENVIRONMENT=Development`；生产部署须按现有快速启动文档的生产切换步骤设置 `Production`，预置受管签名材料及其路径和密码。Host 默认启用 SMTP，因此还须提供有效邮件配置，否则启动校验会拒绝缺少的 `Smtp:Password`。
+真实生产环境的证书、邮件和对外 HTTPS 地址没有在本次验证中接入。部署示例 `deploy/direct/sso.env.example` 为本地快速启动而设置 `ASPNETCORE_ENVIRONMENT=Development`；生产部署须按现有快速启动文档的生产切换步骤设置 `Production`，预置受管签名材料及其路径和密码。Host 默认关闭 SMTP；只有显式设置 `NEXUSAUTH_SMTP_ENABLED=true` 时才需要提供完整邮件配置，否则启动校验会拒绝缺失的必需项。

@@ -1,4 +1,5 @@
 * text=auto eol=crlf
+*.sh text eol=lf
 *.cs text working-tree-encoding=UTF-8
 *.csproj text working-tree-encoding=UTF-8
 *.props text working-tree-encoding=UTF-8

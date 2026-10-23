@@ -20,6 +20,14 @@ public class OpenIdController(
     IOptions<JwtOptions> jwtOptions,
     IOptions<WeChatMiniProgramOptions>? weChatOptions = null) : ControllerBase
 {
+    private readonly ITokenSigningCredentialsProvider _signingCredentialsProvider = signingCredentialsProvider;
+    private readonly IIdTokenHintValidator _idTokenHintValidator = idTokenHintValidator;
+    private readonly ITokenService _tokenService = tokenService;
+    private readonly IUserService _userService = userService;
+    private readonly IClientService _clientService = clientService;
+    private readonly IDeviceAuthorizationService _deviceAuthorizationService = deviceAuthorizationService;
+    private readonly ISsoSessionService _sessionService = sessionService;
+    private readonly IAntiforgery _antiforgery = antiforgery;
     private readonly JwtOptions _jwtOptions = jwtOptions.Value;
     private static readonly HashSet<string> BaseUserInfoClaims =
     [
@@ -67,7 +75,7 @@ public class OpenIdController(
                 "urn:ietf:params:oauth:grant-type:device_code",
             }.Concat(weChatOptions?.Value.Enabled == true ? [WeChatMiniProgramGrantTypes.GrantType] : Array.Empty<string>()),
             subject_types_supported = new[] { "public" },
-            id_token_signing_alg_values_supported = new[] { signingCredentialsProvider.Algorithm },
+            id_token_signing_alg_values_supported = new[] { _signingCredentialsProvider.Algorithm },
             token_endpoint_auth_methods_supported = new[] { "client_secret_post", "client_secret_basic", "client_secret_jwt", "private_key_jwt" }
                 .Concat(weChatOptions?.Value.Enabled == true ? ["none"] : Array.Empty<string>()),
             token_endpoint_auth_signing_alg_values_supported = new[] { "HS256", "RS256" },
@@ -90,7 +98,7 @@ public class OpenIdController(
     [HttpGet("/.well-known/jwks.json")]
     public IActionResult Jwks()
     {
-        return Ok(new { keys = signingCredentialsProvider.GetJwks() });
+        return Ok(new { keys = _signingCredentialsProvider.GetJwks() });
     }
 
     /// <summary>
@@ -111,7 +119,7 @@ public class OpenIdController(
         if (string.IsNullOrWhiteSpace(bearerToken))
             return Unauthorized(new { error = "invalid_token", error_description = "Bearer token is required." });
 
-        var introspection = await tokenService.IntrospectAsync(bearerToken, ct);
+        var introspection = await _tokenService.IntrospectAsync(bearerToken, ct);
         if (!introspection.Active)
             return Unauthorized(new { error = "invalid_token", error_description = "Access token is invalid." });
 
@@ -121,7 +129,7 @@ public class OpenIdController(
         if (!Guid.TryParse(introspection.Subject, out var userId))
             return Unauthorized(new { error = "invalid_token", error_description = "Access token does not represent a user." });
 
-        var user = await userService.FindByIdAsync(userId, ct);
+        var user = await _userService.FindByIdAsync(userId, ct);
         if (user is null || !user.IsActive)
             return Unauthorized(new { error = "invalid_token", error_description = "User not found." });
 
@@ -163,7 +171,7 @@ public class OpenIdController(
         if (string.IsNullOrWhiteSpace(scope))
             return BadRequest(new { error = "invalid_request", error_description = "scope is required." });
 
-        var result = await deviceAuthorizationService.StartAsync(authentication, scope, ct);
+        var result = await _deviceAuthorizationService.StartAsync(authentication, scope, ct);
         if (!result.IsSuccess)
         {
             if (string.Equals(result.ErrorCode, "invalid_client", StringComparison.Ordinal))
@@ -216,14 +224,14 @@ public class OpenIdController(
         if (string.IsNullOrWhiteSpace(authenticationInput.ClientId))
             return InvalidClient();
 
-        var authentication = await clientService.AuthenticateClientAsync(authenticationInput, requireClientAuthentication: true, ct);
+        var authentication = await _clientService.AuthenticateClientAsync(authenticationInput, requireClientAuthentication: true, ct);
         if (!authentication.IsSuccess)
             return InvalidClient();
 
         if (string.IsNullOrWhiteSpace(token))
             return BadRequest(new { error = "invalid_request", error_description = "token is required." });
 
-        var result = await tokenService.IntrospectAsync(token, authenticationInput.ClientId, ct);
+        var result = await _tokenService.IntrospectAsync(token, authenticationInput.ClientId, ct);
         return Ok(new
         {
             active = result.Active,
@@ -270,8 +278,7 @@ public class OpenIdController(
         if (string.IsNullOrWhiteSpace(authenticationInput.ClientId))
             return InvalidClient();
 
-        var authentication = await clientService.AuthenticateClientAsync(authenticationInput, requireClientAuthentication: true, ct);
-        if (!authentication.IsSuccess)
+        if (!await AuthenticateRevocationClientAsync(authenticationInput, ct))
             return InvalidClient();
 
         if (!string.IsNullOrWhiteSpace(token))
@@ -284,7 +291,7 @@ public class OpenIdController(
             }
             else
             {
-                await tokenService.RevokeAccessTokenAsync(token, authenticationInput.ClientId, ct);
+                await _tokenService.RevokeAccessTokenAsync(token, authenticationInput.ClientId, ct);
                 await RevokeRefreshTokenForClientAsync(token, authenticationInput.ClientId, ct);
             }
         }
@@ -330,7 +337,7 @@ public class OpenIdController(
 
         Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
         Response.Headers.Pragma = "no-cache";
-        var tokens = antiforgery.GetAndStoreTokens(HttpContext);
+        var tokens = _antiforgery.GetAndStoreTokens(HttpContext);
         return Content(
             BuildEndSessionConfirmationPage(
                 tokens.FormFieldName,
@@ -358,8 +365,8 @@ public class OpenIdController(
         var sid = User.FindFirst("sid")?.Value;
         if (Guid.TryParse(subject, out var currentUserId) && Guid.TryParse(sid, out _))
         {
-            await tokenService.RevokeAllUserTokensAsync(currentUserId, ct);
-            await sessionService.RevokeAllForUserAsync(currentUserId, ct);
+            await _tokenService.RevokeAllUserTokensAsync(currentUserId, ct);
+            await _sessionService.RevokeAllForUserAsync(currentUserId, ct);
         }
 
         await HttpContext.SignOutAsync(AppWebModule.AuthenticationScheme);
@@ -389,7 +396,7 @@ public class OpenIdController(
                 : BadRequest(new { error = "invalid_request", error_description = "id_token_hint is required when post_logout_redirect_uri is provided." });
         }
 
-        var validation = idTokenHintValidator.Validate(idTokenHint);
+        var validation = _idTokenHintValidator.Validate(idTokenHint);
         if (!validation.IsValid)
             return BadRequest(new { error = "invalid_request", error_description = "id_token_hint is invalid." });
 
@@ -401,7 +408,7 @@ public class OpenIdController(
             return BadRequest(new { error = "invalid_request", error_description = "id_token_hint does not match the current session." });
         }
 
-        var clientValidation = await clientService.AuthenticateClientForPostLogoutAsync(
+        var clientValidation = await _clientService.AuthenticateClientForPostLogoutAsync(
             validation.ClientId!,
             postLogoutRedirectUri,
             ct);
@@ -534,10 +541,11 @@ public class OpenIdController(
 
     private async Task<bool> RevokeRefreshTokenForClientAsync(string token, string clientId, CancellationToken ct)
     {
-        var isOwnedByClient = await tokenService.IsRefreshTokenOwnedByClientAsync(token, clientId, ct);
+        var isOwnedByClient = await _tokenService.IsRefreshTokenOwnedByClientAsync(token, clientId, ct);
         if (!isOwnedByClient)
             return false;
 
-        await tokenService.RevokeRefreshTokenAsync(token, clientId, ct);
+        await _tokenService.RevokeRefreshTokenAsync(token, clientId, ct);
+        return true;
     }
 }
