@@ -1,6 +1,6 @@
 using Luck.Logging.Serilog;
+using Microsoft.Extensions.DependencyInjection;
 using NexusAuth.Application.Clients.Authentication;
-using NexusAuth.Shared.DependencyInjection;
 
 namespace NexusAuth.Application.Clients;
 
@@ -92,10 +92,16 @@ public class ClientService(
         if (hasAssertion && hasSecret)
             return AuthenticationFailure(client.ClientId, "MultipleMethods", "Multiple client authentication methods were supplied.");
 
-        var authenticationStrategy = serviceProvider.ResolveKeyed<IClientAuthenticationStrategy>(
-            client.TokenEndpointAuthMethod);
-        if (authenticationStrategy is null)
-            return AuthenticationFailure(client.ClientId, "WrongAuthMethod", "This client requires client secret authentication.");
+        // Preserve the PR's shared-secret fallback for legacy authentication methods.
+        var strategyKey = client.TokenEndpointAuthMethod switch
+        {
+            OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt
+                or OAuthClient.TokenEndpointAuthMethodClientSecretJwt
+                or OAuthClient.TokenEndpointAuthMethodClientSecretBasic
+                or OAuthClient.TokenEndpointAuthMethodClientSecretPost => client.TokenEndpointAuthMethod,
+            _ => OAuthClient.TokenEndpointAuthMethodNone,
+        };
+        var authenticationStrategy = serviceProvider.GetRequiredKeyedService<IClientAuthenticationStrategy>(strategyKey);
 
         var strategyResult = await authenticationStrategy.AuthenticateAsync(input, client, ct);
         if (!strategyResult.IsSuccess)

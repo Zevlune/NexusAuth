@@ -199,6 +199,45 @@ public sealed class ClientServiceHardeningTests
         Assert.Equal("Client JWK set format is invalid.", result.Error);
     }
 
+    [Theory]
+    [InlineData("legacy-secret", null, null, true)]
+    [InlineData("legacy-secret", "client_secret_post", null, true)]
+    [InlineData("wrong-secret", null, "Invalid client secret.", false)]
+    [InlineData(null, null, "client_secret is required.", false)]
+    public async Task Legacy_unknown_auth_method_preserves_pr_shared_secret_fallback(
+        string? secret, string? suppliedMethod, string? expectedError, bool expectedSuccess)
+    {
+        var client = OAuthClient.Create("legacy-client", "Legacy");
+        client.ClientSecrets.Add(OAuthClientSecret.CreateSharedSecret(client.Id, "legacy-secret"));
+        typeof(OAuthClient).GetProperty(nameof(OAuthClient.TokenEndpointAuthMethod))!
+            .SetValue(client, "legacy_unknown");
+        using var harness = new ClientServiceHarness(client);
+
+        var result = await harness.Service.AuthenticateClientAsync(
+            new ClientAuthenticationInput("legacy-client", secret, null, null,
+                TokenEndpointAuthMethod: suppliedMethod),
+            requireClientAuthentication: true);
+
+        Assert.Equal(expectedSuccess, result.IsSuccess);
+        Assert.Equal(expectedError, result.Error);
+    }
+
+    [Fact]
+    public async Task Legacy_unknown_auth_method_rejects_assertions()
+    {
+        var client = OAuthClient.Create("legacy-client", "Legacy");
+        typeof(OAuthClient).GetProperty(nameof(OAuthClient.TokenEndpointAuthMethod))!
+            .SetValue(client, "legacy_unknown");
+        using var harness = new ClientServiceHarness(client);
+
+        var result = await harness.Service.AuthenticateClientAsync(
+            new ClientAuthenticationInput("legacy-client", null, OAuthClient.ClientAssertionTypeJwtBearer, "assertion"),
+            requireClientAuthentication: true);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("This client requires client secret authentication.", result.Error);
+    }
+
     private static UpdateClientRequest Update(bool? isActive) =>
         new(null, null, null, null, null, null, null, null, null, null, isActive);
 
