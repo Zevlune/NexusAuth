@@ -272,6 +272,9 @@ coverage/
 .env.*
 !.env.example
 
+# WeChat developer tools local settings
+document/examples/wechat-miniprogram/project.private.config.json
+
 # macOS and editor temp files
 .DS_Store
 *.swp

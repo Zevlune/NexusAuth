@@ -1,6 +1,6 @@
 namespace NexusAuth.Application.Users;
 
-public interface IUserService
+public interface IUserService : IScopedDependency
 {
     Task<Guid> RegisterAsync(
         string username,

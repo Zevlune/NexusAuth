@@ -98,6 +98,8 @@ CREATE TABLE nexusauth.user_external_identities (
         CHECK (last_authenticated_at >= created_at)
 );
 
+COMMENT ON COLUMN nexusauth.user_external_identities.subject IS '第三方身份提供方签发的用户唯一标识，在同一 provider 和 issuer 下唯一；微信小程序对应 OpenID（issuer 为 AppID）。';
+
 CREATE UNIQUE INDEX ux_user_external_identities_provider_issuer_subject
     ON nexusauth.user_external_identities (provider, issuer, subject);
 CREATE INDEX ix_user_external_identities_provider_issuer_union_id

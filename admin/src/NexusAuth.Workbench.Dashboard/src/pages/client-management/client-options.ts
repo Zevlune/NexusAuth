@@ -36,5 +36,8 @@ export const mergeOptions = (...groups: ClientFormOption[][]): ClientFormOption[
   return Array.from(merged.values());
 };
 
-export const canManageClientCredentials = (tokenEndpointAuthMethod: TokenEndpointAuthMethod) =>
-  tokenEndpointAuthMethod !== 'none';
+// 仅共享密钥类认证方式支持重置；private_key_jwt 需更新登记的 JWKS，none 不使用客户端凭据。
+export const canResetClientCredential = (tokenEndpointAuthMethod: TokenEndpointAuthMethod) =>
+  tokenEndpointAuthMethod === 'client_secret_basic'
+  || tokenEndpointAuthMethod === 'client_secret_post'
+  || tokenEndpointAuthMethod === 'client_secret_jwt';

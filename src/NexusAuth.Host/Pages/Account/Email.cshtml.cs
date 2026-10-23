@@ -9,7 +9,7 @@ namespace NexusAuth.Host.Pages.Account;
 
 [Authorize(AuthenticationSchemes = AppWebModule.AuthenticationScheme)]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class EmailModel(IUserService users, EmailAccountService emails, ITotpService totp) : PageModel
+public sealed class EmailModel(IUserService users, IEmailAccountService emails, ITotpService totp) : PageModel
 {
     [BindProperty] public string EmailAddress { get; set; } = "";
     [BindProperty] public string CurrentPassword { get; set; } = "";

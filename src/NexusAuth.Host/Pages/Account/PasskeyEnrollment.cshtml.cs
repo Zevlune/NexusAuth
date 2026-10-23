@@ -13,8 +13,8 @@ namespace NexusAuth.Host.Pages.Account;
 
 [Authorize(AuthenticationSchemes = AppWebModule.AuthenticationScheme)]
 public sealed class PasskeyEnrollmentModel(
-    WebAuthnEnrollmentStateProtector enrollmentStateProtector,
-    Fido2 fido2,
+    IWebAuthnEnrollmentStateProtector enrollmentStateProtector,
+    IFido2 fido2,
     IUserService userService,
     IWebAuthnService webAuthnService,
     IOptions<WebAuthnOptions> webAuthnOptions) : PageModel

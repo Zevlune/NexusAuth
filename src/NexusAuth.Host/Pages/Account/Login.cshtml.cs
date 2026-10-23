@@ -25,16 +25,16 @@ public class LoginModel(
     ITotpService totpService,
     IOAuthClientRepository clientRepository,
     ILogger<LoginModel> logger,
-    LoginFlowStateProtector flowStateProtector,
-    SliderCaptchaChallengeProtector sliderCaptchaChallengeProtector,
+    ILoginFlowStateProtector flowStateProtector,
+    ISliderCaptchaChallengeProtector sliderCaptchaChallengeProtector,
     IOptions<SliderCaptchaOptions> sliderCaptchaOptions,
     IOptions<LoginFlowOptions> flowOptions,
     IOptions<LoginPageOptions> loginPageOptions,
     IOptions<SelfRegistrationOptions> selfRegistrationOptions,
-    Fido2 fido2,
+    IFido2 fido2,
     IWebAuthnService webAuthnService,
     IOptions<WebAuthnOptions> webAuthnOptions,
-    EmailAccountService emailAccounts) : PageModel
+    IEmailAccountService emailAccounts) : PageModel
 {
     private readonly LoginFlowOptions _flowOptions = flowOptions.Value;
     private readonly SliderCaptchaOptions _sliderCaptchaOptions = sliderCaptchaOptions.Value;

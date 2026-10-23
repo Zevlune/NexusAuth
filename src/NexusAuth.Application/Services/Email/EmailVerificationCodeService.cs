@@ -8,12 +8,12 @@ using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Application.Services.Email;
 
-public sealed class EmailVerificationCodeService(
+public class EmailVerificationCodeService(
     IMemoryCache cache,
     IServiceScopeFactory scopeFactory,
     IOptions<SmtpOptions> smtpOptions,
     TimeProvider timeProvider,
-    IOptionsMonitor<SmtpOptions>? liveOptions = null)
+    IOptionsMonitor<SmtpOptions>? liveOptions = null) : IEmailVerificationCodeService
 {
     private static readonly HashSet<string> AllowedPurposes = new(StringComparer.Ordinal)
     {

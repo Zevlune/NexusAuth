@@ -1,29 +1,84 @@
 <view class="page">
   <view class="header">
-    <text class="title">WeChat Mini Program</text>
-    <text class="subtitle">NexusAuth.Host 直连示例</text>
+    <text class="title">微信小程序登录示例</text>
+    <text class="subtitle">一次微信登录，确认昵称并展示当前用户</text>
   </view>
 
   <view class="status">
-    <text class="status-label">状态</text>
+    <text class="status-label">当前状态</text>
     <text class="status-value">{{status}}</text>
   </view>
 
+  <view class="user" wx:if="{{user}}">
+    <text class="user-caption">当前用户</text>
+    <text class="user-name">{{user.name || '未设置昵称'}}</text>
+    <view class="user-row">
+      <text class="user-label">用户 ID</text>
+      <text class="user-value">{{user.sub || '未获取'}}</text>
+    </view>
+  </view>
+
+  <view class="login-panel">
+    <button class="primary login-button" bindtap="onLoginTap" disabled="{{busy}}">
+      {{user ? '重新登录' : '微信登录'}}
+    </button>
+    <text class="login-hint">登录前可确认或修改昵称。</text>
+  </view>
+
   <view class="actions">
-    <button class="primary" bindtap="onLogin" disabled="{{busy}}">登录</button>
-    <button bindtap="onReadUser" disabled="{{busy}}">读取用户</button>
-    <button bindtap="onRefresh" disabled="{{busy}}">手动刷新</button>
+    <button bindtap="onRefresh" disabled="{{busy}}">刷新登录状态</button>
     <button class="danger" bindtap="onClearSession" disabled="{{busy}}">清除本机会话</button>
   </view>
 
-  <view class="user" wx:if="{{user}}">
-    <view class="user-row">
-      <text class="user-label">sub</text>
-      <text class="user-value">{{user.sub}}</text>
-    </view>
-    <view class="user-row">
-      <text class="user-label">name</text>
-      <text class="user-value">{{user.name}}</text>
-    </view>
+  <view
+    class="dialog-mask"
+    wx:if="{{loginDialogVisible}}"
+    catchtouchmove="stopPropagation"
+    catchtap="onLoginDialogMaskTap"
+  >
+    <form class="login-dialog" bindsubmit="onLogin" catchtap="stopPropagation">
+      <view class="dialog-header">
+        <text class="dialog-title">登录 NexusAuth</text>
+        <text class="dialog-description">
+          请确认昵称，点击“确认登录”后使用当前微信身份登录。
+        </text>
+      </view>
+
+      <label class="nickname-row" for="nickname-input">
+        <view class="nickname-copy">
+          <text class="nickname-label">昵称</text>
+          <text class="nickname-optional">选填</text>
+        </view>
+        <view class="nickname-choice">
+          <input
+            id="nickname-input"
+            class="nickname-input"
+            type="nickname"
+            name="nickname"
+            value="{{nicknameValue}}"
+            placeholder="点击使用微信昵称"
+            bindinput="onNicknameInput"
+            bindblur="onNicknameBlur"
+            bindnicknamereview="onNicknameReview"
+            disabled="{{busy}}"
+          />
+          <text class="nickname-chevron">›</text>
+        </view>
+      </label>
+
+      <text class="nickname-hint">点击昵称输入框可直接使用微信昵称，也可以手动填写。</text>
+      <text class="nickname-error" wx:if="{{nicknameError}}">{{nicknameError}}</text>
+
+      <view class="dialog-actions">
+        <button class="dialog-cancel" bindtap="onLoginCancel" disabled="{{busy}}">取消</button>
+        <button
+          class="primary dialog-confirm"
+          form-type="submit"
+          disabled="{{busy || nicknameInvalid || nicknameReviewStatus === 'failed' || nicknameReviewStatus === 'timeout'}}"
+        >
+          {{busy ? '登录中…' : '确认登录'}}
+        </button>
+      </view>
+    </form>
   </view>
 </view>

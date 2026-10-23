@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using Luck.Framework.Infrastructure.DependencyInjectionModule;
 
 namespace NexusAuth.Application.Users;

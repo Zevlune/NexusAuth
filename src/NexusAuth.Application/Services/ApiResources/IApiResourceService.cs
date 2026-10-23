@@ -49,26 +49,3 @@ public interface IApiResourceService : IScopedDependency
     Task<IReadOnlyList<ApiResource>> GetAllActiveResourcesAsync(
         CancellationToken ct = default);
 }
-
-public record ApiResourceDto(
-    Guid Id,
-    string Name,
-    string DisplayName,
-    string Audience,
-    string? Description,
-    bool IsActive,
-    DateTimeOffset CreatedAt);
-
-public record CreateApiResourceRequest(
-    string Name,
-    string DisplayName,
-    string Audience,
-    string? Description);
-
-public record UpdateApiResourceRequest(
-    string? DisplayName,
-    string? Audience,
-    string? Description,
-    bool? IsActive);
-
-public record UpdateApiResourceStatusRequest(bool IsActive);

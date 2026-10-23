@@ -8,8 +8,8 @@ using Microsoft.Extensions.Options;
 namespace NexusAuth.Host.Pages.Account;
 
 [AllowAnonymous]
-public sealed class ForgotPasswordModel(EmailAccountService emails,
-    SliderCaptchaChallengeProtector captcha, IOptions<SliderCaptchaOptions> options) : PageModel
+public sealed class ForgotPasswordModel(IEmailAccountService emails,
+    ISliderCaptchaChallengeProtector captcha, IOptions<SliderCaptchaOptions> options) : PageModel
 {
     [BindProperty] public string EmailAddress { get; set; } = "";
     [BindProperty] public string Code { get; set; } = "";

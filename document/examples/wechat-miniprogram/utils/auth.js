@@ -27,6 +27,14 @@ function isClearableError(error) {
     || error.code === 'invalid_client';
 }
 
+function isUnauthorizedError(error) {
+  if (!error || error.statusCode === 400) {
+    return false;
+  }
+
+  return error.statusCode === 401 || error.code === 'invalid_token';
+}
+
 function encodeForm(data) {
   return Object.keys(data)
     .filter((key) => data[key] !== undefined && data[key] !== null)
@@ -66,6 +74,20 @@ function responseError(response, fallbackMessage) {
   return createError(code || 'http_error', fallbackMessage, response.statusCode);
 }
 
+function normalizeUser(user, previousUser) {
+  if (!user || typeof user !== 'object') {
+    return previousUser ? normalizeUser(previousUser, null) : null;
+  }
+
+  const sub = typeof user.sub === 'string' ? user.sub : '';
+  const name = typeof user.name === 'string' ? user.name : '';
+  if (!sub || typeof user.name !== 'string') {
+    return previousUser ? normalizeUser(previousUser, null) : null;
+  }
+
+  return { sub, name };
+}
+
 function readSession() {
   try {
     const saved = wx.getStorageSync(STORAGE_KEY);
@@ -101,7 +123,8 @@ function saveSession(tokenResponse, previous, requireRefreshToken) {
     scope: typeof tokenResponse.scope === 'string'
       ? tokenResponse.scope
       : previousSession.scope || config.SCOPE,
-    expiresAt: Date.now() + expiresIn * 1000
+    expiresAt: Date.now() + expiresIn * 1000,
+    user: normalizeUser(tokenResponse.user, previousSession.user)
   };
 
   wx.setStorageSync(STORAGE_KEY, session);
@@ -148,19 +171,58 @@ async function postToken(form) {
   throw responseError(response, '换取 Token 失败，请稍后重试。');
 }
 
-async function executeLogin() {
+function normalizeLoginNickname(nickname) {
+  if (nickname === undefined || nickname === null) {
+    return null;
+  }
+  if (typeof nickname !== 'string') {
+    throw createError('invalid_nickname', '昵称格式不正确。');
+  }
+
+  const normalized = nickname.trim();
+  if (!normalized) {
+    return null;
+  }
+  if (Array.from(normalized).length > 100) {
+    throw createError('invalid_nickname', '昵称去除首尾空格后不能超过 100 个字。');
+  }
+
+  return normalized;
+}
+
+async function executeLogin(nickname) {
   const code = await getWeChatCode();
-  const tokenResponse = await postToken({
+  const form = {
     grant_type: WECHAT_GRANT_TYPE,
     client_id: config.CLIENT_ID,
     code,
     scope: config.SCOPE
-  });
+  };
+  if (nickname) {
+    form.nickname = nickname;
+  }
+
+  const tokenResponse = await postToken(form);
 
   return saveSession(tokenResponse, null, false);
 }
 
-function login() {
+function createLoginPromise(nickname) {
+  loginPromise = executeLogin(nickname)
+    .catch((error) => {
+      if (isClearableError(error)) {
+        clearSession();
+      }
+      throw error;
+    })
+    .finally(() => {
+      loginPromise = null;
+    });
+
+  return loginPromise;
+}
+
+function startLogin(nickname) {
   if (loginPromise) {
     return loginPromise;
   }
@@ -168,18 +230,11 @@ function login() {
     return refreshPromise;
   }
 
-  loginPromise = executeLogin()
-    .catch((error) => {
-      if (isClearableError(error)) {
-        clearSession();
-      }
-      throw error;
-    })
-    .finally(() => {
-      loginPromise = null;
-    });
+  return createLoginPromise(nickname);
+}
 
-  return loginPromise;
+async function login(nickname) {
+  return startLogin(normalizeLoginNickname(nickname));
 }
 
 function startLoginDuringRefresh() {
@@ -187,18 +242,7 @@ function startLoginDuringRefresh() {
     return loginPromise;
   }
 
-  loginPromise = executeLogin()
-    .catch((error) => {
-      if (isClearableError(error)) {
-        clearSession();
-      }
-      throw error;
-    })
-    .finally(() => {
-      loginPromise = null;
-    });
-
-  return loginPromise;
+  return createLoginPromise(null);
 }
 
 async function executeRefresh() {
@@ -252,6 +296,28 @@ async function ensureFreshSession() {
   return current;
 }
 
+async function withAuthenticatedRequest(action) {
+  let session = await ensureFreshSession();
+
+  try {
+    return await action(session);
+  } catch (error) {
+    if (!isUnauthorizedError(error)) {
+      throw error;
+    }
+
+    try {
+      session = await refresh();
+      return await action(session);
+    } catch (retryError) {
+      if (isUnauthorizedError(retryError)) {
+        clearSession();
+      }
+      throw retryError;
+    }
+  }
+}
+
 async function requestUserInfo(session) {
   const response = await request({
     url: `${config.API_BASE.replace(/\/+$/, '')}/connect/userinfo`,
@@ -276,25 +342,8 @@ function toDisplayUser(userInfo) {
 }
 
 async function getUserInfo() {
-  let session = await ensureFreshSession();
-
-  try {
-    return toDisplayUser(await requestUserInfo(session));
-  } catch (error) {
-    if (!isClearableError(error)) {
-      throw error;
-    }
-
-    try {
-      session = await refresh();
-      return toDisplayUser(await requestUserInfo(session));
-    } catch (retryError) {
-      if (isClearableError(retryError)) {
-        clearSession();
-      }
-      throw retryError;
-    }
-  }
+  const userInfo = await withAuthenticatedRequest(requestUserInfo);
+  return toDisplayUser(userInfo);
 }
 
 module.exports = {
