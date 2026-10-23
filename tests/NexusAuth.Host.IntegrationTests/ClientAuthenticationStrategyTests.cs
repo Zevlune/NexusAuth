@@ -253,6 +253,44 @@ public class ClientAuthenticationStrategyTests
     }
 
     [Fact]
+    public async Task Client_secret_jwt_accepts_any_configured_audience()
+    {
+        const string rawSecret = "client-secret-jwt-multiple-audiences-0123456789";
+        var clientId = Guid.NewGuid();
+        var secret = OAuthClientSecret.CreateSharedSecret(
+            clientId,
+            rawSecret,
+            persistPlainValue: true);
+        var client = OAuthClient.Create(
+            clientId,
+            "client-secret-jwt-multiple-audiences-client",
+            "Client secret JWT client",
+            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodClientSecretJwt,
+            clientSecrets: [secret]);
+        var (blacklistRepository, _) = CreateBlacklistRepository();
+        using var serviceProvider = CreateStrategyProvider(blacklistRepository);
+        var service = CreateClientService(client, serviceProvider);
+        var assertion = CreateHmacJwt(
+            client.ClientId,
+            "https://issuer.example",
+            "client-secret-multiple-audiences-jti",
+            rawSecret);
+
+        var result = await service.AuthenticateClientAsync(
+            new ClientAuthenticationInput(
+                client.ClientId,
+                null,
+                OAuthClient.ClientAssertionTypeJwtBearer,
+                assertion,
+                "https://issuer.example",
+                null,
+                ["https://issuer.example/connect/token", "https://issuer.example"]),
+            requireClientAuthentication: true);
+
+        Assert.True(result.IsSuccess, result.Error);
+    }
+
+    [Fact]
     public async Task Private_key_jwt_uses_registered_jwks_and_blocks_replay()
     {
         using var rsa = RSA.Create(2048);
@@ -339,6 +377,9 @@ public class ClientAuthenticationStrategyTests
     {
         return new ClientService(
             CreateOAuthClientRepository(client),
+            null!,
+            null!,
+            null!,
             null!,
             null!,
             null!,

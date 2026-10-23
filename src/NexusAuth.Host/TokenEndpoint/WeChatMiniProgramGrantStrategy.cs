@@ -130,30 +130,39 @@ public class WeChatMiniProgramGrantStrategy(
             await userRepository.UpdateAsync(login.User, ct);
         }
 
-        var accessTokenResult = await tokenService.IssueAccessTokenWithMetadataAsync(
-            clientId,
-            scopeValidation.NormalizedScope!,
-            null,
-            login.User.Id,
-            null,
-            ct);
-        var refreshToken = ShouldIssueRefreshToken(scopeValidation.NormalizedScope!)
-            ? await tokenService.IssueRefreshTokenAsync(clientId, login.User.Id, scopeValidation.NormalizedScope!, ct)
-            : null;
-        var includeIdToken = scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Contains("openid", StringComparer.Ordinal);
+        TokenIssueResult accessTokenResult;
+        string? refreshToken;
         string? idToken = null;
-        if (includeIdToken)
+        try
         {
-            idToken = await tokenService.IssueIdTokenAsync(
+            accessTokenResult = await tokenService.IssueAccessTokenWithMetadataAsync(
                 clientId,
+                scopeValidation.NormalizedScope!,
+                null,
                 login.User.Id,
                 null,
-                accessTokenResult.AccessToken,
-                authenticatedAt: login.AuthenticatedAt,
-                acr: "urn:nexusauth:acr:external",
-                amr: "wechat",
-                ct: ct);
+                ct);
+            refreshToken = ShouldIssueRefreshToken(scopeValidation.NormalizedScope!)
+                ? await tokenService.IssueRefreshTokenAsync(clientId, login.User.Id, scopeValidation.NormalizedScope!, ct)
+                : null;
+            var includeIdToken = scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Contains("openid", StringComparer.Ordinal);
+            if (includeIdToken)
+            {
+                idToken = await tokenService.IssueIdTokenAsync(
+                    clientId,
+                    login.User.Id,
+                    null,
+                    accessTokenResult.AccessToken,
+                    authenticatedAt: login.AuthenticatedAt,
+                    acr: "urn:nexusauth:acr:external",
+                    amr: "wechat",
+                    ct: ct);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            return TokenIssuanceFailed();
         }
 
         return new OkObjectResult(new

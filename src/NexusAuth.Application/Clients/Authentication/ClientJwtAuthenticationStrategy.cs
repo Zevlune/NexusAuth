@@ -24,10 +24,11 @@ internal abstract class ClientJwtAuthenticationStrategy(
                 "MissingCredential",
                 "client_assertion is required.");
 
-        if (string.IsNullOrWhiteSpace(input.AssertionAudience))
+        var acceptedAudiences = input.GetAcceptedAssertionAudiences();
+        if (acceptedAudiences.Count == 0)
             return ClientAuthenticationStrategyResult.Failure("MissingAssertionAudience", MissingAudienceError);
 
-        var assertionValidation = ValidateAssertion(input.ClientAssertion, client, input.AssertionAudience);
+        var assertionValidation = ValidateAssertion(input.ClientAssertion, client, acceptedAudiences);
         if (!assertionValidation.IsSuccess)
         {
             return ClientAuthenticationStrategyResult.Failure(
@@ -60,7 +61,7 @@ internal abstract class ClientJwtAuthenticationStrategy(
     protected abstract ClientAssertionValidationResult ValidateAssertion(
         string assertionJwt,
         OAuthClient client,
-        string expectedAudience);
+        IReadOnlyCollection<string> expectedAudiences);
 
     private static string BuildClientAssertionReplayKey(string clientId, string assertionJti)
     {

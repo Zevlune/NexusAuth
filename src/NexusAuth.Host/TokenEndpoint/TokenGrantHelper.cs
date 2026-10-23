@@ -7,13 +7,13 @@ public static class TokenGrantHelper
     public static ClientAuthenticationInput? ParseClientAuthentication(TokenGrantContext context, string issuer)
     {
         var request = context.HttpContext.Request;
-        var audience = request.Host.HasValue
-            ? $"{request.Scheme}://{request.Host.Value}{request.PathBase}{request.Path}"
-            : issuer.TrimEnd('/') + "/connect/token";
+        var issuerBase = issuer.TrimEnd('/');
+        var tokenEndpointUrl = issuerBase + "/connect/token";
         var input = context.Request;
         var parsed = OAuthClientAuthenticationParser.ResolveClientAuthentication(
             request.Headers.Authorization.ToString(), input.ClientId, input.ClientSecret,
-            input.ClientAssertionType, input.ClientAssertion, audience);
+            input.ClientAssertionType, input.ClientAssertion, tokenEndpointUrl,
+            [tokenEndpointUrl, issuerBase]);
         return parsed.IsSuccess ? parsed.Authentication : null;
     }
 
@@ -25,5 +25,14 @@ public static class TokenGrantHelper
     {
         context.Response.Headers.WWWAuthenticate = "Basic realm=\"NexusAuth\"";
         return new UnauthorizedObjectResult(new { error = "invalid_client" });
+    }
+
+    public static IActionResult TokenIssuanceFailed()
+    {
+        return new BadRequestObjectResult(new
+        {
+            error = "invalid_grant",
+            error_description = "Unable to issue tokens for this grant.",
+        });
     }
 }

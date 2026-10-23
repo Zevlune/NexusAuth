@@ -77,7 +77,7 @@ public class TokenGrantStrategyTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Client_credentials_strategy_passes_parsed_method_and_actual_endpoint_audience(bool basic)
+    public async Task Client_credentials_strategy_passes_parsed_method_and_configured_endpoint_audience(bool basic)
     {
         ClientAuthenticationInput? captured = null;
         var services = Services();
@@ -98,7 +98,151 @@ public class TokenGrantStrategyTests
         Assert.Equal("client", captured.ClientId);
         Assert.Equal("secret", captured.ClientSecret);
         Assert.Equal(basic ? "client_secret_basic" : "client_secret_post", captured.TokenEndpointAuthMethod);
-        Assert.Equal("https://auth.example/identity/connect/token", captured.AssertionAudience);
+        Assert.Equal("https://issuer.example/connect/token", captured.AssertionAudience);
+        Assert.Equal(
+            ["https://issuer.example/connect/token", "https://issuer.example"],
+            captured.GetAcceptedAssertionAudiences());
+    }
+
+    [Fact]
+    public async Task Client_credentials_issuance_failure_is_reported_as_invalid_scope()
+    {
+        var client = OAuthClient.Create(
+            "client",
+            "Client",
+            allowedScopes: ["orders.api"],
+            allowedGrantTypes: ["client_credentials"]);
+        var services = Services();
+        services.AddSingleton(Stub<IClientService>((method, args) => method.Name switch
+        {
+            nameof(IClientService.AuthenticateClientAsync) =>
+                Task.FromResult(ClientAuthenticationResult.Success(client)),
+            nameof(IClientService.ValidateScopesAsync) =>
+                Task.FromResult(ValidateClientCredentialsScope(args)),
+            _ => null,
+        }));
+        services.AddSingleton(Stub<ISecurityPolicyService>((method, _) =>
+            method.Name == nameof(ISecurityPolicyService.CheckClient)
+                ? PolicyCheckResult.Success()
+                : null));
+        services.AddSingleton(Stub<ITokenService>((method, _) =>
+            method.Name == nameof(ITokenService.IssueAccessTokenAsync)
+                ? throw new InvalidOperationException("Requested scopes span multiple audiences.")
+                : null));
+
+        using var provider = services.BuildServiceProvider();
+        var result = await ExecuteAsync(provider, Context(new TokenRequest(
+            "client_credentials", "client", "secret", Scope: "orders.api")));
+
+        var error = AssertError(result, 400, "invalid_scope");
+        Assert.Equal("Requested scopes span multiple audiences.", error.GetProperty("error_description").GetString());
+
+        static ScopeValidationResult ValidateClientCredentialsScope(object?[]? args)
+        {
+            Assert.Equal("client", args![0]);
+            Assert.Equal("orders.api", args[1]);
+            Assert.Equal(false, args[2]);
+            return ScopeValidationResult.Success((string)args[1]!);
+        }
+    }
+
+    [Fact]
+    public async Task Device_code_poll_for_policy_blocked_user_is_rejected_before_issuance()
+    {
+        var user = User.Create("device-user", "test-password", "Device User");
+        var policy = new TestSecurityPolicy();
+        policy.BlockedUsers.Add(user.Id);
+        var issued = 0;
+        var services = Services();
+        services.AddSingleton(Stub<IUserService>((method, args) =>
+            method.Name == nameof(IUserService.FindByIdAsync) && (Guid)args![0]! == user.Id
+                ? Task.FromResult<User?>(user)
+                : null));
+        services.AddSingleton(Stub<ISecurityPolicyService>((method, _) =>
+            method.Name == nameof(ISecurityPolicyService.CheckUser) ? policy.Service.CheckUser(user) : null));
+        services.AddSingleton(Stub<IDeviceAuthorizationService>((method, _) =>
+            method.Name == nameof(IDeviceAuthorizationService.PollAsync)
+                ? Task.FromResult(DeviceAuthorizationPollResult.Success(user.Id, "client", "openid"))
+                : null));
+        services.AddSingleton(Stub<ITokenService>((_, _) =>
+        {
+            issued++;
+            return null;
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var result = await ExecuteAsync(provider, Context(new TokenRequest(
+            DeviceGrant, "client", DeviceCode: "device-code")));
+
+        AssertError(result, 400, "invalid_grant");
+        Assert.Equal(0, issued);
+    }
+
+    [Fact]
+    public async Task Device_code_issuance_failure_returns_an_oauth_error()
+    {
+        var user = User.Create("device-user", "test-password", "Device User");
+        var services = Services();
+        services.AddSingleton(Stub<IUserService>((method, args) =>
+            method.Name == nameof(IUserService.FindByIdAsync) && (Guid)args![0]! == user.Id
+                ? Task.FromResult<User?>(user)
+                : null));
+        services.AddSingleton(Stub<ISecurityPolicyService>((method, _) =>
+            method.Name == nameof(ISecurityPolicyService.CheckUser) ? PolicyCheckResult.Success() : null));
+        services.AddSingleton(Stub<IDeviceAuthorizationService>((method, _) =>
+            method.Name == nameof(IDeviceAuthorizationService.PollAsync)
+                ? Task.FromResult(DeviceAuthorizationPollResult.Success(user.Id, "client", "openid"))
+                : null));
+        services.AddSingleton(Stub<ITokenService>((method, _) =>
+            method.Name == nameof(ITokenService.IssueAccessTokenWithMetadataAsync)
+                ? throw new InvalidOperationException("Requested scopes span multiple audiences.")
+                : null));
+
+        using var provider = services.BuildServiceProvider();
+        var result = await ExecuteAsync(provider, Context(new TokenRequest(
+            DeviceGrant, "client", DeviceCode: "device-code")));
+
+        AssertError(result, 400, "invalid_grant");
+    }
+
+    [Fact]
+    public async Task WeChat_issuance_failure_returns_an_oauth_error()
+    {
+        var user = User.Create("wechat-user", "test-password", "WeChat User");
+        var client = OAuthClient.Create(
+            "mini", "Mini", allowedGrantTypes: [WeChatMiniProgramGrantTypes.GrantType],
+            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone);
+        var services = Services();
+        services.AddSingleton(Stub<IClientService>((method, args) => method.Name switch
+        {
+            nameof(IClientService.AuthenticateClientAsync) => Task.FromResult(ClientAuthenticationResult.Success(client)),
+            nameof(IClientService.ValidateScopesAsync) => Task.FromResult(ScopeValidationResult.Success((string)args![1]!)),
+            _ => null,
+        }));
+        services.AddSingleton(Stub<ISecurityPolicyService>((method, _) => method.Name switch
+        {
+            nameof(ISecurityPolicyService.CheckClient) => PolicyCheckResult.Success(),
+            nameof(ISecurityPolicyService.CheckUser) => PolicyCheckResult.Success(),
+            _ => null,
+        }));
+        services.AddSingleton(Stub<IWeChatMiniProgramLoginService>((method, _) =>
+            method.Name == nameof(IWeChatMiniProgramLoginService.AuthenticateAsync)
+                ? Task.FromResult(new WeChatMiniProgramLoginResult(
+                    user, DateTimeOffset.UtcNow, "wechat", "wechat", "subject", null))
+                : null));
+        services.AddSingleton(Stub<ITokenService>((method, _) =>
+            method.Name == nameof(ITokenService.IssueAccessTokenWithMetadataAsync)
+                ? throw new InvalidOperationException("Requested scopes span multiple audiences.")
+                : null));
+
+        using var provider = services.BuildServiceProvider();
+        var context = Context(new TokenRequest(
+            WeChatMiniProgramGrantTypes.GrantType, "mini", Code: "code", Scope: "openid"));
+        context.HttpContext.Request.ContentType = "application/x-www-form-urlencoded";
+        context.HttpContext.Request.ContentLength = 0;
+        var result = await ExecuteAsync(provider, context);
+
+        AssertError(result, 400, "invalid_grant");
     }
 
     [Theory]
@@ -209,6 +353,7 @@ public class TokenGrantStrategyTests
         var user = User.Create("strategy-user", "test-password", "昵称");
         var authenticatedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
         var calls = new List<string>();
+        var userPolicyChecks = 0;
         var services = Services();
         services.AddSingleton(Stub<IClientService>((_, _) => Task.FromResult(ClientAuthenticationResult.Success(
             OAuthClient.Create("client", "Test")))));
@@ -219,6 +364,12 @@ public class TokenGrantStrategyTests
             return Task.FromResult(AuthorizationCodeResult.Success(user.Id, "client", requestedScope, "nonce", "{}", authenticatedAt, "acr", "pwd"));
         }));
         services.AddSingleton(Stub<IUserService>((_, _) => Task.FromResult<User?>(user)));
+        services.AddSingleton(Stub<ISecurityPolicyService>((method, _) =>
+        {
+            Assert.Equal(nameof(ISecurityPolicyService.CheckUser), method.Name);
+            userPolicyChecks++;
+            return PolicyCheckResult.Success();
+        }));
         services.AddSingleton(Stub<ITokenService>((method, args) =>
         {
             calls.Add(method.Name);
@@ -244,6 +395,7 @@ public class TokenGrantStrategyTests
         Assert.Equal(300, json.GetProperty("expires_in").GetInt32());
         Assert.Equal(refresh, calls.Contains(nameof(ITokenService.IssueRefreshTokenAsync)));
         Assert.Equal(idToken, calls.Contains(nameof(ITokenService.IssueIdTokenAsync)));
+        Assert.Equal(1, userPolicyChecks);
     }
 
     private static IServiceCollection Services()
