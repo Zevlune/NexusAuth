@@ -18,4 +18,11 @@ public class NexusAuthSecurityOptions
     public int LoginFailureLimit { get; set; } = 5;
 
     public int LoginLockoutMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// Secure policy for the Host SSO and antiforgery cookies: SameAsRequest
+    /// (default, keeps local HTTP working) or Always (recommended in production,
+    /// especially behind a TLS-terminating proxy).
+    /// </summary>
+    public string CookieSecurePolicy { get; set; } = "SameAsRequest";
 }

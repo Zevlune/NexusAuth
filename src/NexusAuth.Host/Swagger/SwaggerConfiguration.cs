@@ -35,13 +35,30 @@ internal static class SwaggerConfiguration
         return services;
     }
 
+    internal const string EnabledConfigurationKey = "Swagger:Enabled";
+
     /// <summary>
     /// 暴露 /swagger/v1/swagger.json 与 /swagger Swagger UI。
+    /// 中文注释：仅在 Development 环境或显式配置 Swagger:Enabled=true 时启用，生产环境默认不公开接口文档。
     /// </summary>
     internal static IApplicationBuilder UseNexusAuthSwagger(this IApplicationBuilder app)
     {
+        var environment = app.ApplicationServices.GetRequiredService<IWebHostEnvironment>();
+        var configuration = app.ApplicationServices.GetRequiredService<IConfiguration>();
+        if (!IsEnabled(environment, configuration))
+            return app;
+
         app.UseSwagger();
         app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v1/swagger.json", "NexusAuth API v1"));
         return app;
+    }
+
+    internal static bool IsEnabled(IHostEnvironment environment, IConfiguration configuration)
+    {
+        var configured = configuration[EnabledConfigurationKey];
+        if (bool.TryParse(configured, out var enabled))
+            return enabled;
+
+        return environment.IsDevelopment();
     }
 }

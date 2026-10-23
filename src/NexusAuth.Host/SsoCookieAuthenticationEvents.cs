@@ -5,7 +5,8 @@ namespace NexusAuth.Host;
 
 public class SsoCookieAuthenticationEvents(
     ISsoSessionService sessionService,
-    IUserService userService) : CookieAuthenticationEvents, ISsoCookieAuthenticationEvents
+    IUserService userService,
+    ISecurityPolicyService securityPolicyService) : CookieAuthenticationEvents
 {
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {
@@ -19,8 +20,9 @@ public class SsoCookieAuthenticationEvents(
             return;
         }
 
+        // 中文注释：每次请求都重新评估用户安全策略，加入黑名单或移出白名单的用户立即失去现有 SSO 会话。
         var user = await userService.FindByIdAsync(userId, context.HttpContext.RequestAborted);
-        if (user is null || !user.IsActive)
+        if (user is null || !user.IsActive || !securityPolicyService.CheckUser(user).IsSuccess)
             await RejectAsync(context);
     }
 

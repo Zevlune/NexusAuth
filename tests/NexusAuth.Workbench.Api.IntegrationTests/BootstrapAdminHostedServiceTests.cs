@@ -75,9 +75,10 @@ public sealed class BootstrapAdminHostedServiceTests
     }
 
     [Fact]
-    public async Task StartAsync_is_idempotent_for_an_existing_user_and_preserves_the_existing_password()
+    public async Task StartAsync_is_idempotent_for_an_existing_system_account_and_preserves_the_existing_password()
     {
         var existing = User.Create("admin", "ExistingSecret123!", "Existing Admin");
+        existing.MarkAsSystemAccount();
         var repository = new InMemoryUserRepository(existing);
         var scopeFactory = new TestServiceScopeFactory(repository);
         var service = CreateService(
@@ -96,8 +97,56 @@ public sealed class BootstrapAdminHostedServiceTests
         Assert.True(existing.VerifyPassword("ExistingSecret123!"));
         Assert.False(existing.VerifyPassword("ConfiguredSecret456!"));
         Assert.Equal(0, repository.AddCalls);
-        Assert.Equal(1, repository.UpdateCalls);
+        Assert.Equal(0, repository.UpdateCalls);
         Assert.Equal(2, scopeFactory.CreateScopeCalls);
+    }
+
+    [Fact]
+    public async Task StartAsync_refuses_to_promote_an_existing_non_system_user_by_default()
+    {
+        // A self-registered or SCIM-provisioned account that claimed the configured
+        // administrator username must not silently become the system administrator.
+        var squatter = User.Create("admin", "AttackerSecret123!", "Not An Admin");
+        var repository = new InMemoryUserRepository(squatter);
+        var service = CreateService(
+            new TestServiceScopeFactory(repository),
+            new BootstrapAdminOptions
+            {
+                Username = "admin",
+                Password = "ConfiguredSecret456!",
+            });
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.StartAsync(CancellationToken.None));
+
+        Assert.Contains("BootstrapAdmin:PromoteExistingUser", exception.Message);
+        Assert.False(squatter.IsSystemAccount);
+        Assert.Single(repository.Users);
+        Assert.Equal(0, repository.AddCalls);
+        Assert.Equal(0, repository.UpdateCalls);
+    }
+
+    [Fact]
+    public async Task StartAsync_promotes_an_existing_user_only_when_explicitly_enabled()
+    {
+        var existing = User.Create("admin", "ExistingSecret123!", "Existing Admin");
+        var repository = new InMemoryUserRepository(existing);
+        var service = CreateService(
+            new TestServiceScopeFactory(repository),
+            new BootstrapAdminOptions
+            {
+                Username = "admin",
+                Password = "ConfiguredSecret456!",
+                PromoteExistingUser = true,
+            });
+
+        await service.StartAsync(CancellationToken.None);
+
+        Assert.True(existing.IsSystemAccount);
+        Assert.True(existing.VerifyPassword("ExistingSecret123!"));
+        Assert.False(existing.VerifyPassword("ConfiguredSecret456!"));
+        Assert.Equal(0, repository.AddCalls);
+        Assert.Equal(1, repository.UpdateCalls);
     }
 
     private static BootstrapAdminHostedService CreateService(
