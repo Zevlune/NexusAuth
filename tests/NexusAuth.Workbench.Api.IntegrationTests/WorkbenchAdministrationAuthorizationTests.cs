@@ -31,7 +31,7 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
     }
 
     [Fact]
-    public void Management_controllers_rely_on_the_global_fallback_without_fixed_policy_names()
+    public void Management_controllers_use_default_or_fallback_without_fixed_policy_names()
     {
         var managementControllers = typeof(WorkbenchApiModule).Assembly.GetTypes()
             .Where(type => !type.IsAbstract
@@ -44,7 +44,18 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         Assert.Equal(8, managementControllers.Length);
         Assert.All(managementControllers, type =>
         {
-            Assert.Empty(type.GetCustomAttributes<AuthorizeAttribute>(inherit: true));
+            var authorization = type.GetCustomAttributes<AuthorizeAttribute>(inherit: true).ToArray();
+            if (type == typeof(ApiResourcesController))
+            {
+                var attribute = Assert.Single(authorization);
+                Assert.Null(attribute.Policy);
+                Assert.Null(attribute.Roles);
+                Assert.Null(attribute.AuthenticationSchemes);
+            }
+            else
+            {
+                Assert.Empty(authorization);
+            }
             Assert.Empty(type.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
             Assert.All(type.GetMethods().Where(method => method.DeclaringType == type), method =>
             {
@@ -61,6 +72,7 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         services.AddLogging();
         services.AddControllers();
         services.AddWorkbenchAuthorization();
+        services.AddScoped<IWorkbenchPermissionService, MockWorkbenchPermissionService>();
         services.AddScoped<IUserRepository>(_ => RecordingDispatchProxy.Create<IUserRepository>((_, _) => null));
         using var provider = services.BuildServiceProvider();
 

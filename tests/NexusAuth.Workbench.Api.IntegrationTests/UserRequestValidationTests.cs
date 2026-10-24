@@ -93,6 +93,8 @@ public sealed class UserRequestValidationTests
             {
                 services.AddControllers().AddApplicationPart(typeof(UsersController).Assembly);
                 services.AddWorkbenchAuthorization();
+                // This isolated middleware host doesn't load WorkbenchApiModule's automatic injection.
+                services.AddScoped<IWorkbenchPermissionService, MockWorkbenchPermissionService>();
                 services.AddAuthentication("test")
                     .AddScheme<AuthenticationSchemeOptions, AdministratorAuthenticationHandler>("test", _ => { });
                 services.AddSingleton(userRepository);

@@ -162,6 +162,8 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
 
     public int UserLookupCount => Volatile.Read(ref userLookupCount);
 
+    public IServiceScope CreateScope() => factory.Services.CreateScope();
+
     public HttpClient CreateAnonymousClient() =>
         factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 

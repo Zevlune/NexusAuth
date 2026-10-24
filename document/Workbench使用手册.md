@@ -421,7 +421,7 @@ Dashboard 的菜单和路由都由 `src/api/auth.ts` 里的菜单定义动态生
 - **吊销 token**：`POST /api/users/{id}/revoke-tokens`，吊销该用户在所有客户端的访问令牌、刷新令牌和 SSO 会话，但不禁用账号；用户可重新登录，重新启用账号不会恢复旧令牌。
 - **删除**：`DELETE /api/users/{id}`，同时作废 token 和会话。
 
-所有 `/api/users` 操作统一受第 10 节的 Workbench 默认访问策略保护；默认授权 handler 要求操作者是数据库中启用的系统账号（`IsActive=true` 且 `IsSystemAccount=true`）。系统账号对象不能被这些接口修改、禁用、重置密码、删除或吊销，该对象保护由用户管理服务执行，控制器不再重复判定操作者权限。详见 [10. 权限边界](#10-权限边界)。
+所有 `/api/users` 操作统一受第 10 节的 Workbench 默认访问策略保护；授权 handler 根据当前请求的方法和路径匹配权限服务返回的列表。默认 mock 服务校验数据库中的账号状态，并为启用的系统账号提供全部权限，也可以为指定用户配置接口权限。系统账号对象不能被这些接口修改、禁用、重置密码、删除或吊销，该对象保护由用户管理服务执行。详见 [10. 权限边界](#10-权限边界)。
 
 ### 9.2 Passkey 凭据查看与撤销
 
@@ -496,7 +496,31 @@ Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `
 
 该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 401；已登录但未通过访问评估的请求返回 403。Swagger 也受该策略保护；BFF 模式的匿名浏览器请求会跳转登录，Bearer 请求需要具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 404。
 
-访问权限规则直接位于 `WorkbenchAccessAuthorizationHandler` 中。它继承框架原生的 `AuthorizationHandler<WorkbenchAccessRequirement>`，并通过 scoped 的 `IAuthorizationHandler` 注册参与 ASP.NET Core 授权；其直接依赖 `IUserRepository`，按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
+`WorkbenchAccessAuthorizationHandler` 继承框架原生的 `AuthorizationHandler<WorkbenchAccessRequirement>`，并通过 scoped 的 `IAuthorizationHandler` 注册参与授权。它只从 `AuthorizationHandlerContext.Resource` 中获取 `HttpContext`（也兼容 MVC 的 `AuthorizationFilterContext`），没有请求资源时尝试 `IHttpContextAccessor`，再将当前 `ClaimsPrincipal`、请求上下文和取消令牌交给 `IWorkbenchPermissionService.HasPermissionAsync`。只有服务返回 true 时才调用 `context.Succeed`，handler 不包含身份校验、数据库读取或权限匹配规则。
+
+服务统一负责身份校验，按 `sub`（或 `NameIdentifier`）取得用户 ID，再使用 `Request.Method`、`Request.Path` 和当前端点的 `RoutePattern.RawText` 查询并匹配权限。路径不包含域名、`PathBase` 和查询参数，匹配忽略大小写和末尾斜杠；方法和路径分别支持完整的 `*` 通配符，不支持 `/api/*` 一类部分通配符。路由模板保留参数名及约束，例如 `/api/users/{id:guid}/passkeys`。无身份、无有效用户 ID 或无当前请求时不放行。
+
+`IWorkbenchPermissionService` 继承项目的 `IScopedDependency`，由 `AutoDependencyAppModule` 自动扫描并按 scoped 生命周期注入，无需手工注册接口与实现。当前的 `MockWorkbenchPermissionService` 通过现有 `IUserRepository.FindByIdAsync` 查询数据库账号，账号不存在或未启用时拒绝访问；权限列表暂时从 mock 配置读取，没有新增权限表，也没有连接 Redis。后续将 mock 服务替换为读取 Redis 或数据库权限表的实现即可，身份校验、匹配方式和结果日志均可在服务中调整，handler 无需重写。
+
+mock 默认给系统账号 `* / *` 权限，普通用户默认没有权限。可在 Workbench API 的 `appsettings.json` 中配置指定用户的列表（将示例 GUID 替换为真实用户 ID）：
+
+```json
+{
+  "Authorization": {
+    "MockPermissions": {
+      "UserPermissions": {
+        "22222222-2222-2222-2222-222222222222": [
+          { "HttpMethod": "GET", "Path": "/api/auth/me" },
+          { "HttpMethod": "GET", "Path": "/api/users" },
+          { "HttpMethod": "GET", "Path": "/api/users/{id:guid}/passkeys" }
+        ]
+      }
+    }
+  }
+}
+```
+
+指定用户的列表会覆盖其默认权限，包括系统账号；显式空列表表示无权限。`SystemAccountPermissions` 可以配置所有未单独指定权限的系统账号的默认列表，未配置时才回退到全部权限。修改 mock 配置后重启 Workbench API。该示例允许查看用户及 Passkey，不能新增、修改或删除用户；若需要 `/api/auth/me` 的兼容字段 `isAdministrator` 为 true，应同时授予 `GET /api/auth/me`。这个字段不能代替服务端对每个请求的独立授权。
 
 下列管理入口及其全部读写操作由默认访问策略保护：
 
@@ -508,40 +532,34 @@ Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `
 
 授权相关类型分别位于 `admin/src/NexusAuth.Workbench.Api/Authorization/` 下的同名文件中，命名空间为 `NexusAuth.Workbench.Api.Authorization`。以下示例需引入该命名空间。
 
-`AddWorkbenchAuthorization()` 通过 `services.AddAuthorization` 注册默认策略、fallback 策略和仅要求认证的命名策略，并以 scoped 生命周期注册访问 handler：
+`AddWorkbenchAuthorization(configuration)` 绑定 mock 权限配置，通过 `services.AddAuthorization` 注册默认策略、fallback 策略和仅要求认证的命名策略，并以 scoped 生命周期注册访问 handler：
 
 ```csharp
-services.AddAuthorization(options =>
-{
-    var policy = new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .AddRequirements(new WorkbenchAccessRequirement())
-        .Build();
-    options.DefaultPolicy = policy;
-    options.FallbackPolicy = policy;
-    options.AddPolicy(
-        WorkbenchAuthorizationPolicies.AuthenticatedUser,
-        p => p.RequireAuthenticatedUser());
-});
-services.AddScoped<IAuthorizationHandler, WorkbenchAccessAuthorizationHandler>();
+builder.Services.AddWorkbenchAuthorization(builder.Configuration);
 ```
 
-扩展访问判定时，应用应继续使用官方的 `IAuthorizationHandler` 注册点。只需移除 `ImplementationType` 为 `WorkbenchAccessAuthorizationHandler` 的对应 descriptor，再注册继承了 `AuthorizationHandler<WorkbenchAccessRequirement>` 的新 handler；内置 handler 保持不变：
+扩展访问判定时，修改或替换自动注入的权限服务实现，保留一个默认实现即可，不需要替换 handler、策略提供器或框架授权服务。服务接口为：
 
 ```csharp
-builder.Services.AddWorkbenchAuthorization();
-
-var descriptor = builder.Services.FirstOrDefault(descriptor =>
-    descriptor.ServiceType == typeof(IAuthorizationHandler) &&
-    descriptor.ImplementationType == typeof(WorkbenchAccessAuthorizationHandler));
-if (descriptor is not null)
-{
-    builder.Services.Remove(descriptor);
-}
-
-builder.Services.AddScoped<IAuthorizationHandler,
-    CustomWorkbenchAccessAuthorizationHandler>();
+Task<bool> HasPermissionAsync(
+    ClaimsPrincipal user,
+    HttpContext? httpContext,
+    CancellationToken ct = default);
 ```
+
+鉴权服务沿用 `Luck.Logging.Serilog` 的 `LogLuckInformation`、`LogLuckWarning`、`LogLuckError` 和日志作用域，分类为 `WorkbenchAuthorization`，子分类为 `HasPermissionAsync`。每次判断记录用户 ID、HTTP 方法、路径、路由模板、请求 TraceId，以及 `Stage`、`ReasonCode`、`Outcome`。成功使用 Information，拒绝使用 Warning，异常使用 Error；取消使用 Information，并继续抛出取消异常。数据库等依赖异常会记录失败阶段及异常后继续抛出，不会授予权限。
+
+| 阶段 `Stage` | 结果原因 `ReasonCode` |
+| --- | --- |
+| `RequestContext` | `MissingHttpContext` |
+| `Authentication` | `Unauthenticated` |
+| `Subject` | `InvalidSubject` |
+| `UserLookup` | `UserNotFound`、`UserInactive` |
+| `PermissionLookup` | `NoPermissions` |
+| `PermissionMatch` | `PathNotAllowed`、`MethodNotAllowed`、`PermissionMatched` |
+| 发生取消或异常的阶段 | `RequestCanceled`、`PermissionEvaluationFailed` |
+
+`Outcome` 分别为 `Granted`、`Denied`、`Canceled` 或 `Error`。日志不写入 Token、Cookie、请求头、查询参数或完整身份对象；通过 TraceId 可以关联同一次请求的鉴权结果和其他标准日志。
 
 `/api/auth/config`、`/api/auth/login`、`/signin-oidc` 和 `/api/auth/me` 明确保留 `[AllowAnonymous]`。`POST /api/auth/logout` 显式使用命名策略 `WorkbenchAuthenticatedUser`（`WorkbenchAuthorizationPolicies.AuthenticatedUser`），只要求已登录，因此普通用户也能退出。
 

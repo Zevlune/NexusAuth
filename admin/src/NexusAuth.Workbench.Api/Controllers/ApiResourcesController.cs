@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Luck.AspNetCore.ApiResults;
 using Luck.Framework.Exceptions;
+using Microsoft.AspNetCore.Authorization;
 using NexusAuth.Application;
 using NexusAuth.Application.Services.ApiResources;
 
@@ -8,6 +9,7 @@ namespace NexusAuth.Workbench.Api.Controllers;
 
 [ApiController]
 [ApiResultWrap]
+[Authorize]
 [Route("api/api-resources")]
 public class ApiResourcesController : ControllerBase
 {

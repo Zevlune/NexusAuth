@@ -26,7 +26,7 @@ public class WorkbenchApiModule : LuckAppModule
 
         services.AddNexusAuthEmail(configuration);
         ConfigureAuthentication(services, settings);
-        services.AddWorkbenchAuthorization();
+        services.AddWorkbenchAuthorization(configuration);
         ConfigureBootstrap(services, configuration);
 
         base.ConfigureServices(context);
