@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
 using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Workbench.Api;
@@ -36,41 +35,22 @@ public sealed class WorkbenchAccessAuthorizationHandler(IUserRepository users)
     }
 }
 
-/// <summary>Protects both bare [Authorize] and endpoints with no authorization metadata.</summary>
-public sealed class WorkbenchAuthorizationPolicyProvider(IOptions<AuthorizationOptions> options)
-    : IAuthorizationPolicyProvider
-{
-    private readonly DefaultAuthorizationPolicyProvider namedPolicies = new(options);
-
-    public Task<AuthorizationPolicy?> GetPolicyAsync(string policyName) => namedPolicies.GetPolicyAsync(policyName);
-
-    private static readonly AuthorizationPolicy ManagementAccess = new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .AddRequirements(new WorkbenchAccessRequirement())
-        .Build();
-
-    public Task<AuthorizationPolicy> GetDefaultPolicyAsync() => Task.FromResult(ManagementAccess);
-
-    public async Task<AuthorizationPolicy?> GetFallbackPolicyAsync() => await GetDefaultPolicyAsync();
-}
-
 public static class WorkbenchAuthorizationServiceCollectionExtensions
 {
     public static IServiceCollection AddWorkbenchAuthorization(this IServiceCollection services)
     {
-        // MVC can register the framework provider before this module. Remove only that
-        // built-in registration, preserving any provider explicitly supplied by the host.
-        foreach (var descriptor in services.Where(descriptor =>
-            descriptor.ServiceType == typeof(IAuthorizationPolicyProvider)
-            && descriptor.ImplementationType == typeof(DefaultAuthorizationPolicyProvider)).ToArray())
+        services.AddAuthorization(options =>
         {
-            services.Remove(descriptor);
-        }
-        services.TryAddSingleton<IAuthorizationPolicyProvider, WorkbenchAuthorizationPolicyProvider>();
+            var managementAccess = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .AddRequirements(new WorkbenchAccessRequirement())
+                .Build();
+            options.DefaultPolicy = managementAccess;
+            options.FallbackPolicy = managementAccess;
+            options.AddPolicy(WorkbenchAuthorizationPolicies.AuthenticatedUser,
+                policy => policy.RequireAuthenticatedUser());
+        });
         services.TryAddEnumerable(ServiceDescriptor.Scoped<IAuthorizationHandler, WorkbenchAccessAuthorizationHandler>());
-        services.AddAuthorization(options => options.AddPolicy(
-            WorkbenchAuthorizationPolicies.AuthenticatedUser,
-            policy => policy.RequireAuthenticatedUser()));
         return services;
     }
 }

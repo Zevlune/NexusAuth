@@ -76,6 +76,23 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         });
     }
 
+    [Fact]
+    public void Workbench_uses_the_framework_policy_provider_and_authorization_service()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddControllers();
+        services.AddWorkbenchAuthorization();
+        services.AddScoped<IUserRepository>(_ => RecordingDispatchProxy.Create<IUserRepository>((_, _) => null));
+        using var provider = services.BuildServiceProvider();
+
+        Assert.IsType<DefaultAuthorizationPolicyProvider>(provider.GetRequiredService<IAuthorizationPolicyProvider>());
+        Assert.IsAssignableFrom<DefaultAuthorizationService>(provider.GetRequiredService<IAuthorizationService>());
+        var options = provider.GetRequiredService<IOptions<AuthorizationOptions>>().Value;
+        Assert.Same(options.DefaultPolicy, options.FallbackPolicy);
+        Assert.Contains(options.DefaultPolicy.Requirements, requirement => requirement is WorkbenchAccessRequirement);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -97,29 +114,21 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public async Task Hosts_can_replace_the_framework_handler_or_policy_provider_without_controller_changes(
-        bool replaceProvider, bool gatewayEnabled)
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Hosts_can_replace_the_framework_handler_without_controller_changes(bool gatewayEnabled)
     {
         using var configured = new WorkbenchAdministrationAuthorizationFixture(
             "nexusauth.workbench", gatewayEnabled, services =>
             {
-                if (replaceProvider)
-                    services.Replace(ServiceDescriptor.Singleton<IAuthorizationPolicyProvider, TestWorkbenchPolicyProvider>());
-                else
+                // Keep the framework handlers (including RequireAuthenticatedUser) intact.
+                foreach (var descriptor in services.Where(descriptor =>
+                    descriptor.ServiceType == typeof(IAuthorizationHandler)
+                    && descriptor.ImplementationType == typeof(WorkbenchAccessAuthorizationHandler)).ToArray())
                 {
-                    // Keep the framework handlers (including RequireAuthenticatedUser) intact.
-                    foreach (var descriptor in services.Where(descriptor =>
-                        descriptor.ServiceType == typeof(IAuthorizationHandler)
-                        && descriptor.ImplementationType == typeof(WorkbenchAccessAuthorizationHandler)).ToArray())
-                    {
-                        services.Remove(descriptor);
-                    }
-                    services.AddScoped<IAuthorizationHandler, TestWorkbenchAccessAuthorizationHandler>();
+                    services.Remove(descriptor);
                 }
+                services.AddScoped<IAuthorizationHandler, TestWorkbenchAccessAuthorizationHandler>();
             });
         using var anonymous = configured.CreateAnonymousClient();
         using var ordinary = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
@@ -537,20 +546,4 @@ public sealed class TestWorkbenchAccessAuthorizationHandler : AuthorizationHandl
             context.Succeed(requirement);
         return Task.CompletedTask;
     }
-}
-
-public sealed class TestWorkbenchPolicyProvider(IOptions<AuthorizationOptions> options)
-    : IAuthorizationPolicyProvider
-{
-    private readonly DefaultAuthorizationPolicyProvider namedPolicies = new(options);
-
-    public Task<AuthorizationPolicy?> GetPolicyAsync(string policyName) => namedPolicies.GetPolicyAsync(policyName);
-
-    private static readonly AuthorizationPolicy Policy = new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .RequireClaim("sub", WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId.ToString())
-        .Build();
-
-    public Task<AuthorizationPolicy> GetDefaultPolicyAsync() => Task.FromResult(Policy);
-    public Task<AuthorizationPolicy?> GetFallbackPolicyAsync() => Task.FromResult<AuthorizationPolicy?>(Policy);
 }

@@ -422,7 +422,7 @@ Dashboard 的菜单和路由都由 `src/api/auth.ts` 里的菜单定义动态生
 - **吊销 token**：`POST /api/users/{id}/revoke-tokens`，吊销该用户在所有客户端的访问令牌、刷新令牌和 SSO 会话，但不禁用账号；用户可重新登录，重新启用账号不会恢复旧令牌。
 - **删除**：`DELETE /api/users/{id}`，同时作废 token 和会话。
 
-所有 `/api/users` 操作统一受第 10 节的 Workbench 默认访问策略保护；默认 evaluator 要求操作者是数据库中启用的系统账号（`IsActive=true` 且 `IsSystemAccount=true`）。系统账号对象不能被这些接口修改、禁用、重置密码、删除或吊销，该对象保护由用户管理服务执行，控制器不再重复判定操作者权限。详见 [10. 权限边界](#10-权限边界)。
+所有 `/api/users` 操作统一受第 10 节的 Workbench 默认访问策略保护；默认授权 handler 要求操作者是数据库中启用的系统账号（`IsActive=true` 且 `IsSystemAccount=true`）。系统账号对象不能被这些接口修改、禁用、重置密码、删除或吊销，该对象保护由用户管理服务执行，控制器不再重复判定操作者权限。详见 [10. 权限边界](#10-权限边界)。
 
 ### 9.2 Passkey 凭据查看与撤销
 
@@ -490,14 +490,14 @@ dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTest
 
 ## 10. 权限边界
 
-Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `WorkbenchApiModule` 中生效，不影响独立的 `NexusAuth.Host` 站点及其开放 API。`WorkbenchAuthorizationPolicyProvider` 直接实现官方的 `IAuthorizationPolicyProvider`，命名策略委托给框架的 `DefaultAuthorizationPolicyProvider`，把以下两种入口交给同一个访问策略：
+Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `WorkbenchApiModule` 中生效，不影响独立的 `NexusAuth.Host` 站点及其开放 API。Workbench 使用框架默认的 `IAuthorizationPolicyProvider` 和 `IAuthorizationService`，由 `AddWorkbenchAuthorization()` 将同一个管理访问策略同时设为默认策略和 fallback 策略：
 
-- 没有 `[Authorize]` 或 `[AllowAnonymous]` 的端点，由 `GetFallbackPolicyAsync` 返回 Workbench 访问策略；
-- 只有裸 `[Authorize]` 的端点，由 `GetDefaultPolicyAsync` 返回同一个策略。
+- 没有 `[Authorize]` 或 `[AllowAnonymous]` 的端点使用 `FallbackPolicy`；
+- 只有裸 `[Authorize]` 的端点使用 `DefaultPolicy`。
 
-该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略则使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 401；已登录但未通过访问评估的请求返回 403。Swagger 也受该策略保护；BFF 模式的匿名浏览器请求会跳转登录，Bearer 请求需要具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 404。
+该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 401；已登录但未通过访问评估的请求返回 403。Swagger 也受该策略保护；BFF 模式的匿名浏览器请求会跳转登录，Bearer 请求需要具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 404。
 
-访问判定由 `WorkbenchAccessAuthorizationHandler` 完成。它继承官方的 `AuthorizationHandler<WorkbenchAccessRequirement>`，因此作为官方 `IAuthorizationHandler` 参与 ASP.NET Core 授权；其直接依赖 `IUserRepository`，按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
+访问权限规则直接位于 `WorkbenchAccessAuthorizationHandler` 中。它继承框架原生的 `AuthorizationHandler<WorkbenchAccessRequirement>`，并通过 scoped 的 `IAuthorizationHandler` 注册参与 ASP.NET Core 授权；其直接依赖 `IUserRepository`，按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
 
 下列管理入口及其全部读写操作由默认访问策略保护：
 
@@ -507,23 +507,44 @@ Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `
 
 管理控制器不再分别硬编码旧的 Administrator 策略，也不再在 action 内重复执行管理员判定。系统账号对象本身不可被这些用户管理接口修改、禁用、重置密码、删除或吊销的保护仍由用户管理服务执行。
 
-`AddWorkbenchAuthorization()` 负责注册默认策略，以及实现官方 `IAuthorizationPolicyProvider` 和 `IAuthorizationHandler` 接口的业务实现类。扩展授权策略时，应用可以在调用后替换官方的 `IAuthorizationPolicyProvider`：
+`AddWorkbenchAuthorization()` 通过 `services.AddAuthorization` 注册默认策略、fallback 策略和仅要求认证的命名策略，并以 scoped 生命周期注册访问 handler：
+
+```csharp
+services.AddAuthorization(options =>
+{
+    var policy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .AddRequirements(new WorkbenchAccessRequirement())
+        .Build();
+    options.DefaultPolicy = policy;
+    options.FallbackPolicy = policy;
+    options.AddPolicy(
+        WorkbenchAuthorizationPolicies.AuthenticatedUser,
+        p => p.RequireAuthenticatedUser());
+});
+services.AddScoped<IAuthorizationHandler, WorkbenchAccessAuthorizationHandler>();
+```
+
+扩展访问判定时，应用应继续使用官方的 `IAuthorizationHandler` 注册点。只需移除 `ImplementationType` 为 `WorkbenchAccessAuthorizationHandler` 的对应 descriptor，再注册继承了 `AuthorizationHandler<WorkbenchAccessRequirement>` 的新 handler；内置 handler 保持不变：
 
 ```csharp
 builder.Services.AddWorkbenchAuthorization();
 
-builder.Services.Replace(
-    ServiceDescriptor.Singleton<IAuthorizationPolicyProvider,
-        CustomPolicyProvider>());
+var descriptor = builder.Services.FirstOrDefault(descriptor =>
+    descriptor.ServiceType == typeof(IAuthorizationHandler) &&
+    descriptor.ImplementationType == typeof(WorkbenchAccessAuthorizationHandler));
+if (descriptor is not null)
+{
+    builder.Services.Remove(descriptor);
+}
+
+builder.Services.AddScoped<IAuthorizationHandler,
+    CustomWorkbenchAccessAuthorizationHandler>();
 ```
-
-自定义 provider 应保留 `GetDefaultPolicyAsync` 和 `GetFallbackPolicyAsync` 对 Workbench 访问策略的返回结果，继续保证无授权元数据端点和裸 `[Authorize]` 默认受保护；如果要重写这些行为，应同时保留默认拒绝的边界。
-
-如果确实需要改变访问判定本身，可以只移除 `ImplementationType` 为 `WorkbenchAccessAuthorizationHandler` 的 `IAuthorizationHandler` descriptor，再通过 `AddScoped<IAuthorizationHandler, CustomWorkbenchAuthorizationHandler>()` 注册自定义 handler。不要使用 `RemoveAll<IAuthorizationHandler>()`，否则会连同框架内置的 authorization handler 一起删除。自定义 handler 同样应继承 `AuthorizationHandler<WorkbenchAccessRequirement>`，并在无法确认访问资格时拒绝请求。
 
 `/api/auth/config`、`/api/auth/login`、`/signin-oidc` 和 `/api/auth/me` 明确保留 `[AllowAnonymous]`。`POST /api/auth/logout` 显式使用命名策略 `WorkbenchAuthenticatedUser`（`WorkbenchAuthorizationPolicies.AuthenticatedUser`），只要求已登录，因此普通用户也能退出。
 
-`/api/auth/me` 虽然允许匿名访问，但会对当前 Principal 使用 `IAuthorizationService` 和 `provider.GetDefaultPolicyAsync` 主动执行同一访问策略。已登录时，兼容字段 `isAdministrator` 表示“当前 Workbench 管理访问规则是否通过”，不再表示某个单独的管理员策略或控制器内判断；Dashboard 可用它展示提示，但该字段不能代替服务端端点授权。
+`/api/auth/me` 虽然允许匿名访问，但已登录请求会通过框架的 `IAuthorizationService`，对 `IOptions<AuthorizationOptions>.Value.DefaultPolicy` 执行同一访问规则。兼容字段 `isAdministrator` 表示当前 Workbench 管理访问规则是否通过，不再表示某个单独的管理员策略或控制器内判断；Dashboard 可用它展示提示，但该字段不能代替服务端端点授权。默认 fallback、匿名入口和仅要求认证的命名策略保持不变，Workbench 的这些策略也不会影响独立的 Host 站点。
 
 Bearer 在 BFF 和网关模式下都校验 issuer、audience、有效期及 `token_use=access_token`，随后要求 `client_id` 属于允许列表，再调用 `IUserTokenValidator.IsActiveAsync` 检查用户和吊销状态。默认允许归一化后的 `Auth:ClientId`；其他调用方必须显式加入 `Auth:AllowedBearerClientIds` 数组，例如：
 
@@ -590,7 +611,7 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 | 本地 Dashboard 请求失败，命中内网地址 | Vite 代理仍是 `192.168.31.200:9100` | 把 `vite.config.ts` 的 `/api`、`/signin-oidc` 目标改成实际 API |
 | API 报无法访问 Provider Discovery | 服务端访问不到公开 Authority | 配置 `Auth:BackchannelAuthority` 指向内部地址 |
 | Bearer 调用返回 401 | audience/issuer/client_id 不匹配、token 过期或不是 access_token | 核对 audience、issuer、`token_use` 与客户端允许列表 |
-| 管理接口返回 403 | 当前访问 evaluator 未通过 | 默认 evaluator 下用启用状态的系统账号登录；自定义 evaluator 时核对其判定（见第 10 节） |
+| 管理接口返回 403 | 当前访问授权 handler 未通过 | 默认授权 handler 下用启用状态的系统账号登录；替换授权 handler 时核对其判定（见第 10 节） |
 | 多实例下用户随机被登出 | Data Protection key ring 未共享 | 共享并持久化 key ring |
 | 网关模式后 `/api/auth/login` 返回 404 | 这是网关模式的预期行为 | 由网关实现登录，或关闭网关模式 |
 | 无法查看已创建的 SCIM/开放 API 凭证明文 | 明文只在创建时返回一次 | 重新创建凭证并立即保存 |
