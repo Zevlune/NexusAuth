@@ -14,46 +14,25 @@ public static class WorkbenchAuthorizationPolicies
 
 public sealed class WorkbenchAccessRequirement : IAuthorizationRequirement;
 
-/// <summary>Decides whether an authenticated principal may access Workbench management APIs.</summary>
-public interface IWorkbenchAccessEvaluator
-{
-    Task<bool> CanAccessAsync(
-        ClaimsPrincipal principal,
-        HttpContext? httpContext,
-        CancellationToken ct = default);
-}
-
-/// <summary>The default management access rule; replace IWorkbenchAccessEvaluator to customize it.</summary>
-public sealed class SystemAccountWorkbenchAccessEvaluator(IUserRepository users) : IWorkbenchAccessEvaluator
-{
-    public async Task<bool> CanAccessAsync(
-        ClaimsPrincipal principal,
-        HttpContext? httpContext,
-        CancellationToken ct = default)
-    {
-        if (principal.Identity?.IsAuthenticated != true)
-            return false;
-
-        var subject = principal.FindFirst("sub")?.Value
-            ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        return Guid.TryParse(subject, out var userId)
-            && await users.FindByIdAsync(userId, ct) is { IsActive: true, IsSystemAccount: true };
-    }
-}
-
-public sealed class WorkbenchAccessAuthorizationHandler(IWorkbenchAccessEvaluator access)
+/// <summary>Evaluates Workbench access through the framework's IAuthorizationHandler extension point.</summary>
+public sealed class WorkbenchAccessAuthorizationHandler(IUserRepository users)
     : AuthorizationHandler<WorkbenchAccessRequirement>
 {
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext context,
         WorkbenchAccessRequirement requirement)
     {
-        var httpContext = context.Resource as HttpContext;
-        if (context.User.Identity?.IsAuthenticated == true
-            && await access.CanAccessAsync(context.User, httpContext, httpContext?.RequestAborted ?? CancellationToken.None))
-        {
+        if (context.User.Identity?.IsAuthenticated != true)
+            return;
+
+        var subject = context.User.FindFirst("sub")?.Value
+            ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!Guid.TryParse(subject, out var userId))
+            return;
+
+        var cancellationToken = (context.Resource as HttpContext)?.RequestAborted ?? CancellationToken.None;
+        if (await users.FindByIdAsync(userId, cancellationToken) is { IsActive: true, IsSystemAccount: true })
             context.Succeed(requirement);
-        }
     }
 }
 
@@ -88,7 +67,6 @@ public static class WorkbenchAuthorizationServiceCollectionExtensions
             services.Remove(descriptor);
         }
         services.TryAddSingleton<IAuthorizationPolicyProvider, WorkbenchAuthorizationPolicyProvider>();
-        services.TryAddScoped<IWorkbenchAccessEvaluator, SystemAccountWorkbenchAccessEvaluator>();
         services.TryAddEnumerable(ServiceDescriptor.Scoped<IAuthorizationHandler, WorkbenchAccessAuthorizationHandler>());
         services.AddAuthorization(options => options.AddPolicy(
             WorkbenchAuthorizationPolicies.AuthenticatedUser,

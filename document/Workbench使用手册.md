@@ -490,23 +490,14 @@ dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTest
 
 ## 10. 权限边界
 
-Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `WorkbenchApiModule` 中生效，不影响独立的 `NexusAuth.Host` 站点及其开放 API。`WorkbenchAuthorizationPolicyProvider` 实现 `IAuthorizationPolicyProvider`，命名策略委托给框架的 `DefaultAuthorizationPolicyProvider`，把以下两种入口交给同一个访问策略：
+Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `WorkbenchApiModule` 中生效，不影响独立的 `NexusAuth.Host` 站点及其开放 API。`WorkbenchAuthorizationPolicyProvider` 直接实现官方的 `IAuthorizationPolicyProvider`，命名策略委托给框架的 `DefaultAuthorizationPolicyProvider`，把以下两种入口交给同一个访问策略：
 
 - 没有 `[Authorize]` 或 `[AllowAnonymous]` 的端点，由 `GetFallbackPolicyAsync` 返回 Workbench 访问策略；
 - 只有裸 `[Authorize]` 的端点，由 `GetDefaultPolicyAsync` 返回同一个策略。
 
 该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略则使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 401；已登录但未通过访问评估的请求返回 403。Swagger 也受该策略保护；BFF 模式的匿名浏览器请求会跳转登录，Bearer 请求需要具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 404。
 
-访问判定由 `WorkbenchAccessAuthorizationHandler` 完成，它只把 `ClaimsPrincipal`、当前 `HttpContext` 和取消令牌交给 `IWorkbenchAccessEvaluator.CanAccessAsync`：
-
-```csharp
-Task<bool> CanAccessAsync(
-    ClaimsPrincipal principal,
-    HttpContext? httpContext,
-    CancellationToken cancellationToken = default);
-```
-
-默认实现 `SystemAccountWorkbenchAccessEvaluator` 按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
+访问判定由 `WorkbenchAccessAuthorizationHandler` 完成。它继承官方的 `AuthorizationHandler<WorkbenchAccessRequirement>`，因此作为官方 `IAuthorizationHandler` 参与 ASP.NET Core 授权；其直接依赖 `IUserRepository`，按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
 
 下列管理入口及其全部读写操作由默认访问策略保护：
 
@@ -516,25 +507,19 @@ Task<bool> CanAccessAsync(
 
 管理控制器不再分别硬编码旧的 Administrator 策略，也不再在 action 内重复执行管理员判定。系统账号对象本身不可被这些用户管理接口修改、禁用、重置密码、删除或吊销的保护仍由用户管理服务执行。
 
-`AddWorkbenchAuthorization()` 负责注册策略、handler 和访问评估器。默认 evaluator 和 policy provider 均通过 `TryAdd` 注册，因此应用可以在调用后替换：
+`AddWorkbenchAuthorization()` 负责注册默认策略，以及实现官方 `IAuthorizationPolicyProvider` 和 `IAuthorizationHandler` 接口的业务实现类。扩展授权策略时，应用可以在调用后替换官方的 `IAuthorizationPolicyProvider`：
 
 ```csharp
 builder.Services.AddWorkbenchAuthorization();
 
 builder.Services.Replace(
-    ServiceDescriptor.Scoped<IWorkbenchAccessEvaluator,
-        CustomWorkbenchAccessEvaluator>());
-```
-
-如需同时改变策略解析规则，也可替换 provider：
-
-```csharp
-builder.Services.Replace(
     ServiceDescriptor.Singleton<IAuthorizationPolicyProvider,
         CustomPolicyProvider>());
 ```
 
-自定义 provider 应保留或有意重写无授权元数据端点与裸 `[Authorize]` 的默认/fallback 行为。自定义 evaluator 同样必须实现默认拒绝；无法确认访问资格时应返回 `false`。
+自定义 provider 应保留 `GetDefaultPolicyAsync` 和 `GetFallbackPolicyAsync` 对 Workbench 访问策略的返回结果，继续保证无授权元数据端点和裸 `[Authorize]` 默认受保护；如果要重写这些行为，应同时保留默认拒绝的边界。
+
+如果确实需要改变访问判定本身，可以只移除 `ImplementationType` 为 `WorkbenchAccessAuthorizationHandler` 的 `IAuthorizationHandler` descriptor，再通过 `AddScoped<IAuthorizationHandler, CustomWorkbenchAuthorizationHandler>()` 注册自定义 handler。不要使用 `RemoveAll<IAuthorizationHandler>()`，否则会连同框架内置的 authorization handler 一起删除。自定义 handler 同样应继承 `AuthorizationHandler<WorkbenchAccessRequirement>`，并在无法确认访问资格时拒绝请求。
 
 `/api/auth/config`、`/api/auth/login`、`/signin-oidc` 和 `/api/auth/me` 明确保留 `[AllowAnonymous]`。`POST /api/auth/logout` 显式使用命名策略 `WorkbenchAuthenticatedUser`（`WorkbenchAuthorizationPolicies.AuthenticatedUser`），只要求已登录，因此普通用户也能退出。
 

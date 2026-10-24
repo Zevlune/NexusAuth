@@ -101,7 +101,7 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Hosts_can_replace_the_evaluator_or_policy_provider_without_controller_changes(
+    public async Task Hosts_can_replace_the_framework_handler_or_policy_provider_without_controller_changes(
         bool replaceProvider, bool gatewayEnabled)
     {
         using var configured = new WorkbenchAdministrationAuthorizationFixture(
@@ -110,7 +110,16 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
                 if (replaceProvider)
                     services.Replace(ServiceDescriptor.Singleton<IAuthorizationPolicyProvider, TestWorkbenchPolicyProvider>());
                 else
-                    services.Replace(ServiceDescriptor.Scoped<IWorkbenchAccessEvaluator, TestWorkbenchAccessEvaluator>());
+                {
+                    // Keep the framework handlers (including RequireAuthenticatedUser) intact.
+                    foreach (var descriptor in services.Where(descriptor =>
+                        descriptor.ServiceType == typeof(IAuthorizationHandler)
+                        && descriptor.ImplementationType == typeof(WorkbenchAccessAuthorizationHandler)).ToArray())
+                    {
+                        services.Remove(descriptor);
+                    }
+                    services.AddScoped<IAuthorizationHandler, TestWorkbenchAccessAuthorizationHandler>();
+                }
             });
         using var anonymous = configured.CreateAnonymousClient();
         using var ordinary = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
@@ -520,10 +529,14 @@ public sealed class TestWorkbenchAccessController : ControllerBase
     public IActionResult Named() => Ok();
 }
 
-public sealed class TestWorkbenchAccessEvaluator : IWorkbenchAccessEvaluator
+public sealed class TestWorkbenchAccessAuthorizationHandler : AuthorizationHandler<WorkbenchAccessRequirement>
 {
-    public Task<bool> CanAccessAsync(ClaimsPrincipal principal, Microsoft.AspNetCore.Http.HttpContext? httpContext, CancellationToken ct = default)
-        => Task.FromResult(principal.FindFirst("sub")?.Value == WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId.ToString());
+    protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, WorkbenchAccessRequirement requirement)
+    {
+        if (context.User.FindFirst("sub")?.Value == WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId.ToString())
+            context.Succeed(requirement);
+        return Task.CompletedTask;
+    }
 }
 
 public sealed class TestWorkbenchPolicyProvider(IOptions<AuthorizationOptions> options)
