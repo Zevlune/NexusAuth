@@ -1,35 +1,14 @@
-using System.Globalization;
-using System.IdentityModel.Tokens.Jwt;
+using System.Text.Json;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Reflection;
-using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text.Json;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.IdentityModel.Protocols;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
-using Microsoft.IdentityModel.Tokens;
-using NexusAuth.Application;
-using NexusAuth.Application.Clients;
-using NexusAuth.Application.Services.ApiResources;
-using NexusAuth.Application.Services.LoginAudits;
-using NexusAuth.Application.Services.OpenApi;
-using NexusAuth.Application.Services.Scim;
-using NexusAuth.Application.Services.Tokens;
-using NexusAuth.Application.Services.WebAuthn;
-using NexusAuth.Application.Users;
-using NexusAuth.Domain.AggregateRoots.Users;
+using Microsoft.Extensions.Options;
 using NexusAuth.Domain.Repositories;
-using NexusAuth.Extension;
+using NexusAuth.Workbench.Api;
+using NexusAuth.Workbench.Api.Authorization;
 using NexusAuth.Workbench.Api.Controllers;
 using Xunit;
 
@@ -52,7 +31,7 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
     }
 
     [Fact]
-    public void Every_management_controller_uses_the_administrator_policy()
+    public void Management_controllers_rely_on_the_global_fallback_without_fixed_policy_names()
     {
         var managementControllers = typeof(WorkbenchApiModule).Assembly.GetTypes()
             .Where(type => !type.IsAbstract
@@ -65,10 +44,110 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         Assert.Equal(8, managementControllers.Length);
         Assert.All(managementControllers, type =>
         {
-            var authorize = type.GetCustomAttribute<AuthorizeAttribute>(inherit: true);
-            Assert.NotNull(authorize);
-            Assert.Equal(WorkbenchAuthorizationPolicies.Administrator, authorize.Policy);
+            Assert.Empty(type.GetCustomAttributes<AuthorizeAttribute>(inherit: true));
+            Assert.Empty(type.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
+            Assert.All(type.GetMethods().Where(method => method.DeclaringType == type), method =>
+            {
+                Assert.Empty(method.GetCustomAttributes<AuthorizeAttribute>(inherit: true));
+                Assert.Empty(method.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
+            });
         });
+    }
+
+    [Fact]
+    public void Workbench_uses_the_framework_policy_provider_and_authorization_service()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddControllers();
+        services.AddWorkbenchAuthorization();
+        services.AddScoped<IUserRepository>(_ => RecordingDispatchProxy.Create<IUserRepository>((_, _) => null));
+        using var provider = services.BuildServiceProvider();
+
+        Assert.IsType<DefaultAuthorizationPolicyProvider>(provider.GetRequiredService<IAuthorizationPolicyProvider>());
+        Assert.IsAssignableFrom<DefaultAuthorizationService>(provider.GetRequiredService<IAuthorizationService>());
+        var options = provider.GetRequiredService<IOptions<AuthorizationOptions>>().Value;
+        Assert.Same(options.DefaultPolicy, options.FallbackPolicy);
+        Assert.Contains(options.DefaultPolicy.Requirements, requirement => requirement is WorkbenchAccessRequirement);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Default_and_fallback_protect_new_endpoints_without_a_named_policy(bool gatewayEnabled)
+    {
+        using var configured = new WorkbenchAdministrationAuthorizationFixture("nexusauth.workbench", gatewayEnabled);
+        using var anonymous = configured.CreateAnonymousClient();
+        using var ordinary = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
+        using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+        foreach (var path in new[] { "/__test/access/default", "/__test/access/fallback" })
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await ordinary.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await administrator.GetAsync(path)).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync("/__test/access/public")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ordinary.GetAsync("/__test/access/named")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await administrator.GetAsync("/__test/access/named")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Hosts_can_replace_the_framework_handler_without_controller_changes(bool gatewayEnabled)
+    {
+        using var configured = new WorkbenchAdministrationAuthorizationFixture(
+            "nexusauth.workbench", gatewayEnabled, services =>
+            {
+                // Keep the framework handlers (including RequireAuthenticatedUser) intact.
+                foreach (var descriptor in services.Where(descriptor =>
+                    descriptor.ServiceType == typeof(IAuthorizationHandler)
+                    && descriptor.ImplementationType == typeof(WorkbenchAccessAuthorizationHandler)).ToArray())
+                {
+                    services.Remove(descriptor);
+                }
+                services.AddScoped<IAuthorizationHandler, TestWorkbenchAccessAuthorizationHandler>();
+            });
+        using var anonymous = configured.CreateAnonymousClient();
+        using var ordinary = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
+        using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+        foreach (var path in new[]
+        {
+            "/__test/access/default", "/__test/access/fallback", "/api/users",
+            $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}/passkeys",
+        })
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await ordinary.GetAsync(path)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await administrator.GetAsync(path)).StatusCode);
+        }
+
+        using var me = await ordinary.GetAsync("/api/auth/me");
+        using var body = JsonDocument.Parse(await me.Content.ReadAsStringAsync());
+        Assert.True(body.RootElement.GetProperty("isAdministrator").GetBoolean());
+        using var deniedMe = await administrator.GetAsync("/api/auth/me");
+        using var deniedBody = JsonDocument.Parse(await deniedMe.Content.ReadAsStringAsync());
+        Assert.False(deniedBody.RootElement.GetProperty("isAdministrator").GetBoolean());
+
+        // Write actions must also use the replacement, including both formerly hardcoded controllers.
+        var userPath = $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}";
+        Assert.Equal(HttpStatusCode.NoContent, (await ordinary.DeleteAsync(userPath)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await administrator.DeleteAsync(userPath)).StatusCode);
+        var revokePath = userPath + $"/passkeys/{Guid.NewGuid()}/revoke";
+        Assert.Equal(HttpStatusCode.OK, (await ordinary.PostAsJsonAsync(revokePath, new { reason = "Lost device" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await administrator.PostAsJsonAsync(revokePath, new { reason = "Lost device" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task Ordinary_cookie_users_can_logout_without_management_access()
+    {
+        using var anonymous = fixture.CreateAnonymousClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsync("/api/auth/logout", null)).StatusCode);
+        using var client = fixture.CreateAnonymousClient();
+        await client.GetAsync($"/__test/sign-in/{WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId}");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/users")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/auth/logout", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/auth/me")).StatusCode);
     }
 
     [Theory]
@@ -196,216 +275,5 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
 
         using var ordinary = fixture.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
         Assert.Equal(HttpStatusCode.OK, (await ordinary.GetAsync("/api/auth/me")).StatusCode);
-    }
-}
-
-public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
-{
-    public static readonly Guid AdministratorId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-    public static readonly Guid OrdinaryUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
-    public static readonly Guid InactiveUserId = Guid.Parse("33333333-3333-3333-3333-333333333333");
-    public static readonly Guid TargetUserId = Guid.Parse("44444444-4444-4444-4444-444444444444");
-
-    private const string Authority = "https://issuer.example.test";
-    private const string Audience = "nexusauth.workbench.api";
-    private const string ClientId = "nexusauth.workbench";
-    private readonly RSA rsa = RSA.Create(2048);
-    private readonly RsaSecurityKey signingKey;
-    private readonly WebApplicationFactory<WorkbenchApiModule> factory;
-    private readonly Dictionary<Guid, User> users;
-    private int userLookupCount;
-
-    public WorkbenchAdministrationAuthorizationFixture() : this(ClientId, false)
-    {
-    }
-
-    internal WorkbenchAdministrationAuthorizationFixture(string configuredClientId, bool gatewayEnabled)
-    {
-        var administrator = User.Create("administrator", "test-password", "Administrator");
-        administrator.MarkAsSystemAccount();
-        var ordinary = User.Create("ordinary", "test-password", "Ordinary User");
-        var inactive = User.Create("inactive", "test-password", "Inactive User");
-        inactive.UpdateScimProfile(inactive.Username, inactive.Nickname, isActive: false);
-        inactive.MarkAsSystemAccount();
-        var target = User.Create("target", "test-password", "Target User");
-
-        users = new Dictionary<Guid, User>
-        {
-            [AdministratorId] = administrator,
-            [OrdinaryUserId] = ordinary,
-            [InactiveUserId] = inactive,
-            [TargetUserId] = target,
-        };
-
-        signingKey = new RsaSecurityKey(rsa) { KeyId = "authorization-test" };
-        factory = new WebApplicationFactory<WorkbenchApiModule>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Testing")
-                .UseSetting("Auth:Authority", Authority)
-                .UseSetting("Auth:Audience", Audience)
-                .UseSetting("Auth:ClientId", configuredClientId)
-                .UseSetting("Gateway:Enabled", gatewayEnabled.ToString())
-                .UseSetting("Auth:ClientSecret", "test-only-secret")
-                .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
-                .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")
-                .UseSetting("Auth:Scope", "openid profile offline_access nexusauth.workbench.api")
-                .UseSetting("Auth:AllowedBearerClientIds:0", "additional-bearer-client");
-
-            builder.ConfigureServices(services =>
-            {
-                Replace(services, RecordingDispatchProxy.Create<IUserRepository>((method, args) =>
-                {
-                    if (method.Name != nameof(IUserRepository.FindByIdAsync))
-                        return null;
-
-                    Interlocked.Increment(ref userLookupCount);
-                    return users.GetValueOrDefault((Guid)args![0]!);
-                }));
-                Replace(services, RecordingDispatchProxy.Create<ITokenBlacklistRepository>((_, _) => false));
-                Replace(services, RecordingDispatchProxy.Create<IApiResourceService>((method, _) =>
-                    method.Name == nameof(IApiResourceService.GetAllAsync)
-                        ? new List<ApiResourceDto>()
-                        : null));
-                Replace(services, RecordingDispatchProxy.Create<IClientMetadataService>((_, _) =>
-                    new ClientMetadataDto([], [], [])));
-                Replace(services, RecordingDispatchProxy.Create<IClientService>((method, _) =>
-                    method.Name == nameof(IClientService.GetAllAsync)
-                        ? new List<ClientDto>()
-                        : null));
-                Replace(services, RecordingDispatchProxy.Create<ILoginAuditService>((method, _) =>
-                    method.Name == nameof(ILoginAuditService.GetPagedAsync)
-                        ? new PagedResult<LoginAuditLogDto>([], 0, 1, 10)
-                        : null));
-                Replace(services, RecordingDispatchProxy.Create<IOpenApiCredentialService>((method, _) =>
-                    method.Name == nameof(IOpenApiCredentialService.GetAllAsync)
-                        ? Array.Empty<OpenApiCredentialSummary>()
-                        : null));
-                Replace(services, RecordingDispatchProxy.Create<IScimCredentialService>((method, _) =>
-                    method.Name == nameof(IScimCredentialService.GetAllAsync)
-                        ? Array.Empty<ScimCredentialSummary>()
-                        : null));
-                Replace(services, RecordingDispatchProxy.Create<IPasskeyManagementService>((method, _) =>
-                    method.Name == nameof(IPasskeyManagementService.GetAsync)
-                        ? Array.Empty<WebAuthnCredentialSummary>()
-                        : null));
-                Replace(services, RecordingDispatchProxy.Create<IUserManagementService>((method, _) =>
-                    method.Name == nameof(IUserManagementService.GetPagedAsync)
-                        ? new PagedResult<ManagedUserDto>([], 0, 1, 10)
-                        : null));
-                Replace(services, RecordingDispatchProxy.Create<IOidcWorkbenchService>((method, args) =>
-                    method.Name switch
-                    {
-                        "get_Authority" => Authority,
-                        "get_ClientId" => ClientId,
-                        "get_RedirectUri" => "https://dashboard.example.test/signin-oidc",
-                        "get_PostLogoutRedirectUri" => "https://dashboard.example.test/",
-                        "get_Scope" => "openid profile offline_access nexusauth.workbench.api",
-                        "get_SignOutProvider" => false,
-                        nameof(IOidcWorkbenchService.IntrospectAccessTokenAsync) =>
-                            new AccessTokenIntrospectionResult(
-                                true,
-                                ((string)args![0]!)["cookie-access:".Length..],
-                                ClientId),
-                        _ => null,
-                    }));
-
-                services.AddControllers().AddApplicationPart(typeof(TestSessionController).Assembly);
-                services.PostConfigure<JwtBearerOptions>(
-                    WorkbenchAuthenticationDefaults.BearerScheme,
-                    options =>
-                    {
-                        var configuration = new OpenIdConnectConfiguration { Issuer = Authority };
-                        configuration.SigningKeys.Add(signingKey);
-                        options.Configuration = configuration;
-                        options.ConfigurationManager =
-                            new StaticConfigurationManager<OpenIdConnectConfiguration>(configuration);
-                    });
-            });
-        });
-    }
-
-    public int UserLookupCount => Volatile.Read(ref userLookupCount);
-
-    public HttpClient CreateAnonymousClient() =>
-        factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-
-    public HttpClient CreateBearerClient(Guid userId, string? clientId = ClientId)
-    {
-        var now = DateTime.UtcNow;
-        var claims = new List<Claim>
-        {
-            new("sub", userId.ToString()),
-            new("name", users[userId].Nickname),
-            new("token_use", "access_token"),
-            new("iat", new DateTimeOffset(now).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
-        };
-        if (clientId is not null)
-            claims.Add(new Claim("client_id", clientId));
-
-        var token = new JwtSecurityToken(
-            Authority,
-            Audience,
-            claims,
-            now.AddSeconds(-1),
-            now.AddMinutes(5),
-            new SigningCredentials(signingKey, SecurityAlgorithms.RsaSha256));
-        var client = CreateAnonymousClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
-            "Bearer",
-            new JwtSecurityTokenHandler().WriteToken(token));
-        return client;
-    }
-
-    public void ResetUserLookups() => Interlocked.Exchange(ref userLookupCount, 0);
-
-    public void Dispose()
-    {
-        factory.Dispose();
-        rsa.Dispose();
-    }
-
-    private static void Replace<T>(IServiceCollection services, T instance) where T : class
-    {
-        services.RemoveAll<T>();
-        services.AddSingleton(instance);
-    }
-
-}
-
-[ApiController]
-public sealed class TestSessionController : ControllerBase
-{
-    [HttpGet("/__test/sign-in/{userId:guid}")]
-    [AllowAnonymous]
-    public async Task<IActionResult> SignIn(Guid userId)
-    {
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(
-            [
-                new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
-                new Claim(ClaimTypes.Name, "Test Cookie User"),
-            ],
-            WorkbenchAuthenticationDefaults.CookieScheme));
-        var properties = new AuthenticationProperties
-        {
-            IsPersistent = false,
-            ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(10),
-        };
-        properties.StoreTokens(
-        [
-            new AuthenticationToken { Name = "access_token", Value = $"cookie-access:{userId}" },
-            new AuthenticationToken { Name = "refresh_token", Value = "cookie-refresh" },
-            new AuthenticationToken { Name = "id_token", Value = "cookie-id" },
-            new AuthenticationToken
-            {
-                Name = "expires_at",
-                Value = DateTimeOffset.UtcNow.AddMinutes(10).ToString("O", CultureInfo.InvariantCulture),
-            },
-        ]);
-
-        await HttpContext.SignInAsync(
-            WorkbenchAuthenticationDefaults.CookieScheme,
-            principal,
-            properties);
-        return Ok();
     }
 }

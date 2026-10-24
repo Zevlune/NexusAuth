@@ -19,6 +19,7 @@ using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Workbench.Api;
+using NexusAuth.Workbench.Api.Authorization;
 using NexusAuth.Workbench.Api.Controllers;
 using Xunit;
 
@@ -91,11 +92,7 @@ public sealed class UserRequestValidationTests
             .ConfigureServices(services =>
             {
                 services.AddControllers().AddApplicationPart(typeof(UsersController).Assembly);
-                services.AddAuthorization(options =>
-                    options.AddPolicy(WorkbenchAuthorizationPolicies.Administrator, policy => policy
-                        .RequireAuthenticatedUser()
-                        .AddRequirements(new WorkbenchAdministratorRequirement())));
-                services.AddScoped<IAuthorizationHandler, WorkbenchAdministratorAuthorizationHandler>();
+                services.AddWorkbenchAuthorization();
                 services.AddAuthentication("test")
                     .AddScheme<AuthenticationSchemeOptions, AdministratorAuthenticationHandler>("test", _ => { });
                 services.AddSingleton(userRepository);

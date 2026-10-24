@@ -1,14 +1,12 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using Luck.AspNetCore.ApiResults;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
-[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [ApiResultWrap]
 [Route("api/users/{id:guid}/passkeys")]
@@ -17,7 +15,6 @@ public sealed class UserPasskeysController(IPasskeyManagementService passkeys, I
     [HttpGet]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
-        if (!await IsAdministratorAsync(ct)) return Forbid();
         if (await users.FindByIdAsync(id, ct) is null) return NotFound();
         Response.Headers.CacheControl = "no-store";
         return Ok(await passkeys.GetAsync(id, ct));
@@ -26,7 +23,6 @@ public sealed class UserPasskeysController(IPasskeyManagementService passkeys, I
     [HttpPost("{credentialId:guid}/revoke")]
     public async Task<IActionResult> Revoke(Guid id, Guid credentialId, [FromBody] RevokePasskeyRequest request, CancellationToken ct)
     {
-        if (!await IsAdministratorAsync(ct)) return Forbid();
         try
         {
             return await passkeys.RevokeAsync(id, credentialId, ActorId, request.Reason, ct)
@@ -41,8 +37,6 @@ public sealed class UserPasskeysController(IPasskeyManagementService passkeys, I
     private Guid ActorId => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id)
         ? id : Guid.Empty;
 
-    private Task<bool> IsAdministratorAsync(CancellationToken ct) =>
-        WorkbenchAdministratorAuthorizationHandler.IsAdministratorAsync(User, users, HttpContext, ct);
 }
 
 public sealed record RevokePasskeyRequest([Required, StringLength(500)] string Reason);

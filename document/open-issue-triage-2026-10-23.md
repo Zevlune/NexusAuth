@@ -11,7 +11,7 @@
 | #12 | Basic 的 ID、密钥分别做表单编码；Bootstrap 与协议调用共用配置归一化 | 授权码交换、刷新、内省的实际请求经 Host 解析器解码，覆盖特殊字符和 Unicode |
 | #14 | 默认数据库初始化移除固定 SCIM 测试令牌；容器测试使用显式专用凭据 | 初始化脚本检查；未配置外部环境时测试正常跳过 |
 | #17 | SMTP 默认关闭，显式启用时保留启动校验；外部 SCIM 测试按需运行 | Host 回归、部署配置检查 |
-| #18 | 直连示例增加内部 Backchannel；Compose 登出回调支持环境覆盖 | 配置映射测试、Compose 配置检查 |
+| #18 | 改为只使用与 Provider issuer 一致、浏览器和 Workbench 都可直达的单一 Authority；移除内部 Backchannel 与 HTTP 地址改写；Compose 登出回调支持环境覆盖 | 配置映射测试、Compose 配置检查 |
 | #69 | 所有受版本管理的 shell 脚本统一 LF，增加 Git 属性约束 | 原始字节、`git check-attr`、`bash -n` |
 
 对应 PR 使用 `Closes` 关联上述 Issue，合并后自动关闭。已有数据库不会因删除初始化种子而自动删除旧凭据；使用旧初始化脚本的环境应在 Workbench 中撤销历史测试凭据，再创建有期限的专用测试凭据。

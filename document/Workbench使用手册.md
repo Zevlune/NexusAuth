@@ -79,8 +79,8 @@ Workbench 和 Host 指向同一个库和 schema。数据库必须先初始化：
 Workbench 的默认模式（BFF 模式）需要 Host 提供 OIDC 登录。请先按 [NexusAuth.Host 使用手册](NexusAuth.Host使用手册.md) 把 Host 启动起来，至少满足：
 
 - Host 通过 OIDC Discovery（`<Authority>/.well-known/openid-configuration`）暴露授权、令牌、JWKS 和 introspection 端点。
-- Host 的 `Jwt:Issuer` 与 Workbench 配置的 `Auth:Authority` 一致，因为 Workbench 同时用它做浏览器跳转和 issuer 校验。
-- Workbench API 所在进程能访问 Host 的令牌和内省端点；容器或跨网段时用 `Auth:BackchannelAuthority` 指向内部地址。
+- Host 的 `Jwt:Issuer` 与 Workbench 配置的 `Auth:Authority` 完全一致；同一个 Authority 用于浏览器授权跳转、Discovery、令牌、JWKS、introspection 和 JWT issuer 校验。
+- 浏览器和 Workbench API 进程都能直接访问该 Authority。容器内的 `localhost` 指向容器自身；跨网段或跨容器时应使用同一个可达域名或 IP，并通过网络 DNS 或入口路由访问 Provider。
 
 Host 源码方式默认关闭 SMTP，因此没有邮件配置也能启动。只有需要邮件功能时，才显式设置 `NEXUSAUTH_SMTP_ENABLED=true` 并提供完整配置；启用后 `ValidateOnStart` 仍会在任何必需项缺失时立即阻止启动：
 
@@ -133,11 +133,12 @@ docker compose up --build
 
 Compose 为 Workbench API 注入的关键值（见根 `docker-compose.yml` 的 `admin-api` 服务）：
 
-- `Auth:Authority` 取 `${NEXUSAUTH_JWT_ISSUER:-http://localhost:5100}`，与 Host 的 issuer 对齐；
-- `Auth:BackchannelAuthority` 默认 `http://sso:8080`，让容器内的服务端请求走 Compose 网络；
+- `Auth:Authority` 取 `${NEXUSAUTH_JWT_ISSUER:-http://localhost:5100}`，与 Host issuer 使用同一个值；
 - `Auth:RedirectUri` 默认 `http://localhost:5560/signin-oidc`；`Auth:PostLogoutRedirectUri` 默认 `http://localhost:5560/`，可通过 `NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI` 覆盖；
 - `Auth:ClientSecret` 由 `${WORKBENCH_CLIENT_SECRET:-c57cf0e110c54ad2ac5591b99801b852}` 注入；
 - 连接串与 Bootstrap 名称也由环境变量提供。
+
+`http://localhost:5100` 只适合浏览器和 Workbench 进程都运行在宿主机上的场景。`admin-api` 容器内的 `localhost` 是容器自身，不能借它访问 `sso`。容器化启动时应先把 `NEXUSAUTH_JWT_ISSUER` 设置为浏览器和 `admin-api` 都能通过同一 DNS/IP 直接访问、且路由到 Provider 的 Authority；不要改成 `sso:8080` 或其他内网地址替身。
 
 容器默认的 `WORKBENCH_CLIENT_SECRET` 是仓库内置的开发值，只适合本地。生产必须用密钥管理注入，并保证与 Host 数据库里的客户端密钥一致（见 [6.2](#62-自身-bootstrap-登记了什么)）。
 
@@ -259,7 +260,6 @@ Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便
 | --- | --- | --- |
 | `NEXUSAUTH_WORKBENCH_CONNECTION_STRINGS_DEFAULT` | `ConnectionStrings:Default` | 否（开发环境有默认值） |
 | `NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY` | `Auth:Authority` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY` | `Auth:BackchannelAuthority` | 否 |
 | `NEXUSAUTH_WORKBENCH_AUTH_AUDIENCE` | `Auth:Audience` | 是 |
 | `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_ID` | `Auth:ClientId` | 是 |
 | `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET` | `Auth:ClientSecret` | 是 |
@@ -277,27 +277,26 @@ Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便
 
 `NEXUSAUTH_SMTP_*` 系列（`NEXUSAUTH_SMTP_ENABLED`、`HOST`、`PORT`、`SECURITY`、`USERNAME`、`PASSWORD`、`FROM_ADDRESS`、`FROM_NAME`、`VERIFICATION_CODE_COOLDOWN_SECONDS`、`VERIFICATION_CODE_LIFETIME_MINUTES`）由 Workbench API 一并读取并映射到 `Smtp:*`，与 Host 共享同样的校验规则。
 
-`NEXUSAUTH_LUCK_LOGGING_*` 覆盖 `LuckLogging:*` 日志配置。未列入单下划线映射的键可以用标准 .NET 双下划线形式（例如 `Auth__BackchannelAuthority`），或者由编排直接注入配置键。
+`NEXUSAUTH_LUCK_LOGGING_*` 覆盖 `LuckLogging:*` 日志配置。未列入单下划线映射的键可以用标准 .NET 双下划线形式（例如 `Auth__AllowedBearerClientIds__0`），或者由编排直接注入配置键。
 
-启动时 `RequireAuthConfiguration` 会集中校验：`Authority` 必须是非空绝对 HTTP(S) URI；非网关模式下 `RedirectUri`、`PostLogoutRedirectUri`、`Scope` 必须有值；`BackchannelAuthority` 必须是合法的绝对 HTTP(S) 基础地址（不含用户信息、查询、片段）。任何一项不满足都会抛出异常并阻止启动。
+启动时 `WorkbenchAuthenticationSettings` 会集中校验：`Authority` 必须是非空绝对 HTTP(S) 基础 URI，且不含用户信息、查询或片段；非网关模式下 `RedirectUri`、`PostLogoutRedirectUri`、`Scope` 必须有值。任何一项不满足都会抛出异常并阻止启动。
 
 `Auth:ClientId` 和 `Auth:ClientSecret` 的配置首尾空白在启动校验、Bootstrap 和协议调用中统一去除；内部空格与其他字符保持原样。发送 Basic 认证时，ID 与密钥分别做表单编码后再拼接和 Base64 编码。
 
-### 5.3 公开 Authority 与 BackchannelAuthority 的区别
+### 5.3 单一 Authority
 
 这是 Workbench 最容易配错的一项：
 
 | 键 | 面向谁 | 作用 |
 | --- | --- | --- |
-| `Auth:Authority` | 浏览器 + 服务端 | Provider 的**公开**基础地址。用于拼授权跳转 URL、Discovery 的 issuer 校验、JWT 的 `ValidIssuer`，以及 token 校验里的 `MetadataAddress` |
-| `Auth:BackchannelAuthority` | 仅服务端 | 可选的 Provider **内部**地址。当公开地址在服务端不可达（例如容器里 `localhost:5100` 指向容器自身）时，把服务端发出的请求改写到这个地址 |
+| `Auth:Authority` | 浏览器 + Workbench 进程 | Provider 的唯一基础地址。用于 Discovery、JWT 的 `ValidIssuer` 和 `MetadataAddress`；授权、令牌、JWKS、introspection 使用该发现文档声明的原始端点 |
 
 要点：
 
-- 浏览器跳转、Discovery 的 `issuer` 比对、JWT 的 issuer 都只看 `Auth:Authority`，所以它必须是浏览器能访问、且与签发令牌的 issuer 完全一致的公开地址。
-- `Auth:BackchannelAuthority` 只改写**服务端**发出的 HTTP 请求，且仅当请求的 scheme、host、port 与 `Auth:Authority` 完全相同才改写（见 `admin/src/NexusAuth.Extension/OidcBackchannelHandler.cs`）。它保留路径前缀和查询串，不会改变浏览器地址，也不改变 issuer 校验值。
-- 典型场景：浏览器访问 `https://sso.example.com`，容器内服务端走 `http://sso:8080`。此时 `Auth:Authority=https://sso.example.com`，`Auth:BackchannelAuthority=http://sso:8080`。
-- 两个值必须都是绝对 HTTP(S) 基础地址，不能带用户信息、查询串或片段；`Auth:BackchannelAuthority` 可以留空，表示服务端直接访问公开地址。
+- `Auth:Authority` 必须与 Host 的 `Jwt:Issuer` 和 Discovery 返回的 issuer 完全一致。任何 scheme、host、port 或路径差异都会导致登录或 Bearer 校验失败。
+- 浏览器和 Workbench API 进程必须都能直接访问这一地址。容器里的 `localhost` 指容器自身；跨容器部署应给浏览器和各工作负载使用同一个可解析域名或 IP，并配置网络 DNS 或入口路由到 Provider。
+- 不要用 `sso:8080` 等容器服务名替代 `Auth:Authority`，也不要再引入内网地址、HTTP 地址改写或其他仅服务端可达的地址映射。
+- `Auth:Authority` 必须是绝对 HTTP(S) 基础 URI，不能带用户信息、查询串或片段。
 
 ## 6. 认证与自身 Bootstrap
 
@@ -317,8 +316,8 @@ Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便
 | `GET /api/auth/config` | 匿名 | 返回可公开的 `authority`、`clientId`、`redirectUri` |
 | `GET /api/auth/login` | 匿名 | 返回 `authorizeUrl` |
 | `GET /signin-oidc` | 匿名 | OIDC 回调处理 |
-| `GET /api/auth/me` | 匿名 | 返回 `isAuthenticated` 和最小用户信息 |
-| `POST /api/auth/logout` | 需登录 | 清 Cookie，可能返回 `logoutUrl` |
+| `GET /api/auth/me` | 匿名入口，内部执行 Workbench 默认访问策略 | 返回 `isAuthenticated`、最小用户信息和兼容字段 `isAdministrator` |
+| `POST /api/auth/logout` | 需登录（`WorkbenchAuthenticatedUser`） | 清除 Cookie，可能返回 `logoutUrl`；普通用户也可退出 |
 
 ### 6.2 自身 Bootstrap 登记了什么
 
@@ -342,7 +341,7 @@ Workbench API 启动时由 `WorkbenchClientCredentialHostedService` 幂等地登
 - 授权码兑换（`ExchangeCodeAsync`）与刷新（`RefreshTokensAsync`）；
 - ID Token 校验（`ValidateIdTokenAsync`）；
 - access token introspection（`IntrospectAccessTokenAsync`）；
-- `OidcBackchannelHandler` 提供的公开地址到内网地址改写。
+- Discovery 使用 `Auth:Authority`；令牌、JWKS 和 introspection 使用该发现文档声明的原始端点，不执行地址改写。
 
 `AddNexusAuth` 只提供协议能力和一个内存态 `IFlowStateStore`，**不会**自动添加登录端点、回调路由、Cookie 或前端页面。这些需要接入方自行实现，可参考 `AuthController` 与 `WorkbenchApiModule`。如果只想要离线 JWT 校验，另用 `AddNexusAuthJwtBearer`；它只做签名、issuer、audience、有效期和 `token_use=access_token` 校验，不查询吊销状态。
 
@@ -422,13 +421,13 @@ Dashboard 的菜单和路由都由 `src/api/auth.ts` 里的菜单定义动态生
 - **吊销 token**：`POST /api/users/{id}/revoke-tokens`，吊销该用户在所有客户端的访问令牌、刷新令牌和 SSO 会话，但不禁用账号；用户可重新登录，重新启用账号不会恢复旧令牌。
 - **删除**：`DELETE /api/users/{id}`，同时作废 token 和会话。
 
-约束由 `UsersController` 实现：所有 `/api/users` 操作都要求操作者本身是数据库中启用的系统账号（`IsActive=true` 且 `IsSystemAccount=true`）；系统账号对象不能被这些接口修改、禁用、重置密码、删除或吊销。详见 [10. 权限边界](#10-权限边界)。
+所有 `/api/users` 操作统一受第 10 节的 Workbench 默认访问策略保护；默认授权 handler 要求操作者是数据库中启用的系统账号（`IsActive=true` 且 `IsSystemAccount=true`）。系统账号对象不能被这些接口修改、禁用、重置密码、删除或吊销，该对象保护由用户管理服务执行，控制器不再重复判定操作者权限。详见 [10. 权限边界](#10-权限边界)。
 
 ### 9.2 Passkey 凭据查看与撤销
 
 入口：用户详情抽屉里的“Passkey 凭据”分区。它读取 `GET /api/users/{id}/passkeys`，展示凭据的显示名、创建时间、最近使用、撤销时间、备份资格/是否已备份，并可撤销单个凭据。
 
-撤销调用 `POST /api/users/{id}/passkeys/{credentialId}/revoke`，需要填写原因；撤销后该凭据不能再用于登录，并会退出该用户所有设备、撤销现有令牌。`UserPasskeysController` 同样要求操作者是启用的系统账号。
+撤销调用 `POST /api/users/{id}/passkeys/{credentialId}/revoke`，需要填写原因；撤销后该凭据不能再用于登录，并会退出该用户所有设备、撤销现有令牌。`UserPasskeysController` 与其他管理控制器一样，由 Workbench 默认访问策略统一保护。
 
 ### 9.3 应用（OAuth 客户端）管理
 
@@ -490,17 +489,63 @@ dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTest
 
 ## 10. 权限边界
 
-全部 Workbench 管理控制器统一使用 `WorkbenchAdministrator` 策略。请求必须已认证，并且其 `sub`（或 `NameIdentifier`）对应数据库中启用的系统账号，即 `IsActive=true` 且 `IsSystemAccount=true`。匿名请求返回 401，普通用户或不满足条件的账号返回 403。
+Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `WorkbenchApiModule` 中生效，不影响独立的 `NexusAuth.Host` 站点及其开放 API。Workbench 使用框架默认的 `IAuthorizationPolicyProvider` 和 `IAuthorizationService`，由 `AddWorkbenchAuthorization()` 将同一个管理访问策略同时设为默认策略和 fallback 策略：
 
-策略覆盖下列入口及其全部读写操作：
+- 没有 `[Authorize]` 或 `[AllowAnonymous]` 的端点使用 `FallbackPolicy`；
+- 只有裸 `[Authorize]` 的端点使用 `DefaultPolicy`。
+
+该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 401；已登录但未通过访问评估的请求返回 403。Swagger 也受该策略保护；BFF 模式的匿名浏览器请求会跳转登录，Bearer 请求需要具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 404。
+
+访问权限规则直接位于 `WorkbenchAccessAuthorizationHandler` 中。它继承框架原生的 `AuthorizationHandler<WorkbenchAccessRequirement>`，并通过 scoped 的 `IAuthorizationHandler` 注册参与 ASP.NET Core 授权；其直接依赖 `IUserRepository`，按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
+
+下列管理入口及其全部读写操作由默认访问策略保护：
 
 - `/api/clients`、`/api/api-resources`、`/api/client-metadata`；
 - `/api/login-audits`、`/api/scim-credentials`、`/api/open-api-credentials`；
 - `/api/users`、`/api/users/{id}/passkeys`。
 
-权限由 `WorkbenchAdministratorAuthorizationHandler` 在每次授权时查库确认。系统账号对象本身的修改与删除保护仍由用户管理服务执行。
+管理控制器不再分别硬编码旧的 Administrator 策略，也不再在 action 内重复执行管理员判定。系统账号对象本身不可被这些用户管理接口修改、禁用、重置密码、删除或吊销的保护仍由用户管理服务执行。
 
-`/api/auth` 登录相关入口保持原有行为；`/api/auth/me` 对已认证用户返回 `isAdministrator`，Dashboard 用于展示无管理权限提示。客户端提示不能代替服务端策略。
+授权相关类型分别位于 `admin/src/NexusAuth.Workbench.Api/Authorization/` 下的同名文件中，命名空间为 `NexusAuth.Workbench.Api.Authorization`。以下示例需引入该命名空间。
+
+`AddWorkbenchAuthorization()` 通过 `services.AddAuthorization` 注册默认策略、fallback 策略和仅要求认证的命名策略，并以 scoped 生命周期注册访问 handler：
+
+```csharp
+services.AddAuthorization(options =>
+{
+    var policy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .AddRequirements(new WorkbenchAccessRequirement())
+        .Build();
+    options.DefaultPolicy = policy;
+    options.FallbackPolicy = policy;
+    options.AddPolicy(
+        WorkbenchAuthorizationPolicies.AuthenticatedUser,
+        p => p.RequireAuthenticatedUser());
+});
+services.AddScoped<IAuthorizationHandler, WorkbenchAccessAuthorizationHandler>();
+```
+
+扩展访问判定时，应用应继续使用官方的 `IAuthorizationHandler` 注册点。只需移除 `ImplementationType` 为 `WorkbenchAccessAuthorizationHandler` 的对应 descriptor，再注册继承了 `AuthorizationHandler<WorkbenchAccessRequirement>` 的新 handler；内置 handler 保持不变：
+
+```csharp
+builder.Services.AddWorkbenchAuthorization();
+
+var descriptor = builder.Services.FirstOrDefault(descriptor =>
+    descriptor.ServiceType == typeof(IAuthorizationHandler) &&
+    descriptor.ImplementationType == typeof(WorkbenchAccessAuthorizationHandler));
+if (descriptor is not null)
+{
+    builder.Services.Remove(descriptor);
+}
+
+builder.Services.AddScoped<IAuthorizationHandler,
+    CustomWorkbenchAccessAuthorizationHandler>();
+```
+
+`/api/auth/config`、`/api/auth/login`、`/signin-oidc` 和 `/api/auth/me` 明确保留 `[AllowAnonymous]`。`POST /api/auth/logout` 显式使用命名策略 `WorkbenchAuthenticatedUser`（`WorkbenchAuthorizationPolicies.AuthenticatedUser`），只要求已登录，因此普通用户也能退出。
+
+`/api/auth/me` 虽然允许匿名访问，但已登录请求会通过框架的 `IAuthorizationService`，对 `IOptions<AuthorizationOptions>.Value.DefaultPolicy` 执行同一访问规则。兼容字段 `isAdministrator` 表示当前 Workbench 管理访问规则是否通过，不再表示某个单独的管理员策略或控制器内判断；Dashboard 可用它展示提示，但该字段不能代替服务端端点授权。默认 fallback、匿名入口和仅要求认证的命名策略保持不变，Workbench 的这些策略也不会影响独立的 Host 站点。
 
 Bearer 在 BFF 和网关模式下都校验 issuer、audience、有效期及 `token_use=access_token`，随后要求 `client_id` 属于允许列表，再调用 `IUserTokenValidator.IsActiveAsync` 检查用户和吊销状态。默认允许归一化后的 `Auth:ClientId`；其他调用方必须显式加入 `Auth:AllowedBearerClientIds` 数组，例如：
 
@@ -519,12 +564,12 @@ Bearer 在 BFF 和网关模式下都校验 issuer、audience、有效期及 `tok
 设置 `NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED=true`（配置键 `Gateway:Enabled`）后，Workbench API 切换到网关模式：
 
 - 不再注册 Cookie 与本地登录方案，默认认证方案变为 `Workbench.Bearer`，只接受网关转发的 `Authorization: Bearer <access_token>`。
-- `AuthController` 会从控制器特性里移除，因此 `/api/auth/config`、`/api/auth/login`、`/signin-oidc`、`/api/auth/logout` 都会返回 404（实现见 `admin/src/NexusAuth.Workbench.Api/GatewayControllerFeatureProvider.cs`）。
-- `/api/auth/me` 仍在，但只反映 Bearer 身份。
+- `AuthController` 会从控制器特性里移除，因此 `/api/auth/config`、`/api/auth/login`、`/signin-oidc`、`/api/auth/logout` 不再发布；通过默认授权的请求返回 404，匿名请求会先被 fallback 拦截并返回 401（实现见 `admin/src/NexusAuth.Workbench.Api/GatewayControllerFeatureProvider.cs`）。
+- `/api/auth/me` 仍在，但只反映 Bearer 身份，并按同一 Workbench 默认访问策略计算兼容字段 `isAdministrator`。
 - 自身 Bootstrap 仍会登记资源、客户端和密钥，但网关模式下客户端不开放 grant、登录回调或登出回调（`grantTypes`、`redirectUris`、`postLogoutRedirectUris` 为空），避免和网关登录客户端冲突。
 - `Auth:RedirectUri`、`Auth:PostLogoutRedirectUri`、`Auth:Scope` 在网关模式下不再是必填；`Auth:Authority`、`Auth:Audience`、`Auth:ClientId`、`Auth:ClientSecret` 和 Bootstrap 名称仍需配置。
 
-网关必须自己负责浏览器登录、回调、刷新和登出，并把 access token 以 Bearer 形式转发给 Workbench API。根目录 Compose 里的 Dashboard 仍然是 BFF 登录模式，**不会**随这个开关自动切换到网关登录；只改 API 配置会让 Dashboard 的登录端点 404。网关登录客户端需要另行在 Dashboard 创建，不能复用 Workbench 默认客户端；同时将其 ID 加入 `Auth:AllowedBearerClientIds`。切换回非网关模式会恢复默认客户端的授权码和刷新配置。
+网关必须自己负责浏览器登录、回调、刷新和登出，并把 access token 以 Bearer 形式转发给 Workbench API。根目录 Compose 里的 Dashboard 仍然是 BFF 登录模式，**不会**随这个开关自动切换到网关登录；只改 API 配置会让 Dashboard 无法使用原有登录端点。网关登录客户端需要另行在 Dashboard 创建，不能复用 Workbench 默认客户端；同时将其 ID 加入 `Auth:AllowedBearerClientIds`。切换回非网关模式会恢复默认客户端的授权码和刷新配置。
 
 APISIX 相关对接见 [APISIX 网关对接手册](13-APISIX网关对接手册.md)。
 
@@ -552,7 +597,7 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 
 - Dashboard 对外只暴露一个域名，由反向代理把 `/api` 和 `/signin-oidc` 转发到 Workbench API，保留 `Host`、`X-Forwarded-Proto`、`X-Forwarded-Host` 和 Cookie。
 - Provider 登记的 `redirect_uri`、`post_logout_redirect_uri` 与 API 配置逐字符一致，且使用 HTTPS。
-- `Auth:Authority` 用公网 HTTPS 地址并与 token 的 `iss` 一致；服务端不可直达公开地址时用 `Auth:BackchannelAuthority` 指向内网。
+- `Auth:Authority` 使用浏览器和 Workbench API 进程都能直接访问的 HTTPS 地址，并与 Provider issuer 和 token 的 `iss` 完全一致；通过 DNS 或入口路由保证该地址在两端可达。
 - `Auth:Audience` 与 Workbench API resource 的 audience 一致。
 - 多副本共享 Data Protection key ring，数据库使用持久卷并备份。
 - 不提交或在镜像里固化真实 `ClientSecret`；不使用仓库内置的开发密钥；生产不执行 `demo/seed.sql`。
@@ -565,9 +610,9 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 | API 启动失败，提示数据库相关错误 | schema 未初始化或连接串不对 | 执行 `production-init.sql`；核对连接串与端口 |
 | 浏览器登录后立刻跳回登录页 | 回调地址、Issuer 或 Cookie 域不一致 | 核对第 4.4 节的四处地址，确认 `Authority` 与 Host issuer 一致 |
 | 本地 Dashboard 请求失败，命中内网地址 | Vite 代理仍是 `192.168.31.200:9100` | 把 `vite.config.ts` 的 `/api`、`/signin-oidc` 目标改成实际 API |
-| API 报无法访问 Provider Discovery | 服务端访问不到公开 Authority | 配置 `Auth:BackchannelAuthority` 指向内部地址 |
+| API 报无法访问 Provider Discovery | 容器内把 `localhost` 当成 Host，或网络 DNS/入口路由不可达 | 使用浏览器和 Workbench API 都能直达的同一 Authority；容器内不要用 `localhost` 或容器服务名替代 |
 | Bearer 调用返回 401 | audience/issuer/client_id 不匹配、token 过期或不是 access_token | 核对 audience、issuer、`token_use` 与客户端允许列表 |
-| 管理接口返回 403 | 操作者不是启用的系统账号 | 用 `IsSystemAccount=true` 的账号登录（见第 10 节） |
+| 管理接口返回 403 | 当前访问授权 handler 未通过 | 默认授权 handler 下用启用状态的系统账号登录；替换授权 handler 时核对其判定（见第 10 节） |
 | 多实例下用户随机被登出 | Data Protection key ring 未共享 | 共享并持久化 key ring |
 | 网关模式后 `/api/auth/login` 返回 404 | 这是网关模式的预期行为 | 由网关实现登录，或关闭网关模式 |
 | 无法查看已创建的 SCIM/开放 API 凭证明文 | 明文只在创建时返回一次 | 重新创建凭证并立即保存 |

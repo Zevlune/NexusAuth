@@ -31,10 +31,14 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
     [Fact]
     public async Task Swagger_endpoint_is_available_when_the_real_workbench_host_starts()
     {
-        using var client = factory.CreateClient();
+        using var configured = new WorkbenchAdministrationAuthorizationFixture();
+        using var anonymous = configured.CreateAnonymousClient();
+        using var denied = await anonymous.GetAsync("/swagger/v1/swagger.json");
+        Assert.Equal(System.Net.HttpStatusCode.Redirect, denied.StatusCode);
+        Assert.Equal("/api/auth/login", denied.Headers.Location?.AbsolutePath);
 
-        var response = await client.GetAsync("/swagger/v1/swagger.json");
-
+        using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+        using var response = await administrator.GetAsync("/swagger/v1/swagger.json");
         response.EnsureSuccessStatusCode();
     }
 

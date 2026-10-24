@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Extension;
+using NexusAuth.Workbench.Api.Authorization;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
@@ -126,7 +127,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("/api/auth/logout")]
-    [Authorize]
+    [Authorize(Policy = WorkbenchAuthorizationPolicies.AuthenticatedUser)]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
         var logoutUrl = string.Empty;

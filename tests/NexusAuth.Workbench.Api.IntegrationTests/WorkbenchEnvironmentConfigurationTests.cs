@@ -4,25 +4,40 @@ using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
 
-[CollectionDefinition("Workbench environment", DisableParallelization = true)]
-public sealed class WorkbenchEnvironmentCollection;
-
 [Collection("Workbench environment")]
 public sealed class WorkbenchEnvironmentConfigurationTests
 {
     [Fact]
-    public void Backchannel_authority_environment_variable_maps_to_auth_options()
+    public void Authority_environment_variable_maps_to_auth_options()
+    {
+        const string variable = "NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY";
+        var originalValue = Environment.GetEnvironmentVariable(variable);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, "https://provider.example.test");
+            using var configuration = new ConfigurationManager();
+
+            configuration.AddWorkbenchEnvironmentVariables();
+
+            Assert.Equal("https://provider.example.test", configuration["Auth:Authority"]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, originalValue);
+        }
+    }
+
+    [Fact]
+    public void Retired_backchannel_environment_variable_is_not_mapped()
     {
         const string variable = "NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY";
         var originalValue = Environment.GetEnvironmentVariable(variable);
         try
         {
-            Environment.SetEnvironmentVariable(variable, "http://legacy-internal-provider:8080");
+            Environment.SetEnvironmentVariable(variable, "http://retired-provider:8080");
             using var configuration = new ConfigurationManager();
-
             configuration.AddWorkbenchEnvironmentVariables();
-
-            Assert.Equal("http://legacy-internal-provider:8080", configuration["Auth:BackchannelAuthority"]);
+            Assert.Null(configuration["Auth:BackchannelAuthority"]);
         }
         finally
         {

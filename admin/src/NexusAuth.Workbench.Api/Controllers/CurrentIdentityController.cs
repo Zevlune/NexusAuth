@@ -1,12 +1,14 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using NexusAuth.Domain.Repositories;
+using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
 [ApiController]
-public sealed class CurrentIdentityController(IUserRepository users) : ControllerBase
+public sealed class CurrentIdentityController(
+    IAuthorizationService authorization,
+    IOptions<AuthorizationOptions> authorizationOptions) : ControllerBase
 {
     [HttpGet("/api/auth/me")]
     [AllowAnonymous]
@@ -15,11 +17,9 @@ public sealed class CurrentIdentityController(IUserRepository users) : Controlle
         if (User.Identity?.IsAuthenticated != true)
             return Unauthorized(new { isAuthenticated = false, isAdministrator = false });
 
-        var isAdministrator = await WorkbenchAdministratorAuthorizationHandler.IsAdministratorAsync(
-            User,
-            users,
-            HttpContext,
-            ct);
+        var policy = authorizationOptions.Value.DefaultPolicy;
+        var access = await authorization.AuthorizeAsync(User, HttpContext, policy);
+        var isAdministrator = access.Succeeded;
 
         return Ok(new
         {

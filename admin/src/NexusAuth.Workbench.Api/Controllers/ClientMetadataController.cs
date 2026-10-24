@@ -1,11 +1,9 @@
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Luck.AspNetCore.ApiResults;
 using NexusAuth.Application.Clients;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
-[Authorize(Policy = WorkbenchAuthorizationPolicies.Administrator)]
 [ApiController]
 [ApiResultWrap]
 [Route("api/client-metadata")]

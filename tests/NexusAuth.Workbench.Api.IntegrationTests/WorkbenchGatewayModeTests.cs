@@ -56,16 +56,46 @@ public sealed class WorkbenchGatewayModeTests
         Assert.NotNull(scope.ServiceProvider.GetService<IWorkbenchCookieAuthenticationEvents>());
     }
 
-    [Fact]
-    public void Backchannel_changes_jwt_metadata_transport_without_changing_public_issuer()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Authentication_uses_one_authority_for_oidc_and_jwt(bool gatewayEnabled)
     {
-        using var factory = CreateFactory(true, builder => builder.UseSetting("Auth:BackchannelAuthority", "http://sso:8080"));
+        using var factory = CreateFactory(gatewayEnabled, builder => builder
+            .UseSetting("Auth:Authority", Authority + "/")
+            .UseSetting("Auth:BackchannelAuthority", "retired-setting-is-ignored"));
         var options = factory.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
             .Get(WorkbenchAuthenticationDefaults.BearerScheme);
 
         Assert.Equal(Authority, options.Authority);
+        Assert.Equal(Authority, options.TokenValidationParameters.ValidIssuer);
         Assert.Equal($"{Authority}/.well-known/openid-configuration", options.MetadataAddress);
-        Assert.IsType<OidcBackchannelHandler>(options.BackchannelHttpHandler);
+        Assert.Null(options.BackchannelHttpHandler);
+        if (!gatewayEnabled)
+        {
+            var oidc = factory.Services.GetRequiredService<IOptions<WorkbenchAuthOptions>>().Value;
+            Assert.Equal(Authority, oidc.Authority);
+            Assert.Equal("openid profile nexusauth.workbench.api", oidc.Scope);
+        }
+    }
+
+    [Theory]
+    [InlineData("relative-provider", false)]
+    [InlineData("relative-provider", true)]
+    [InlineData("ftp://issuer.example.test", false)]
+    [InlineData("ftp://issuer.example.test", true)]
+    [InlineData("https://user@issuer.example.test", false)]
+    [InlineData("https://user@issuer.example.test", true)]
+    [InlineData("https://issuer.example.test?tenant=test", false)]
+    [InlineData("https://issuer.example.test?tenant=test", true)]
+    [InlineData("https://issuer.example.test#fragment", false)]
+    [InlineData("https://issuer.example.test#fragment", true)]
+    public void Invalid_authority_fails_startup(string authority, bool gatewayEnabled)
+    {
+        using var factory = CreateFactory(gatewayEnabled, builder => builder.UseSetting("Auth:Authority", authority));
+        var exception = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+        Assert.Contains("Auth:Authority", exception.ToString());
+        Assert.Contains("absolute HTTP(S) URI", exception.ToString());
     }
 
     [Theory]
@@ -75,10 +105,13 @@ public sealed class WorkbenchGatewayModeTests
     [InlineData("POST", "/api/auth/logout")]
     public async Task Gateway_does_not_publish_interactive_login_routes(string method, string path)
     {
-        using var factory = CreateFactory(true);
-        using var client = factory.CreateClient();
-        using var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+        using var configured = new WorkbenchAdministrationAuthorizationFixture("nexusauth.workbench", gatewayEnabled: true);
+        using var anonymous = configured.CreateAnonymousClient();
+        using var denied = await anonymous.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
 
+        using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+        using var response = await administrator.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 

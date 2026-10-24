@@ -48,4 +48,4 @@ Workbench API 从 `Auth:Authority` 读取 Provider 公开 Issuer，必须与 Dis
 - [`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/WorkbenchCookieAuthenticationEvents.cs)：introspection 与 refresh token 轮换。
 - [Workbench 项目 README](../admin/README.md)：项目启动、配置和管理接口。完整生产部署仍需处理 HTTPS、代理、Secret 和 Data Protection，不要照搬开发值。
 
-服务端位于容器内时，`Auth:Authority` 保持浏览器可访问且与签发者一致的公开地址；`Auth:BackchannelAuthority` 可单独配置服务端访问 Provider 的内网地址。不要将浏览器授权跳转地址改为容器服务名。默认值和运行示例见 [Workbench 使用手册](Workbench使用手册.md)。
+`Auth:Authority` 必须与 Provider 的 issuer 完全一致，并且浏览器和 Workbench 进程都能直接访问。服务端位于容器内时，`localhost` 指向该容器自身；请让同一域名或 IP 通过 DNS 和网络路由同时可达 Provider，不要改成容器服务名，也不要引入另一个内网地址或 HTTP 地址改写替代项。默认值和运行示例见 [Workbench 使用手册](Workbench使用手册.md)。

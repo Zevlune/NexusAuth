@@ -58,7 +58,6 @@ docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up --build
 | --- | --- | --- |
 | `NEXUSAUTH_WORKBENCH_CONNECTION_STRINGS_DEFAULT` | `ConnectionStrings:Default` | 否 |
 | `NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY` | `Auth:Authority` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY` | `Auth:BackchannelAuthority` | 否 |
 | `NEXUSAUTH_WORKBENCH_AUTH_AUDIENCE` | `Auth:Audience` | 是 |
 | `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_ID` | `Auth:ClientId` | 是 |
 | `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET` | `Auth:ClientSecret` | 是 |
@@ -76,10 +75,11 @@ docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up --build
 
 未被单下划线表覆盖的键可用标准 .NET 形式（如 `Auth__Xxx`）或由编排直接注入。完整说明见 [Workbench 使用手册第 5 节](../document/Workbench使用手册.md#5-workbench-api-配置)。
 
-### 公开 Authority 与 BackchannelAuthority
+### 单一 Authority
 
-- `Auth:Authority`：浏览器与服务端共用的 Provider 公开地址，负责授权跳转、Discovery issuer 和 JWT issuer 校验。必须与 Host 的 `Jwt:Issuer` 一致。
-- `Auth:BackchannelAuthority`：仅服务端的 Provider 内部地址。当公开地址在服务端不可达时（如容器内）用它改写服务端请求；浏览器地址和 issuer 校验不受影响。
+`Auth:Authority` 是 Workbench 唯一使用的 Provider 基础地址，负责浏览器授权跳转、Discovery，以及令牌、JWKS、introspection 和 JWT issuer 校验。它必须与 Host 的 `Jwt:Issuer` 完全一致。
+
+浏览器和 Workbench API 进程都必须能直接访问同一个 `Auth:Authority`。容器内的 `localhost` 指向容器自身；跨容器部署应使用浏览器和各工作负载都能访问的同一域名或 IP，并通过网络 DNS 或入口路由把它解析到 Provider。不要把 `Auth:Authority` 改成容器服务名，也不要再额外配置内网地址或 HTTP 地址改写。
 
 ### 自身 Bootstrap
 

@@ -13,65 +13,15 @@ namespace NexusAuth.Workbench.Api.IntegrationTests;
 public sealed class UserPasskeysControllerTests
 {
     [Fact]
-    public async Task Ordinary_account_cannot_view_or_revoke_passkeys()
+    public async Task Get_returns_safe_summary_without_cache()
     {
-        var ordinaryUser = CreateUser("ordinary");
-        var target = CreateUser("target");
-        var harness = new Harness([ordinaryUser, target]);
-        harness.SetActor(ordinaryUser.Id, ClaimTypes.NameIdentifier);
-
-        var get = await harness.Controller.Get(target.Id, CancellationToken.None);
-        var revoke = await harness.Controller.Revoke(target.Id, Guid.NewGuid(), new RevokePasskeyRequest("security review"), CancellationToken.None);
-
-        Assert.IsType<ForbidResult>(get);
-        Assert.IsType<ForbidResult>(revoke);
-        Assert.Empty(harness.PasskeyCalls);
-    }
-
-    [Fact]
-    public async Task Disabled_system_account_cannot_view_or_revoke_passkeys()
-    {
-        var disabledAdmin = CreateUser("disabled-admin", system: true, active: false);
-        var target = CreateUser("target");
-        var harness = new Harness([disabledAdmin, target]);
-        harness.SetActor(disabledAdmin.Id, "sub");
-
-        var get = await harness.Controller.Get(target.Id, CancellationToken.None);
-        var revoke = await harness.Controller.Revoke(target.Id, Guid.NewGuid(), new RevokePasskeyRequest("security review"), CancellationToken.None);
-
-        Assert.IsType<ForbidResult>(get);
-        Assert.IsType<ForbidResult>(revoke);
-        Assert.Empty(harness.PasskeyCalls);
-    }
-
-    [Fact]
-    public async Task Missing_subject_cannot_view_or_revoke_passkeys()
-    {
-        var admin = CreateUser("admin", system: true);
-        var target = CreateUser("target");
-        var harness = new Harness([admin, target]);
-        harness.SetActor(Guid.NewGuid(), "other", includeSubject: false);
-
-        var get = await harness.Controller.Get(target.Id, CancellationToken.None);
-        var revoke = await harness.Controller.Revoke(target.Id, Guid.NewGuid(), new RevokePasskeyRequest("security review"), CancellationToken.None);
-
-        Assert.IsType<ForbidResult>(get);
-        Assert.IsType<ForbidResult>(revoke);
-        Assert.Empty(harness.PasskeyCalls);
-    }
-
-    [Fact]
-    public async Task Active_system_account_can_view_safe_summary_without_cache()
-    {
-        var admin = CreateUser("admin", system: true);
         var target = CreateUser("target");
         var summaries = new[]
         {
             new WebAuthnCredentialSummary(Guid.NewGuid(), "Laptop", DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow, null, true, true),
         };
-        var harness = new Harness([admin, target]) { Summaries = summaries };
-        harness.SetActor(admin.Id, "sub");
+        var harness = new Harness([target]) { Summaries = summaries };
 
         var result = await harness.Controller.Get(target.Id, CancellationToken.None);
 
@@ -82,13 +32,13 @@ public sealed class UserPasskeysControllerTests
     }
 
     [Fact]
-    public async Task Active_system_account_can_revoke_and_controller_passes_name_identifier_as_actor()
+    public async Task Revoke_passes_name_identifier_as_actor()
     {
-        var admin = CreateUser("admin", system: true);
+        var actor = CreateUser("actor");
         var target = CreateUser("target");
         var credentialId = Guid.NewGuid();
-        var harness = new Harness([admin, target]) { RevokeResult = true };
-        harness.SetActor(admin.Id, ClaimTypes.NameIdentifier);
+        var harness = new Harness([actor, target]) { RevokeResult = true };
+        harness.SetActor(actor.Id, ClaimTypes.NameIdentifier);
 
         var result = await harness.Controller.Revoke(target.Id, credentialId,
             new RevokePasskeyRequest("Reported lost"), CancellationToken.None);
@@ -98,17 +48,17 @@ public sealed class UserPasskeysControllerTests
         Assert.Equal(nameof(IPasskeyManagementService.RevokeAsync), call.Method.Name);
         Assert.Equal(target.Id, call.Arguments![0]);
         Assert.Equal(credentialId, call.Arguments[1]);
-        Assert.Equal(admin.Id, call.Arguments[2]);
+        Assert.Equal(actor.Id, call.Arguments[2]);
         Assert.Equal("Reported lost", call.Arguments[3]);
     }
 
     [Fact]
     public async Task Missing_user_and_missing_or_disabled_credential_return_not_found()
     {
-        var admin = CreateUser("admin", system: true);
+        var actor = CreateUser("actor");
         var target = CreateUser("target");
-        var harness = new Harness([admin, target]) { RevokeResult = false };
-        harness.SetActor(admin.Id, ClaimTypes.NameIdentifier);
+        var harness = new Harness([actor, target]) { RevokeResult = false };
+        harness.SetActor(actor.Id, ClaimTypes.NameIdentifier);
 
         var missingUser = await harness.Controller.Get(Guid.NewGuid(), CancellationToken.None);
         var missingCredential = await harness.Controller.Revoke(target.Id, Guid.NewGuid(),
@@ -121,13 +71,13 @@ public sealed class UserPasskeysControllerTests
     [Fact]
     public async Task Invalid_reason_is_returned_as_bad_request()
     {
-        var admin = CreateUser("admin", system: true);
+        var actor = CreateUser("actor");
         var target = CreateUser("target");
-        var harness = new Harness([admin, target])
+        var harness = new Harness([actor, target])
         {
             RevokeException = new ArgumentException("撤销原因无效。", "reason"),
         };
-        harness.SetActor(admin.Id, ClaimTypes.NameIdentifier);
+        harness.SetActor(actor.Id, ClaimTypes.NameIdentifier);
 
         var result = await harness.Controller.Revoke(target.Id, Guid.NewGuid(),
             new RevokePasskeyRequest("invalid"), CancellationToken.None);
@@ -135,13 +85,9 @@ public sealed class UserPasskeysControllerTests
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
-    private static User CreateUser(string username, bool system = false, bool active = true)
+    private static User CreateUser(string username)
     {
         var user = User.Create(username, "test-password", username);
-        if (!active)
-            user.UpdateScimProfile(user.Username, user.Nickname, isActive: false);
-        if (system)
-            user.MarkAsSystemAccount();
         return user;
     }
 
