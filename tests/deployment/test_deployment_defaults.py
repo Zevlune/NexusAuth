@@ -58,14 +58,34 @@ class DeploymentDefaultsTests(unittest.TestCase):
             r"(?m)^NEXUSAUTH_SMTP_ENABLED=false$",
         )
 
-    def test_direct_deployment_uses_internal_authority_and_overridable_logout(self) -> None:
+    def test_direct_deployment_uses_single_authority_and_overridable_logout(self) -> None:
         workbench_env = read("deploy/direct/workbench.env.example")
-        self.assertRegex(
+        self.assertEqual(
+            re.findall(
+                r"(?m)^NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY=(.+)$",
+                workbench_env,
+            ),
+            ["https://sso.example.com"],
+        )
+        self.assertNotIn(
+            "NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY",
             workbench_env,
-            r"(?m)^NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY=http://sso:8080$",
+        )
+        self.assertRegex(
+            read("deploy/direct/sso.env.example"),
+            r"(?m)^NEXUSAUTH_JWT_ISSUER=https://sso\.example\.com$",
         )
 
         compose = read("docker-compose.yml")
+        self.assertRegex(
+            compose,
+            r"(?m)^\s+NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY:\s+"
+            r"\$\{NEXUSAUTH_JWT_ISSUER:-http://localhost:5100\}$",
+        )
+        self.assertNotIn(
+            "NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY",
+            compose,
+        )
         self.assertRegex(
             compose,
             re.escape(

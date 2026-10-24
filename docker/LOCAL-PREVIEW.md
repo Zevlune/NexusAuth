@@ -29,7 +29,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
 管理员登录 Workbench 后，通过“用户管理 → 详情”查看用户资料和凭据信息。普通用户从个人中心添加自己的 Passkey。初始化不伪造 Passkey 或 TOTP，绑定需要真实设备完成。浏览器必须使用 `localhost`，以匹配当前 Passkey RP ID 和 Origin。
 
-Provider 对外 issuer 为 `http://localhost:5100`；Workbench 的服务端请求通过 `Auth:BackchannelAuthority=http://sso:8080` 访问容器内 Provider，浏览器授权跳转和 issuer 校验仍保持公共地址。Dashboard Nginx 通过 Compose DNS 转发到 `admin-api:8080`。
+根 Compose 默认把 `NEXUSAUTH_JWT_ISSUER` 设为 `http://localhost:5100`，并同时用于 Provider issuer 与 Workbench 的 `Auth:Authority`。容器内的 `localhost` 指向容器自身，因此这个默认值不能用于 `admin-api` 访问 `sso`。容器化预览启动前，必须把 `NEXUSAUTH_JWT_ISSUER` 设为浏览器和 `admin-api` 进程都能通过同一 DNS/IP 直接访问的 Provider 地址，并让该地址经网络 DNS 或入口路由到 Provider；它仍须与 Provider issuer 完全一致，不要配置另一个内网地址或 HTTP 地址改写作为替代。Dashboard Nginx 通过 Compose DNS 转发到 `admin-api:8080`。
 
 初始化脚本只在新数据库卷上自动执行。已有本项目数据卷可单独添加演示数据，重复执行保留已有账号与密码：
 

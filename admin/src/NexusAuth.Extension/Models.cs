@@ -99,16 +99,10 @@ public class DiscoveryDocument
 public class WorkbenchAuthOptions
 {
     /// <summary>
-    /// 中文：获取或设置浏览器可访问的 OpenID Provider 基础地址。
-    /// English: Gets or sets the browser-accessible base URL of the OpenID Provider.
+    /// 中文：获取或设置浏览器和服务端共同访问的 OpenID Provider 基础地址。
+    /// English: Gets or sets the base URL of the OpenID Provider accessible to both the browser and server.
     /// </summary>
     public required string Authority { get; set; }
-
-    /// <summary>
-    /// 中文：获取或设置服务端 HTTP 请求使用的可选 Provider 内部地址；公共 Authority 仍用于 issuer 和浏览器跳转。
-    /// English: Gets or sets the optional provider address for server-side HTTP requests; the public authority remains the issuer and browser-facing address.
-    /// </summary>
-    public string? BackchannelAuthority { get; set; }
 
     /// <summary>
     /// 中文：获取或设置已注册的 OIDC 客户端标识。
