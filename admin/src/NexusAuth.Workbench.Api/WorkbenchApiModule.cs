@@ -10,6 +10,7 @@ using NexusAuth.Persistence;
 using NexusAuth.Shared.Email;
 using NexusAuth.Application.Services.Email;
 using NexusAuth.Application.Services.Tokens;
+using NexusAuth.Workbench.Api.Authorization;
 
 namespace NexusAuth.Workbench.Api;
 

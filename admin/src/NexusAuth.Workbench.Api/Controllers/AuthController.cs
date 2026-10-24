@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Extension;
+using NexusAuth.Workbench.Api.Authorization;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 

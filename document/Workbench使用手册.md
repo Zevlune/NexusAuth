@@ -507,6 +507,8 @@ Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `
 
 管理控制器不再分别硬编码旧的 Administrator 策略，也不再在 action 内重复执行管理员判定。系统账号对象本身不可被这些用户管理接口修改、禁用、重置密码、删除或吊销的保护仍由用户管理服务执行。
 
+授权相关类型分别位于 `admin/src/NexusAuth.Workbench.Api/Authorization/` 下的同名文件中，命名空间为 `NexusAuth.Workbench.Api.Authorization`。以下示例需引入该命名空间。
+
 `AddWorkbenchAuthorization()` 通过 `services.AddAuthorization` 注册默认策略、fallback 策略和仅要求认证的命名策略，并以 scoped 生命周期注册访问 handler：
 
 ```csharp

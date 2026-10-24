@@ -15,6 +15,7 @@ using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Workbench.Api;
+using NexusAuth.Workbench.Api.Authorization;
 using NexusAuth.Workbench.Api.Controllers;
 using Xunit;
 
