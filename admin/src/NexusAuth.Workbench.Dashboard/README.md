@@ -32,9 +32,9 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:5273`。`vite.config.ts` 当前把 `/api` 和 `/signin-oidc` 代理到 `http://192.168.31.200:9100`。本地运行 API 时，必须把这两个代理目标改成 API 的真实地址，例如 `http://localhost:5051`。API 默认监听 `http://localhost:5051`，Swagger 在 `http://localhost:5051/swagger`。
+打开 `http://localhost:5273`。`vite.config.ts` 默认把 `/api` 和 `/signin-oidc` 代理到本机 API `http://localhost:5051`，与 API 的默认监听地址一致；Swagger 在 `http://localhost:5051/swagger`。API 部署在其他地址时，需同步调整这两个代理目标。
 
-本地方式下 API 的 `Auth:Authority` 默认还是局域网地址 `http://192.168.31.200:8100`，也要改成实际 Host 地址。Provider 登记的 `redirect_uri` 要写成浏览器实际访问的 Vite 地址 `http://localhost:5273/signin-oidc`（由 Vite 代理到 API 的 `5051`），`post_logout_redirect_uri` 用 `http://localhost:5273/`。回调是浏览器地址，不是 API 监听端口。
+API 的 `appsettings.Development.json` 默认使用 `Auth:Authority=http://localhost:5100`。运行前需要填写 `Auth:ClientSecret`，并确认数据库连接串正确；Workbench 启动时会把客户端及其密钥同步到同一个数据库。Provider 登记的 `redirect_uri` 要写成浏览器实际访问的 Vite 地址 `http://localhost:5273/signin-oidc`（由 Vite 代理到 API 的 `5051`），`post_logout_redirect_uri` 用 `http://localhost:5273/`。回调是浏览器地址，不是 API 监听端口。
 
 ## 登录流程
 
@@ -94,7 +94,7 @@ Dashboard 镜像使用 Node 22 构建、Nginx 1.27 托管。根 Compose 将宿�
 - 将 `/api` 转发到 Workbench API，并保留 `Host`、`X-Forwarded-Proto`、`X-Forwarded-Host` 和 Cookie；
 - 使用 HTTPS；
 - 把 Provider 登记的 OIDC 回调设置为实际对外提供 `/signin-oidc` 的地址；
-- 通过 Workbench API 的环境变量注入客户端密钥，Dashboard 不读取该密钥。
+- 通过 Workbench API 的私有环境 appsettings 文件配置客户端密钥，Dashboard 不读取该密钥。
 
 ## 相关文档
 

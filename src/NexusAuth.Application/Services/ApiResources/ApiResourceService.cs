@@ -1,5 +1,4 @@
 using NexusAuth.Application;
-using NexusAuth.Application.Clients;
 
 namespace NexusAuth.Application.Services.ApiResources;
 
@@ -44,7 +43,7 @@ public class ApiResourceService(
     {
         var existing = await apiResourceRepository.FindByNameAsync(name, ct);
         if (existing is not null)
-            throw new WorkbenchBusinessConflictException($"资源标识 '{name}' 已存在，请使用其他标识。");
+            throw new ApiResourceAlreadyExistsException(name);
 
         var resource = ApiResource.Create(name, displayName, audience, description);
         await apiResourceRepository.AddAsync(resource, ct);

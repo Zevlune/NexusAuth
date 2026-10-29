@@ -182,7 +182,7 @@ dotnet run --project src/NexusAuth.Host
 - `Auth:PostLogoutRedirectUri=http://localhost:5273/`；
 - 本地开发数据库连接与 `Security:CookieSecurePolicy=SameAsRequest`。
 
-在 `appsettings.Development.json` 中为 `Auth:ClientSecret` 填入 Host 登记的长随机开发密钥后，启动 Workbench API（终端 3）：
+在 `appsettings.Development.json` 中为 `Auth:ClientSecret` 填入长随机开发密钥后（启动时 Bootstrap 会把它同步到同库的 Host 客户端登记），启动 Workbench API（终端 3）：
 
 ```bash
 dotnet run --project admin/src/NexusAuth.Workbench.Api
@@ -198,7 +198,7 @@ npm --prefix admin/src/NexusAuth.Workbench.Dashboard install
 npm --prefix admin/src/NexusAuth.Workbench.Dashboard run dev
 ```
 
-打开 `http://localhost:5273`（Vite 默认端口）。`vite.config.ts` 当前把 `/api` 和 `/signin-oidc` 代理到 `http://192.168.31.200:9100`。本地跑 Workbench API 时，必须把这个代理目标改成 API 的真实地址，例如 `http://localhost:5051`，否则浏览器会打到内网地址并失败。
+打开 `http://localhost:5273`（Vite 默认端口）。`vite.config.ts` 默认把 `/api` 和 `/signin-oidc` 代理到本机 API `http://localhost:5051`，与 API 的启动配置一致。API 部署在其他地址时，再同步调整这两个代理目标。
 
 本地源码方式的最小回调约定：
 
@@ -333,7 +333,7 @@ Swagger 未显式配置时仅在 `Development` 环境注册；其他环境默认
 
 1. Dashboard 启动时请求 `GET /api/auth/me`（`AllowAnonymous`）。已登录返回 `isAuthenticated=true` 和最小用户信息；未登录返回 `401` 与 `isAuthenticated=false`，前端判定未登录后显示登录页。
 2. 用户点击登录，前端请求 `GET /api/auth/login` 并取得 JSON `authorizeUrl`。微软 `AddOpenIdConnect` handler 负责 state、nonce、PKCE、回调处理以及 ID Token 的签名、issuer、audience、时效和 nonce 校验。
-3. Workbench 流程状态默认 10 分钟过期、最多 10,000 个；登录发起端点按客户端 IP 限流。容量或频率超限返回 `429`。
+3. Workbench 流程状态默认 10 分钟过期、最多 10,000 个；登录发起端点按客户端 IP 限流。容量或频率超限返回 `429`。使用反向代理时应按下文配置可信转发头，否则多个用户会共享代理 IP 的登录额度。
 4. 启动后台服务预热 Discovery。预热失败只记录日志并按有限延迟重试，不阻塞应用启动；运行时元数据与 JWKS 由标准配置管理器刷新。
 5. Host 回调 `GET /signin-oidc`。OIDC handler 完成标准校验后，API 写入 `.NexusAuth.Workbench` HttpOnly Cookie，并跳转前端 `/auth/callback`。
 6. Dashboard 之后的管理请求使用 Cookie。未认证返回 `401`，已认证但没有管理访问权限返回 `403`。

@@ -10,6 +10,8 @@
 
 完整的部署、配置、操作与排错步骤见 **[Workbench 使用手册](../document/Workbench使用手册.md)**；认证服务本身的启动与配置见 [NexusAuth.Host 使用手册](../document/NexusAuth.Host使用手册.md)。
 
+将 Workbench 作为 SSO 接入参考时，先看 [API 接入模板](../document/Workbench-API统一登录接入模板.md) 的 main 对照和复用边界，再看 [Dashboard 接入模板](../document/Workbench-Dashboard统一登录接入模板.md)。标准 OIDC 接入与 Workbench 自身的客户端自动登记、管理权限和数据库访问分别说明，复制到其他业务应用时按需选取。
+
 ## 组件与地址
 
 | 组件 | 项目路径 | 源码监听 | Compose 对外 |
@@ -48,7 +50,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 - 基础 `appsettings.json` 包含完整配置结构，`Auth:Authority` 和 `Auth:ClientSecret` 为空，`Auth:RequireHttpsMetadata=true`；`appsettings.Development.json` 为本机开发提供 `http://localhost:5100`、`false`、本地数据库和 `http://localhost:5273` 回调。
 - 基础 `Security:CookieSecurePolicy=Always`；Development 显式覆盖为 `SameAsRequest`。
 - Swagger 只在 Development 环境启用；其他环境需要显式设置 `Swagger:Enabled=true`。
-- `admin/src/NexusAuth.Workbench.Dashboard/vite.config.ts` 仍把 `/api`、`/signin-oidc` 代理到仓库中的局域网示例地址，本地应改为 API 地址（如 `http://localhost:5051`）。
+- `admin/src/NexusAuth.Workbench.Dashboard/vite.config.ts` 默认把 `/api`、`/signin-oidc` 代理到本机 API `http://localhost:5051`；API 使用其他地址时再同步调整这两个目标。
 
 `admin/src/NexusAuth.Workbench.Api/appsettings.Development.json` 已内置共享数据库连接串，端口就是 Compose 的 `33210`，库为 `nexusauth`，schema 为 `nexusauth`。
 

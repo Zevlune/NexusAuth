@@ -4,6 +4,34 @@
 
 实现见 [`admin/src/NexusAuth.Workbench.Api`](../admin/src/NexusAuth.Workbench.Api)。整套管理工作台的部署与操作见 [Workbench 使用手册](Workbench使用手册.md)；协议字段与验证规则见 [Host 使用手册](NexusAuth.Host使用手册.md) 和 [协议设计](11-OAuth-OIDC协议设计.md)。
 
+## 与 main 的 SSO 接入对照
+
+对照基准为远端 `main` 的 `e8ffeb3`。Workbench 保持一个真实的 SSO 客户端示例；精简的目标是把协议工作交给框架，同时保留可运行的登录、API 访问和会话生命周期。
+
+| 接入环节 | main 的实现 | 当前实现及保留的行为 |
+| --- | --- | --- |
+| 发起登录 | 自定义 SDK 拼接授权地址、生成 PKCE | `ChallengeAsync` 调用原生 OIDC；仍通过 `GET /api/auth/login` 返回 `{ authorizeUrl }` |
+| 发现文档和签名密钥 | 自定义 SDK 获取和使用元数据 | OIDC 的 `ConfigurationManager` 负责缓存与刷新，Bearer 共用；预热仅用于提前加载 |
+| 登录回调 | 控制器 `/signin-oidc` 自行兑换 code、校验 ID Token | 同一路径由 OIDC 中间件处理；成功仍写 Cookie 并跳转前端 `/auth/callback` |
+| Dashboard 会话 | HttpOnly Cookie，保存令牌并续期 | 保留 Cookie、刷新、内省及本地会话策略；前端不持有明文 token |
+| 无头 API 调用 | JWT Bearer | 保留 `AddJwtBearer`，与 Cookie 并存；显式传入 Authorization 时只验证 Bearer |
+| 退出 | 清 Cookie 并返回 `{ logoutUrl }` | 保留接口契约，补充令牌撤销；Provider 退出仍由浏览器访问返回地址并确认 |
+
+没有另加一套授权码客户端或 PKCE 实现。下面的配置、事件与接口就是 Workbench 当前运行的接入示例。
+
+## 复制到其他应用时的边界
+
+| 部分 | 如何参考 |
+| --- | --- |
+| 标准认证注册 | 对照 `WorkbenchAuthenticationExtensions` 配置 Cookie、OIDC；需要接收 access token 的 API 再注册 Bearer 和对应 audience |
+| 前后端接口契约 | 参考 `AuthController`、`CurrentIdentityController` 以及 Dashboard 的登录/落地页；回调由中间件处理 |
+| Extension | 按需复用 Basic 适配、额外的一次性流程存储和元数据预热；它们不替代标准认证中间件 |
+| 刷新与 Cookie 事件 | 当前示例包含 24 小时滑动会话、提前一分钟刷新、每次内省等应用策略；按新应用的会话要求选择 |
+| Workbench Bootstrap | 自动创建自身客户端和资源是管理台的部署便利；普通 SSO 客户端在 Provider 登记好客户端即可，不需要接入 Provider 数据库 |
+| Workbench 授权和撤销校验 | 系统管理员策略及 `IUserTokenValidator` 的直接查库是本应用业务规则；新应用应实现自己的授权策略，不复制 Workbench 的数据库和领域服务依赖 |
+
+迁移时先替换客户端 ID、密钥、API audience/scope 和公开回调地址，再接通登录与 `/api/auth/me`，最后按需加入刷新、撤销和多实例流程存储。不要把整个 `WorkbenchApiModule`、管理控制器或 Persistence 模块当作 SSO SDK 复制。
+
 ## 先登记客户端
 
 在 NexusAuth 登记一个机密客户端和 API 服务资源。Workbench 自身由启动初始化器完成这一步；其他应用可通过管理界面登记，不应复用 `nexusauth.workbench` 或它的密钥。
@@ -115,3 +143,17 @@ Bearer logout 与 Cookie logout 都不会承诺跨客户端或 Provider 全局�
 - [`Models/Requests`](../admin/src/NexusAuth.Workbench.Api/Models/Requests)：控制器请求模型，每类型一文件。
 
 `Auth:Authority` 必须与 Provider 的 issuer 完全一致，并且浏览器和 Workbench 进程都能直接访问。服务端位于容器内时，`localhost` 指向该容器自身；请让同一域名或 IP 通过 DNS 和网络路由同时可达 Provider。默认值和运行示例见 [Workbench 使用手册](Workbench使用手册.md)。
+
+## 本地运行与验收
+
+从源码运行时，默认地址为 Host `http://localhost:5100`、API `http://localhost:5051`、Dashboard `http://localhost:5273`。Dashboard 的 `/api` 和 `/signin-oidc` 代理均指向本机 API。运行前在环境 appsettings 中填写数据库连接和 `Auth:ClientSecret`；Workbench 会将自身客户端登记同步到同库的 Host。完整启动命令见 [从源码本地运行](Workbench使用手册.md#4-从源码本地运行)。
+
+接入另一个 SSO 时，至少验证以下行为，不能只检查项目能否编译：
+
+1. 未登录调用 `/api/auth/me` 返回 401；发起登录返回 `authorizeUrl`。
+2. 完成 Provider 登录、授权确认和 `/signin-oidc` 回调后，前端落地页能获取当前身份。
+3. Cookie 能访问业务 API；独立获取的 Bearer access token 也能按其授权访问，错误 Bearer 不回退到 Cookie。
+4. access token 接近过期后，Cookie 会话能刷新令牌并继续访问。
+5. Cookie 退出清除本地会话；访问返回的 Provider 登出地址并确认后，Provider 会话也结束。
+
+2026-10-29 已用独立 PostgreSQL、真实 Host/API 进程与 Vite 代理完成上述 HTTP 流程，同时验证 Bearer 撤销、管理列表、参数错误 400 和资源重复错误 409。该次验证使用源码进程部署；未将结果等同于生产域名、HTTPS 或 Compose 网络验证。

@@ -13,7 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 try
 {
     builder.AddLuckSerilog();
-    builder.Services.AddApiResult();
+    // 管理接口使用 WorkbenchApiResult；保留 ApiController 默认的请求体/模型校验。
 
     builder.Services.AddControllers()
         .AddJsonOptions(options =>

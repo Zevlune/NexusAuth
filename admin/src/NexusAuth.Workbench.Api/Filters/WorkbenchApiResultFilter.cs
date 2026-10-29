@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.EntityFrameworkCore;
 using NexusAuth.Application.Clients;
+using NexusAuth.Application.Services.ApiResources;
 using Npgsql;
 
 namespace NexusAuth.Workbench.Api.Filters;
@@ -12,10 +13,13 @@ public sealed class WorkbenchApiResultFilter(ILogger<WorkbenchApiResultFilter> l
 {
     private const string UnexpectedErrorMessage = "An unexpected error occurred. Please try again later.";
     private const string DatabaseConflictMessage = "The requested change conflicts with an existing record.";
+    private bool hasHandledException;
 
     public Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
-        context.Result = WrapResult(context.Result);
+        // 异常阶段已生成完整错误响应，结果阶段不重复包装，以免丢失业务错误码。
+        if (!hasHandledException)
+            context.Result = WrapResult(context.Result);
         return next();
     }
 
@@ -23,6 +27,7 @@ public sealed class WorkbenchApiResultFilter(ILogger<WorkbenchApiResultFilter> l
     {
         var (statusCode, message) = context.Exception switch
         {
+            ApiResourceAlreadyExistsException exception => (StatusCodes.Status409Conflict, exception.Message),
             KeyNotFoundException exception => (StatusCodes.Status404NotFound, UseMessageOrFallback(exception.Message, StatusCodes.Status404NotFound)),
             ArgumentException exception => (StatusCodes.Status400BadRequest, UseMessageOrFallback(exception.Message, StatusCodes.Status400BadRequest)),
             WorkbenchBusinessConflictException exception => (StatusCodes.Status409Conflict, UseMessageOrFallback(exception.Message, StatusCodes.Status409Conflict)),
@@ -41,7 +46,9 @@ public sealed class WorkbenchApiResultFilter(ILogger<WorkbenchApiResultFilter> l
                 context.HttpContext.TraceIdentifier);
         }
 
-        context.Result = ErrorResult(statusCode, message);
+        context.Result = ErrorResult(statusCode, message,
+            errorCode: context.Exception is ApiResourceAlreadyExistsException ? "ApiResourceAlreadyExists" : null);
+        hasHandledException = true;
         context.ExceptionHandled = true;
         return Task.CompletedTask;
     }
@@ -109,18 +116,23 @@ public sealed class WorkbenchApiResultFilter(ILogger<WorkbenchApiResultFilter> l
         int statusCode,
         string message,
         IList<string>? contentTypes = null,
-        ValidationProblemDetails? validationProblem = null)
+        ValidationProblemDetails? validationProblem = null,
+        string? errorCode = null)
     {
+        // 保留 main 的错误码字段，参数错误仍使用原有标识；HTTP 状态码由当前结果决定。
+        errorCode ??= statusCode == StatusCodes.Status400BadRequest ? "Invalid Parameter" : null;
         object value = validationProblem is null
             ? new
             {
                 success = false,
+                errorCode,
                 message,
                 errorMessage = message,
             }
             : new
             {
                 success = false,
+                errorCode,
                 message,
                 errorMessage = message,
                 errors = validationProblem.Errors,

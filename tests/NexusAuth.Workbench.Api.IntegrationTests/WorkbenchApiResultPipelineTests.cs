@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NexusAuth.Application.Clients;
+using NexusAuth.Application.Services.ApiResources;
 using NexusAuth.Workbench.Api.Filters;
 using Npgsql;
 using Xunit;
@@ -16,6 +17,18 @@ namespace NexusAuth.Workbench.Api.IntegrationTests;
 
 public sealed class WorkbenchApiResultPipelineTests
 {
+    [Fact]
+    public async Task Duplicate_resource_preserves_the_main_business_error_code()
+    {
+        using var host = await StartHostAsync();
+        using var client = host.GetTestClient();
+        using var response = await client.GetAsync("/api/workbench-api-result-tests/duplicate-resource");
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using var document = await ReadJsonAsync(response);
+        Assert.Equal("ApiResourceAlreadyExists", document.RootElement.GetProperty("errorCode").GetString());
+    }
+
     [Fact]
     public async Task Successful_object_result_keeps_the_compatible_envelope()
     {
@@ -201,6 +214,9 @@ public sealed class WorkbenchApiResultPipelineTests
 [Route("api/workbench-api-result-tests")]
 public sealed class WorkbenchApiResultTestController : ControllerBase
 {
+    [HttpGet("duplicate-resource")]
+    public IActionResult DuplicateResource() => throw new ApiResourceAlreadyExistsException("duplicate");
+
     [HttpGet("success")]
     public IActionResult Success() => Ok(new { value = "ok" });
 

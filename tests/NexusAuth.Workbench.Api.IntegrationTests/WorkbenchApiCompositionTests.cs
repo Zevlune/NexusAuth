@@ -1,3 +1,6 @@
+using System.Net;
+using System.Text;
+using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Workbench.Api.Bootstrap;
 using NexusAuth.Workbench.Api.Options;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -5,8 +8,11 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using NexusAuth.Application.Services.OpenApi;
+using NexusAuth.Application.Services.Scim;
 using NexusAuth.Application.Users;
 using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Workbench.Api;
@@ -33,6 +39,75 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
 
         Assert.Single(hostedServices.OfType<WorkbenchClientCredentialHostedService>());
         Assert.DoesNotContain(hostedServices, service => service.GetType().Name == "GatewayClientCredentialHostedService");
+    }
+
+    [Fact]
+    public void Real_host_keeps_framework_model_state_validation_enabled()
+    {
+        var options = factory.Services.GetRequiredService<IOptions<ApiBehaviorOptions>>().Value;
+
+        Assert.False(options.SuppressModelStateInvalidFilter);
+    }
+
+    [Fact]
+    public async Task Invalid_json_is_rejected_before_workbench_business_services_run()
+    {
+        var serviceCalls = new List<string>();
+        using var configured = new WorkbenchAdministrationAuthorizationFixture(
+            "nexusauth.workbench",
+            services =>
+            {
+                services.RemoveAll<IOpenApiCredentialService>();
+                services.AddSingleton(RecordingDispatchProxy.Create<IOpenApiCredentialService>((method, _) =>
+                {
+                    serviceCalls.Add($"OpenApi:{method.Name}");
+                    return null;
+                }));
+
+                services.RemoveAll<IScimCredentialService>();
+                services.AddSingleton(RecordingDispatchProxy.Create<IScimCredentialService>((method, _) =>
+                {
+                    serviceCalls.Add($"Scim:{method.Name}");
+                    return null;
+                }));
+
+                services.RemoveAll<IPasskeyManagementService>();
+                services.AddSingleton(RecordingDispatchProxy.Create<IPasskeyManagementService>((method, _) =>
+                {
+                    serviceCalls.Add($"Passkey:{method.Name}");
+                    return null;
+                }));
+            });
+        using var administrator = configured.CreateBearerClient(
+            WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+
+        var passkeyRevokePath = $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}"
+            + $"/passkeys/{Guid.NewGuid()}/revoke";
+        var requests = new[]
+        {
+            ("/api/open-api-credentials", ""),
+            ("/api/open-api-credentials", "null"),
+            ("/api/open-api-credentials", "{}"),
+            ("/api/open-api-credentials", "{"),
+            ("/api/scim-credentials", ""),
+            ("/api/scim-credentials", "null"),
+            ("/api/scim-credentials", "{}"),
+            ("/api/scim-credentials", "{"),
+            (passkeyRevokePath, ""),
+            (passkeyRevokePath, "null"),
+            (passkeyRevokePath, "{}"),
+            (passkeyRevokePath, "{"),
+        };
+
+        foreach (var (path, json) in requests)
+        {
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await administrator.PostAsync(path, content);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        Assert.Empty(serviceCalls);
     }
 
     [Fact]
