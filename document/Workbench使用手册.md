@@ -485,7 +485,7 @@ dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTest
 
 入口：默认页 `/dashboard`。它是登录后的落地页；顶部标签页默认固定保留“仪表盘”，其余打开的页面以标签形式堆叠，支持关闭。
 
-当前实现的重要限制：`pages/dashboard/index.tsx` 里的指标卡、认证趋势、认证结果、应用排行和安全事件（`metricCards`、`authTrendData`、`authResultData`、`applicationRankData`、`securityEvents`）都是**硬编码的示例数据数组**，页面上的“刷新”只是延时后更新本地时间，**不会**调用任何统计 API。因此仪表盘不能当作实时运营统计；需要查看真实登录数据请用“应用中心 → 登录记录”（`/oauth/login-audit-management`）。
+仪表盘通过现有 Workbench BFF API 读取真实数据：登录记录、成功数和失败数来自 `/api/login-audits`，用户数来自 `/api/users`，应用数来自 `/api/clients`，服务资源数来自 `/api/api-resources`；登录成功率由成功数与登录记录总数计算，近期列表展示审计接口返回的真实登录字段。单个请求失败时保留上次成功取得的数据并显示部分加载提示，首次失败则显示“暂不可用”或空状态。当前 API 没有按日期聚合的认证趋势和按应用聚合的调用排行，因此这两个区域明确显示暂不支持，不使用示例数据。
 
 ## 10. 权限边界
 

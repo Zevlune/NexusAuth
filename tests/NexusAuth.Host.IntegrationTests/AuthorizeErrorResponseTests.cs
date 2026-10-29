@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Options;
 using NexusAuth.Application;
 using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.Authorization;
 using NexusAuth.Application.Services.OIDC;
+using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Host.Controllers;
@@ -15,6 +17,40 @@ namespace NexusAuth.Host.IntegrationTests;
 public sealed class AuthorizeErrorResponseTests
 {
     private const string RedirectUri = "https://client.example/callback";
+
+    [Fact]
+    public async Task Authorization_error_includes_configured_issuer()
+    {
+        var controller = new AuthorizeController(
+            new UnusedAuthorizationService(),
+            new RedirectValidatingClientService(),
+            jwtOptions: Options.Create(new JwtOptions { Issuer = "https://issuer.example/" }))
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+
+        var result = await controller.Authorize(null, "client-1", RedirectUri, "openid");
+
+        var redirect = Assert.IsType<RedirectResult>(result);
+        var query = QueryHelpers.ParseQuery(new Uri(redirect.Url!).Query);
+        Assert.Equal("https://issuer.example", query["iss"]);
+    }
+
+    [Theory]
+    [InlineData("request", "request_not_supported")]
+    [InlineData("request_uri", "request_uri_not_supported")]
+    public async Task Unsupported_request_objects_are_rejected(string parameter, string expectedError)
+    {
+        var controller = CreateController();
+        controller.HttpContext.Request.QueryString = new QueryString($"?{parameter}=value");
+
+        var result = await controller.Authorize("code", "client-1", RedirectUri, "openid", state: "state-123");
+
+        var redirect = Assert.IsType<RedirectResult>(result);
+        var query = QueryHelpers.ParseQuery(new Uri(redirect.Url!).Query);
+        Assert.Equal(expectedError, query["error"]);
+        Assert.Equal("state-123", query["state"]);
+    }
 
     [Fact]
     public async Task Validated_redirect_uri_receives_query_error_and_preserves_state()

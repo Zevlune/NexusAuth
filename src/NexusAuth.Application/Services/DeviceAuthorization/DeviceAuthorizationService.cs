@@ -12,6 +12,8 @@ public class DeviceAuthorizationService(
     ISecurityPolicyService securityPolicyService,
     IOptions<JwtOptions> jwtOptions) : IDeviceAuthorizationService
 {
+    private const int MaxUserCodeAttempts = 5;
+
     private readonly JwtOptions _jwtOptions = jwtOptions.Value;
 
     public async Task<DeviceAuthorizationStartResult> StartAsync(ClientAuthenticationInput authentication, string scope, CancellationToken ct = default)
@@ -33,11 +35,24 @@ public class DeviceAuthorizationService(
         if (!scopeValidation.IsSuccess)
             return DeviceAuthorizationStartResult.Failure(scopeValidation.ErrorCode ?? "invalid_scope", scopeValidation.Error ?? "Invalid scope.");
 
-        var creation = Domain.Entities.DeviceAuthorization.Create(
-            clientId,
-            scopeValidation.NormalizedScope!,
-            TimeSpan.FromMinutes(Math.Max(1, _jwtOptions.DeviceCodeLifetimeMinutes)));
-        await deviceAuthorizationRepository.AddAsync(creation.Entity, ct);
+        Domain.Entities.DeviceAuthorizationCreationResult? creation = null;
+        for (var attempt = 0; attempt < MaxUserCodeAttempts; attempt++)
+        {
+            var candidate = Domain.Entities.DeviceAuthorization.Create(
+                clientId,
+                scopeValidation.NormalizedScope!,
+                TimeSpan.FromMinutes(Math.Max(1, _jwtOptions.DeviceCodeLifetimeMinutes)));
+            if (await deviceAuthorizationRepository.TryAddAsync(candidate.Entity, ct))
+            {
+                creation = candidate;
+                break;
+            }
+        }
+
+        if (creation is null)
+            return DeviceAuthorizationStartResult.Failure(
+                "temporarily_unavailable",
+                "Unable to allocate a unique device code. Please retry.");
 
         const string verificationUri = "/device";
         var verificationUriComplete = $"{verificationUri}?user_code={Uri.EscapeDataString(creation.Entity.UserCode)}";

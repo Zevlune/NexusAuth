@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import BrandComponent from '../../components/brand';
 import { startLogin } from '../../api/login';
+import { DEFAULT_AUTHENTICATED_ROUTE } from '../../router/defaults';
 
 const loginErrorMessages: Record<string, string> = {
   invalid_callback: '登录回调无效或已过期，请重新登录。',
@@ -34,7 +35,7 @@ const Login = () => {
     const authenticated = await checkAuthenticated();
     setCachedAuthStatus(authenticated);
     if (authenticated) {
-      window.location.href = '/dashboard';
+      window.location.href = DEFAULT_AUTHENTICATED_ROUTE;
     }
   }
 

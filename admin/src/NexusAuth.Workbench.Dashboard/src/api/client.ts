@@ -17,6 +17,7 @@ export type CreateClientRequest = {
   allowedGrantTypes?: string[];
   apiResourceIds?: string[];
   requirePkce: boolean;
+  requireConsent: boolean;
   tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
   autoGenerateJwks?: boolean;
   jwks?: string;
@@ -32,6 +33,7 @@ export type UpdateClientRequest = {
   allowedGrantTypes?: string[];
   apiResourceIds?: string[];
   requirePkce?: boolean;
+  requireConsent?: boolean;
   tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
   jwks?: string;
   jwksUri?: string;
@@ -75,6 +77,7 @@ export type Client = {
   allowedGrantTypes: string[];
   apiResourceIds: string[];
   requirePkce: boolean;
+  requireConsent: boolean;
   isActive: boolean;
   tokenEndpointAuthMethod: TokenEndpointAuthMethod;
   jwks?: string;

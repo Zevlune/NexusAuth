@@ -113,4 +113,21 @@ public sealed class OAuthClientRegistrationValidationTests
 
         Assert.Equal(PublicRsaJwks, client.Jwks);
     }
+
+    [Fact]
+    public void Consent_is_false_by_default_and_can_be_updated_independently()
+    {
+        var client = OAuthClient.Create("web-client", "Web");
+
+        Assert.False(client.RequireConsent);
+
+        client.Update(requireConsent: true);
+        Assert.True(client.RequireConsent);
+
+        client.Update(clientName: "Renamed");
+        Assert.True(client.RequireConsent);
+
+        client.Update(requireConsent: false);
+        Assert.False(client.RequireConsent);
+    }
 }

@@ -17,6 +17,10 @@ using System.Threading.RateLimiting;
 using Fido2NetLib;
 using NexusAuth.Application.Services.Email;
 using NexusAuth.Application.Services.ExternalIdentity;
+using NexusAuth.Application.Services.DataRetention;
+using NexusAuth.Host.Maintenance;
+using NexusAuth.Domain.Repositories;
+using NexusAuth.Persistence.Repositories;
 
 namespace NexusAuth.Host;
 
@@ -92,6 +96,7 @@ public class AppWebModule : LuckAppModule
             .Bind(configuration.GetSection(SliderCaptchaOptions.SectionName))
             .ValidateOnStart();
         services.AddMemoryCache();
+        services.AddScoped<IConsentStore, ConsentStore>();
         services.AddOptions<TotpOptions>()
             .Bind(configuration.GetSection(TotpOptions.SectionName))
             .Validate(options => !string.IsNullOrWhiteSpace(options.Issuer), "Totp:Issuer is required.")
@@ -101,6 +106,27 @@ public class AppWebModule : LuckAppModule
             .ValidateOnStart();
         services.Configure<BootstrapAdminOptions>(configuration.GetSection("BootstrapAdmin"));
         services.AddHostedService<BootstrapAdminHostedService>();
+        services.AddOptions<AuthenticationDataRetentionOptions>()
+            .Bind(configuration.GetSection(AuthenticationDataRetentionOptions.SectionName))
+            .Validate(
+                options => options.SweepIntervalMinutes is >= 1 and <= 1_440,
+                "DataRetention:SweepIntervalMinutes must be between 1 and 1440.")
+            .Validate(
+                options => options.ExpiredDataRetentionDays is >= 0 and <= 3_650,
+                "DataRetention:ExpiredDataRetentionDays must be between 0 and 3650.")
+            .Validate(
+                options => options.LoginAuditRetentionDays is >= 1 and <= 36_500,
+                "DataRetention:LoginAuditRetentionDays must be between 1 and 36500.")
+            .Validate(
+                options => options.CleanupBatchSize is >= 1 and <= 100_000,
+                "DataRetention:CleanupBatchSize must be between 1 and 100000.")
+            .Validate(
+                options => options.MaxBatchesPerTypePerSweep is >= 1 and <= 10_000,
+                "DataRetention:MaxBatchesPerTypePerSweep must be between 1 and 10000.")
+            .ValidateOnStart();
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<IAuthenticationDataCleanupService, AuthenticationDataCleanupService>();
+        services.AddHostedService<AuthenticationDataCleanupHostedService>();
 
         // Keep abuse controls at the host boundary so every sensitive
         // endpoint, including Razor login/device pages, shares one policy.

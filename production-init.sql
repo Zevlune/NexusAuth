@@ -170,6 +170,7 @@ CREATE TABLE nexusauth.oauth_clients (
     allowed_scopes              jsonb           NOT NULL,
     allowed_grant_types         jsonb           NOT NULL,
     require_pkce                boolean         NOT NULL DEFAULT true,
+    require_consent             boolean         NOT NULL DEFAULT false,
     is_active                   boolean         NOT NULL DEFAULT true,
     created_at                  timestamptz     NOT NULL,
     CONSTRAINT pk_oauth_clients PRIMARY KEY (id)
@@ -255,6 +256,7 @@ CREATE TABLE nexusauth.authorization_codes (
 CREATE UNIQUE INDEX ix_authorization_codes_code_hash ON nexusauth.authorization_codes (code_hash);
 CREATE INDEX ix_authorization_codes_consume
     ON nexusauth.authorization_codes (code_hash, client_id, is_used, expires_at);
+CREATE INDEX ix_authorization_codes_expires_at ON nexusauth.authorization_codes (expires_at);
 CREATE INDEX ix_authorization_codes_client_id ON nexusauth.authorization_codes (client_id);
 CREATE INDEX ix_authorization_codes_user_id ON nexusauth.authorization_codes (user_id);
 -- ============================================================
@@ -278,6 +280,7 @@ CREATE TABLE nexusauth.refresh_tokens (
 CREATE UNIQUE INDEX ix_refresh_tokens_token_hash ON nexusauth.refresh_tokens (token_hash);
 CREATE INDEX ix_refresh_tokens_rotate
     ON nexusauth.refresh_tokens (token_hash, client_id, is_revoked, expires_at);
+CREATE INDEX ix_refresh_tokens_expires_at ON nexusauth.refresh_tokens (expires_at);
 CREATE INDEX ix_refresh_tokens_client_id ON nexusauth.refresh_tokens (client_id);
 CREATE INDEX ix_refresh_tokens_user_id ON nexusauth.refresh_tokens (user_id);
 -- ============================================================
@@ -309,6 +312,7 @@ CREATE INDEX ix_device_authorizations_client_id ON nexusauth.device_authorizatio
 CREATE INDEX ix_device_authorizations_user_id ON nexusauth.device_authorizations (user_id);
 CREATE INDEX ix_device_authorizations_poll
     ON nexusauth.device_authorizations (device_code_hash, client_id, status, expires_at);
+CREATE INDEX ix_device_authorizations_expires_at ON nexusauth.device_authorizations (expires_at);
 -- ============================================================
 -- token_blacklist_entries
 -- ============================================================
@@ -323,6 +327,7 @@ CREATE TABLE nexusauth.token_blacklist_entries (
 );
 
 CREATE UNIQUE INDEX ix_token_blacklist_entries_jti ON nexusauth.token_blacklist_entries (jti);
+CREATE INDEX ix_token_blacklist_entries_expires_at ON nexusauth.token_blacklist_entries (expires_at);
 
 -- ============================================================
 -- scim_service_principal_credentials
@@ -426,5 +431,69 @@ CREATE TABLE nexusauth.webauthn_challenges (
 
 CREATE INDEX ix_webauthn_challenges_purpose_expiry
     ON nexusauth.webauthn_challenges (purpose, expires_at);
+CREATE INDEX ix_webauthn_challenges_expires_at
+    ON nexusauth.webauthn_challenges (expires_at);
+
+-- Consent interaction state and remembered grants.
+CREATE TABLE IF NOT EXISTS nexusauth.consent_requests (
+    id                  uuid            NOT NULL,
+    request_id_hash     varchar(43)     NOT NULL,
+    user_id             uuid            NOT NULL,
+    query               text            NOT NULL,
+    status              varchar(32)     NOT NULL,
+    remember            boolean         NOT NULL,
+    created_at          timestamptz     NOT NULL,
+    expires_at          timestamptz     NOT NULL,
+    approved_at         timestamptz,
+    consumed_at         timestamptz,
+    CONSTRAINT pk_consent_requests PRIMARY KEY (id),
+    CONSTRAINT ck_consent_requests_request_id_hash_base64url
+        CHECK (request_id_hash ~ '^[A-Za-z0-9_-]{43}$'),
+    CONSTRAINT ck_consent_requests_expiry_after_creation
+        CHECK (expires_at > created_at),
+    CONSTRAINT ck_consent_requests_status
+        CHECK (status IN ('Pending', 'Approved', 'Consumed')),
+    CONSTRAINT ck_consent_requests_state_timestamps
+        CHECK (
+            (status = 'Pending' AND approved_at IS NULL AND consumed_at IS NULL)
+            OR (status = 'Approved' AND approved_at IS NOT NULL AND consumed_at IS NULL)
+            OR (status = 'Consumed' AND approved_at IS NOT NULL AND consumed_at IS NOT NULL)
+        )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ix_consent_requests_request_id_hash
+    ON nexusauth.consent_requests (request_id_hash);
+CREATE INDEX IF NOT EXISTS ix_consent_requests_consume
+    ON nexusauth.consent_requests (request_id_hash, user_id, status, expires_at);
+CREATE INDEX IF NOT EXISTS ix_consent_requests_user_state
+    ON nexusauth.consent_requests (user_id, status, expires_at);
+CREATE INDEX IF NOT EXISTS ix_consent_requests_expires_at
+    ON nexusauth.consent_requests (expires_at);
+
+CREATE TABLE IF NOT EXISTS nexusauth.consent_grants (
+    id                  uuid            NOT NULL,
+    user_id             uuid            NOT NULL,
+    client_id           varchar(128)    NOT NULL,
+    scope_normalized    varchar(512)    NOT NULL,
+    claims              text,
+    claims_match_key    varchar(65)     NOT NULL,
+    created_at          timestamptz     NOT NULL,
+    CONSTRAINT pk_consent_grants PRIMARY KEY (id),
+    CONSTRAINT ck_consent_grants_scope_not_empty
+        CHECK (length(scope_normalized) > 0),
+    CONSTRAINT ck_consent_grants_claims_match_key
+        CHECK (claims_match_key = 'n' OR claims_match_key ~ '^v:[A-Za-z0-9_-]{43}$'),
+    CONSTRAINT ck_consent_grants_claims_key_consistency
+        CHECK (
+            (claims IS NULL AND claims_match_key = 'n')
+            OR (claims IS NOT NULL AND claims_match_key LIKE 'v:%')
+        )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ix_consent_grants_identity
+    ON nexusauth.consent_grants
+        (user_id, client_id, scope_normalized, claims_match_key);
+CREATE INDEX IF NOT EXISTS ix_consent_grants_user_client
+    ON nexusauth.consent_grants (user_id, client_id);
 
 COMMIT;

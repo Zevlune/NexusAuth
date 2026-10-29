@@ -5,7 +5,7 @@ import { getContentBreadcrumbs, type ContentBreadcrumb, type ContentMenu } from 
 const crumb = (label: string, path?: string): ContentBreadcrumb => ({ label, path });
 
 const menus: ContentMenu[] = [
-  { id: 'dashboard', name: '仪表盘', route: '/dashboard', parentId: null, componentPath: '/dashboard/index.tsx' },
+  { id: 'users', name: '用户管理', route: '/user-management', parentId: null, componentPath: '/user-management/index.tsx' },
   { id: 'oauth', name: '应用中心', route: '/oauth', parentId: null, componentPath: null },
   { id: 'client', name: '应用管理', route: '/oauth/client-management', parentId: 'oauth', componentPath: '/client-management/index.tsx' },
   { id: 'client-create', name: '新增应用', route: '/oauth/client-management/create', parentId: 'client', componentPath: '/client-management/create/index.tsx' },
@@ -13,8 +13,8 @@ const menus: ContentMenu[] = [
 ];
 
 test('root menu renders only the current menu without a link', () => {
-  assert.deepEqual(getContentBreadcrumbs(menus, '/dashboard', 'fallback'), [
-    crumb('仪表盘'),
+  assert.deepEqual(getContentBreadcrumbs(menus, '/user-management', 'fallback'), [
+    crumb('用户管理'),
   ]);
 });
 

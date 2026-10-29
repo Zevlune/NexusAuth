@@ -5,6 +5,7 @@ import {
   getLoginPath,
   getSafeRedirectPath,
 } from './auth';
+import { DEFAULT_AUTHENTICATED_ROUTE } from './defaults';
 
 export const RequireAuth = () => {
   const location = useLocation();
@@ -21,16 +22,16 @@ export const RedirectIfAuthenticated = () => {
 
   if (getCachedAuthStatus()) {
     const redirect = getSafeRedirectPath(new URLSearchParams(location.search).get('redirect'));
-    return <Navigate to={redirect || '/dashboard'} replace />;
+    return <Navigate to={redirect || DEFAULT_AUTHENTICATED_ROUTE} replace />;
   }
 
   return <Outlet />;
 };
 
 export const HomeRedirect = () => {
-  return <Navigate to={getCachedAuthStatus() ? '/dashboard' : '/login'} replace />;
+  return <Navigate to={getCachedAuthStatus() ? DEFAULT_AUTHENTICATED_ROUTE : '/login'} replace />;
 };
 
 export const AuthCallback = () => {
-  return <Navigate to={getCachedAuthStatus() ? '/dashboard' : '/login?error=session_missing'} replace />;
+  return <Navigate to={getCachedAuthStatus() ? DEFAULT_AUTHENTICATED_ROUTE : '/login?error=session_missing'} replace />;
 };

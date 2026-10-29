@@ -71,6 +71,7 @@ public class DeviceAuthorizationConfiguration : IEntityTypeConfiguration<DeviceA
         builder.HasIndex(d => d.UserCodeNormalized).IsUnique();
         builder.HasIndex(d => new { d.DeviceCodeHash, d.ClientId, d.Status, d.ExpiresAt })
             .HasDatabaseName("ix_device_authorizations_poll");
-
+        builder.HasIndex(d => d.ExpiresAt)
+            .HasDatabaseName("ix_device_authorizations_expires_at");
     }
 }

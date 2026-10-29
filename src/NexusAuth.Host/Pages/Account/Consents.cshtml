@@ -1,0 +1,25 @@
+@page "/account/consents"
+@model NexusAuth.Host.Pages.Account.ConsentsModel
+@{
+    Layout = "_AccountLayout";
+    ViewData["Title"] = "应用授权";
+}
+<section class="panel history-panel" aria-labelledby="consents-title">
+    <div class="history-header"><h1 id="consents-title">应用授权</h1><p>撤销后该应用需要重新获得同意，其刷新令牌也会被撤销；已签发的访问令牌可能在到期前仍有效。</p></div>
+    @if (Model.Grants.Count == 0)
+    {
+        <p class="empty">暂无已记住的应用授权。</p>
+    }
+    else
+    {
+        <table class="history-table">
+            <thead><tr><th>应用</th><th>权限</th><th>操作</th></tr></thead>
+            <tbody>
+            @foreach (var group in Model.Grants.GroupBy(grant => grant.ClientId))
+            {
+                <tr><td>@group.Key</td><td>@string.Join(", ", group.Select(grant => grant.Scope).Distinct())</td><td><form method="post" asp-page-handler="Revoke"><input type="hidden" name="ClientId" value="@group.Key" /><button class="quiet-button" type="submit">撤销授权</button></form></td></tr>
+            }
+            </tbody>
+        </table>
+    }
+</section>

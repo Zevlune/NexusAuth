@@ -17,5 +17,9 @@ public sealed class SsoSessionConfiguration : IEntityTypeConfiguration<SsoSessio
         builder.Property(session => session.RevokedAt).HasColumnName("revoked_at");
         builder.HasIndex(session => new { session.UserId, session.RevokedAt, session.ExpiresAt })
             .HasDatabaseName("ix_sso_sessions_user_active");
+        builder.HasIndex(session => session.ExpiresAt)
+            .HasDatabaseName("ix_sso_sessions_expires_at");
+        builder.HasIndex(session => session.RevokedAt)
+            .HasDatabaseName("ix_sso_sessions_revoked_at");
     }
 }

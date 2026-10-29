@@ -50,6 +50,8 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
 
         builder.HasIndex(r => new { r.TokenHash, r.ClientId, r.IsRevoked, r.ExpiresAt })
             .HasDatabaseName("ix_refresh_tokens_rotate");
+        builder.HasIndex(r => r.ExpiresAt)
+            .HasDatabaseName("ix_refresh_tokens_expires_at");
 
         builder.ToTable(table => table.HasCheckConstraint(
             "ck_refresh_tokens_token_hash_base64url",

@@ -82,6 +82,8 @@ public class AuthorizationCodeConfiguration : IEntityTypeConfiguration<Authoriza
 
         builder.HasIndex(a => new { a.CodeHash, a.ClientId, a.IsUsed, a.ExpiresAt })
             .HasDatabaseName("ix_authorization_codes_consume");
+        builder.HasIndex(a => a.ExpiresAt)
+            .HasDatabaseName("ix_authorization_codes_expires_at");
 
         builder.ToTable(table => table.HasCheckConstraint(
             "ck_authorization_codes_code_hash_base64url",

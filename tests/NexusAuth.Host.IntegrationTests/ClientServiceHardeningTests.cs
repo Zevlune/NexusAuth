@@ -68,6 +68,46 @@ public sealed class ClientServiceHardeningTests
             "web-client", "https://client.example/callback", "authorization_code", ValidChallenge, "S256");
 
         Assert.True(result.IsSuccess);
+        Assert.Same(client, result.Client);
+    }
+
+    [Fact]
+    public async Task Client_service_preserves_require_consent_across_create_update_and_mapping()
+    {
+        using var createHarness = new ClientServiceHarness(null);
+        var created = await createHarness.Service.CreateAsync(new CreateClientRequest(
+            ClientId: "consent-client",
+            ClientName: "Consent client",
+            Description: null,
+            RedirectUris: null,
+            PostLogoutRedirectUris: null,
+            AllowedScopes: null,
+            AllowedGrantTypes: ["client_credentials"],
+            RequirePkce: false,
+            TokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodClientSecretPost,
+            AutoGenerateJwks: false,
+            Jwks: null,
+            JwksUri: null,
+            RequireConsent: true));
+
+        Assert.True(created.Client.RequireConsent);
+
+        var client = OAuthClient.Create(
+            created.Client.Id,
+            "consent-client",
+            "Consent client",
+            requireConsent: true);
+        using var updateHarness = new ClientServiceHarness(client);
+
+        var preserved = await updateHarness.Service.UpdateAsync(
+            client.Id,
+            Update(isActive: true));
+        Assert.True(preserved.RequireConsent);
+
+        var disabled = await updateHarness.Service.UpdateAsync(
+            client.Id,
+            Update(isActive: true, requireConsent: false));
+        Assert.False(disabled.RequireConsent);
     }
 
     [Fact]
@@ -238,8 +278,8 @@ public sealed class ClientServiceHardeningTests
         Assert.Equal("This client requires client secret authentication.", result.Error);
     }
 
-    private static UpdateClientRequest Update(bool? isActive) =>
-        new(null, null, null, null, null, null, null, null, null, null, isActive);
+    private static UpdateClientRequest Update(bool? isActive, bool? requireConsent = null) =>
+        new(null, null, null, null, null, null, null, null, null, null, isActive, RequireConsent: requireConsent);
 
     internal static string PublicJwks(RSA rsa)
     {

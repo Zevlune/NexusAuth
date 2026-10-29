@@ -12,7 +12,7 @@
 | --- | --- |
 | 共享布局与导航 | Layout、Menu、Tabs、Breadcrumb、Button、Dropdown、Avatar、Input、Tooltip、Space |
 | 用户管理 | Card、Statistic、Table、Pagination、Tag、Avatar、Drawer、Dialog、Dropdown、Form、Input、Switch、Collapse、Alert、Descriptions、Empty、Loading |
-| 仪表盘 | Card、Statistic、List、Tag、Typography、Select、Button |
+| 仪表盘 | Card、List、Tag、Typography、Alert、Empty、Button |
 | 应用管理 | Card、Descriptions、Avatar、Tag、Form、Input、Select、Loading、Empty、Pagination、Drawer、Popconfirm |
 | 新增 / 编辑应用 | Card、Descriptions、Form、Input、Select、Textarea、Switch、Alert、Loading、Tooltip、Popconfirm |
 | 服务资源 | Card、Descriptions、Avatar、Form、Input、Select、Switch、Drawer、Dialog、Loading、Empty、Pagination |

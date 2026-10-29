@@ -17,6 +17,12 @@ import { getMenuList, type MenuDefinition } from '../../api/auth';
 import useUserDetail from '../common/use-user-detail.';
 import { getContentBreadcrumbs, type ContentMenu } from '../../components/content-header/breadcrumbs';
 import { getCachedAdministratorStatus } from '../../router/auth';
+import {
+  DEFAULT_AUTHENTICATED_ROUTE,
+  DEFAULT_AUTHENTICATED_ROUTE_LABEL,
+  LAYOUT_TABS_STORAGE_KEY,
+  LEGACY_LAYOUT_TABS_STORAGE_KEY,
+} from '../../router/defaults';
 
 const { Content, Aside, Header } = Layout;
 const { TabPanel } = Tabs;
@@ -31,14 +37,14 @@ interface TabItem {
   removable: boolean;
 }
 
-const DEFAULT_TAB_PATH = '/dashboard';
-const DEFAULT_TAB_LABEL = '仪表盘';
-const TABS_STORAGE_KEY = 'nexus-auth-layout-tabs';
+const DEFAULT_TAB_PATH = DEFAULT_AUTHENTICATED_ROUTE;
+const DEFAULT_TAB_LABEL = DEFAULT_AUTHENTICATED_ROUTE_LABEL;
 
 const getInitialTabs = (): TabItem[] => {
   const defaultTabs = [{ value: DEFAULT_TAB_PATH, label: DEFAULT_TAB_LABEL, removable: false }];
   try {
-    const raw = window.localStorage.getItem(TABS_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_LAYOUT_TABS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(LAYOUT_TABS_STORAGE_KEY);
     if (!raw) {
       return defaultTabs;
     }
@@ -47,8 +53,8 @@ const getInitialTabs = (): TabItem[] => {
       return defaultTabs;
     }
     const validTabs = parsed.filter((tab) => tab?.value && tab?.label);
-    const hasDashboard = validTabs.some((tab) => tab.value === DEFAULT_TAB_PATH);
-    return hasDashboard ? validTabs : [...defaultTabs, ...validTabs];
+    const hasDefaultTab = validTabs.some((tab) => tab.value === DEFAULT_TAB_PATH);
+    return hasDefaultTab ? validTabs : [...defaultTabs, ...validTabs];
   } catch {
     return defaultTabs;
   }
@@ -78,7 +84,7 @@ const PublicLayout = () => {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(tabs));
+    window.localStorage.setItem(LAYOUT_TABS_STORAGE_KEY, JSON.stringify(tabs));
   }, [tabs]);
 
   useEffect(() => {
@@ -128,14 +134,14 @@ const PublicLayout = () => {
 
   useEffect(() => {
     setTabs((prev) => {
-      const dashboardTab: TabItem = {
+      const defaultTab: TabItem = {
         value: DEFAULT_TAB_PATH,
         label: menuMap[DEFAULT_TAB_PATH]?.name || DEFAULT_TAB_LABEL,
         removable: false,
       };
 
       const restTabs = prev.filter((tab) => tab.value !== DEFAULT_TAB_PATH);
-      return [dashboardTab, ...restTabs];
+      return [defaultTab, ...restTabs];
     });
   }, [menuMap]);
 
@@ -156,7 +162,7 @@ const PublicLayout = () => {
         removable: pathname !== DEFAULT_TAB_PATH,
       };
 
-      const dashboardTab = prev.find((tab) => tab.value === DEFAULT_TAB_PATH) || {
+      const defaultTab = prev.find((tab) => tab.value === DEFAULT_TAB_PATH) || {
         value: DEFAULT_TAB_PATH,
         label: menuMap[DEFAULT_TAB_PATH]?.name || DEFAULT_TAB_LABEL,
         removable: false,
@@ -164,10 +170,10 @@ const PublicLayout = () => {
       const restTabs = prev.filter((tab) => tab.value !== DEFAULT_TAB_PATH);
 
       if (pathname === DEFAULT_TAB_PATH) {
-        return [dashboardTab, ...restTabs];
+        return [defaultTab, ...restTabs];
       }
 
-      return [dashboardTab, ...restTabs, nextTab];
+      return [defaultTab, ...restTabs, nextTab];
     });
   }, [currentTabLabel, menuMap, pathname]);
 

@@ -36,5 +36,7 @@ public class TokenBlacklistEntryConfiguration : IEntityTypeConfiguration<TokenBl
             .IsRequired();
 
         builder.HasIndex(t => t.Jti).IsUnique();
+        builder.HasIndex(t => t.ExpiresAt)
+            .HasDatabaseName("ix_token_blacklist_entries_expires_at");
     }
 }

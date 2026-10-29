@@ -13,4 +13,5 @@ public record CreateClientRequest(
     bool? AutoGenerateJwks,
     string? Jwks,
     string? JwksUri,
-    List<Guid>? ApiResourceIds = null);
+    List<Guid>? ApiResourceIds = null,
+    bool RequireConsent = false);

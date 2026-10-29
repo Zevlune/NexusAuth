@@ -6,11 +6,12 @@ import { setPageLoading } from '../../../page-loading';
 import ContentHeader from '../../../components/content-header';
 import type { ContentBreadcrumb } from '../../../components/content-header/breadcrumbs';
 import { PageActionsContext } from '../../../components/page-actions/context';
+import { DEFAULT_AUTHENTICATED_ROUTE } from '../../../router/defaults';
 
 const PublicContent = ({ breadcrumbs }: { breadcrumbs: ContentBreadcrumb[] }) => {
     const { pathname } = useLocation();
     const [actionsTarget, setActionsTarget] = useState<HTMLDivElement | null>(null);
-    const showContentHeader = pathname !== '/dashboard';
+    const showContentHeader = pathname !== DEFAULT_AUTHENTICATED_ROUTE;
     const contentInnerRef = useRef<HTMLDivElement | null>(null);
     const contentRef = useRef<HTMLDivElement | null>(null);
     const [contentMaxHeight, setContentMaxHeight] = useState<number>();

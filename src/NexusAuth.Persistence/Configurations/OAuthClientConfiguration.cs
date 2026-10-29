@@ -79,6 +79,10 @@ public class OAuthClientConfiguration : IEntityTypeConfiguration<OAuthClient>
             .HasColumnName("require_pkce")
             .IsRequired();
 
+        builder.Property(c => c.RequireConsent)
+            .HasColumnName("require_consent")
+            .IsRequired();
+
         builder.Property(c => c.IsActive)
             .HasColumnName("is_active")
             .IsRequired();

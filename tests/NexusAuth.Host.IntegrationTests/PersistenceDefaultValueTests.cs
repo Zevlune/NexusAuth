@@ -56,6 +56,7 @@ public sealed class PersistenceDefaultValueTests
         var values = await CaptureInsertAsync(client, "oauth_clients");
 
         Assert.Equal(false, values["require_pkce"]);
+        Assert.Equal(false, values["require_consent"]);
         Assert.Equal(true, values["is_active"]);
     }
 

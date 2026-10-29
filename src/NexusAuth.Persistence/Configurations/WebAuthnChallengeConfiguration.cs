@@ -24,5 +24,6 @@ public sealed class WebAuthnChallengeConfiguration : IEntityTypeConfiguration<We
         builder.Property<uint>("xmin").IsRowVersion();
         builder.HasIndex(challenge => challenge.TokenHash).IsUnique().HasDatabaseName("ux_webauthn_challenges_token_hash");
         builder.HasIndex(challenge => new { challenge.Purpose, challenge.ExpiresAt }).HasDatabaseName("ix_webauthn_challenges_purpose_expiry");
+        builder.HasIndex(challenge => challenge.ExpiresAt).HasDatabaseName("ix_webauthn_challenges_expires_at");
     }
 }

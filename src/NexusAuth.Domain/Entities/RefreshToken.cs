@@ -4,6 +4,10 @@ namespace NexusAuth.Domain.Entities;
 
 public class RefreshToken : EntityWithIdentity<Guid>
 {
+    public const string RotationMarkerPrefix = "refresh_rotated:";
+
+    public const string RotationMarkerTokenType = "refresh_token_rotated";
+
     /// <summary>
     /// SHA-256 hash of the bearer token, encoded as unpadded Base64Url.
     /// The raw token is deliberately not part of the entity and must only be
@@ -65,6 +69,12 @@ public class RefreshToken : EntityWithIdentity<Guid>
             .Replace('+', '-')
             .Replace('/', '_')
             .TrimEnd('=');
+    }
+
+    public static string BuildRotationMarkerJti(string tokenHash)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tokenHash);
+        return RotationMarkerPrefix + tokenHash;
     }
 
     public void Revoke()

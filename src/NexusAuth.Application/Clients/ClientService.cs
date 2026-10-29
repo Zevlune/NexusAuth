@@ -157,7 +157,7 @@ public class ClientService(
             }
         }
 
-        return ClientValidationResult.Success();
+        return ClientValidationResult.Success(client);
     }
 
     public async Task<ClientValidationResult> ValidateClientRedirectUriAsync(
@@ -302,7 +302,8 @@ public class ClientService(
             request.RequirePkce,
             tokenEndpointAuthMethod,
             jwks: initialJwks,
-            jwksUri: request.JwksUri);
+            jwksUri: request.JwksUri,
+            requireConsent: request.RequireConsent);
 
         if (requiresGeneratedJwks
             || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodClientSecretBasic, StringComparison.Ordinal)
@@ -365,7 +366,8 @@ public class ClientService(
             request.IsActive,
             tokenEndpointAuthMethod,
             jwks: request.Jwks,
-            jwksUri: request.JwksUri);
+            jwksUri: request.JwksUri,
+            requireConsent: request.RequireConsent);
 
         await clientRepository.UpdateAsync(client, ct);
 
@@ -711,7 +713,8 @@ public class ClientService(
             client.AllowedGrantTypes,
             client.RequirePkce,
             client.IsActive,
-            client.CreatedAt)
+            client.CreatedAt,
+            client.RequireConsent)
         {
             ApiResourceIds = [.. apiResourceIds],
         };
