@@ -28,7 +28,7 @@ public sealed class WorkbenchTokenRefreshCoordinator(IServiceScopeFactory scopes
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await using var scope = scopes.CreateAsyncScope();
-            return await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
+            return await scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
                 .RefreshTokensAsync(refreshToken, timeout.Token);
         }
         finally { _ = RemoveLaterAsync(key); }

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Extension;
 
@@ -12,7 +13,12 @@ public static class OpenIdConnectFlowStateExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.AddOptions<OpenIdConnectFlowStateOptions>();
+        services.AddOptions<OpenIdConnectFlowStateOptions>().ValidateOnStart();
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<
+                IValidateOptions<OpenIdConnectFlowStateOptions>,
+                OpenIdConnectFlowStateOptionsValidator>());
+        services.AddOptions<RedisFlowStateOptions>().ValidateOnStart();
         services.TryAddSingleton<TimeProvider>(TimeProvider.System);
         services.TryAddScoped<OpenIdConnectFlowState>();
         return new OpenIdConnectFlowStateBuilder(services);

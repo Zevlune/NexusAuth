@@ -61,15 +61,16 @@ public sealed class WorkbenchBootstrapValidationTests
         using var provider = new ServiceCollection()
             .AddSingleton(clientRepository).AddSingleton(resourceRepository).AddSingleton(associations)
             .BuildServiceProvider();
-        var configuration = new ConfigurationManager();
-        configuration.AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Auth:ClientId"] = "workbench", ["Auth:ClientSecret"] = "bootstrap-secret",
-            ["Auth:Audience"] = "workbench.api", ["Auth:RedirectUri"] = "https://app.test/signin-oidc",
-            ["Auth:PostLogoutRedirectUri"] = "https://app.test/"
-        });
         var service = new WorkbenchClientCredentialHostedService(
-            provider.GetRequiredService<IServiceScopeFactory>(), configuration,
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new WorkbenchAuthenticationOptions
+            {
+                ClientId = "workbench",
+                ClientSecret = "bootstrap-secret",
+                Audience = "workbench.api",
+                RedirectUri = "https://app.test/signin-oidc",
+                PostLogoutRedirectUri = "https://app.test/"
+            }),
             Options.Create(new WorkbenchBootstrapOptions
             {
                 ResourceName = "workbench.api", ResourceDisplayName = "Workbench API", ClientName = "Workbench"
@@ -152,18 +153,16 @@ public sealed class WorkbenchBootstrapValidationTests
         using var provider = new ServiceCollection()
             .AddSingleton(clientRepository).AddSingleton(resourceRepository).AddSingleton(associations)
             .BuildServiceProvider();
-        var configuration = new ConfigurationManager();
-        configuration.AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Auth:ClientId"] = "workbench",
-            ["Auth:ClientSecret"] = "updated-secret",
-            ["Auth:Audience"] = "workbench.api",
-            ["Auth:RedirectUri"] = "https://app.test/signin-oidc",
-            ["Auth:PostLogoutRedirectUri"] = "https://app.test/"
-        });
         var service = new WorkbenchClientCredentialHostedService(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            configuration,
+            Options.Create(new WorkbenchAuthenticationOptions
+            {
+                ClientId = "workbench",
+                ClientSecret = "updated-secret",
+                Audience = "workbench.api",
+                RedirectUri = "https://app.test/signin-oidc",
+                PostLogoutRedirectUri = "https://app.test/"
+            }),
             Options.Create(new WorkbenchBootstrapOptions
             {
                 ResourceName = "workbench.api",
@@ -213,13 +212,44 @@ public sealed class WorkbenchBootstrapValidationTests
     public async Task Missing_required_configuration_fails_instead_of_skipping_registration()
     {
         var service = new WorkbenchClientCredentialHostedService(
-            null!, new ConfigurationManager(), Options.Create(new WorkbenchBootstrapOptions()),
+            null!,
+            Options.Create(new WorkbenchAuthenticationOptions()),
+            Options.Create(new WorkbenchBootstrapOptions()),
             new ProductionEnvironment(), NullLogger<WorkbenchClientCredentialHostedService>.Instance);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartAsync(default));
 
         Assert.Contains("Bootstrap:ResourceName", exception.Message);
         Assert.Contains("Auth:ClientSecret", exception.Message);
+    }
+
+    [Fact]
+    public void Authentication_options_pipeline_normalizes_bootstrap_configuration()
+    {
+        var configuration = new ConfigurationManager();
+        configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Auth:Authority"] = " https://issuer.test/identity/ ",
+            ["Auth:Audience"] = " workbench.api ",
+            ["Auth:ClientId"] = " workbench ",
+            ["Auth:ClientSecret"] = " bootstrap-secret ",
+            ["Auth:RedirectUri"] = " https://app.test/signin-oidc ",
+            ["Auth:PostLogoutRedirectUri"] = " https://app.test/ ",
+            ["Auth:Scope"] = " openid profile "
+        });
+        var services = new ServiceCollection();
+        services.AddWorkbenchAuthentication(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        var options = provider.GetRequiredService<IOptions<WorkbenchAuthenticationOptions>>().Value;
+
+        Assert.Equal("https://issuer.test/identity", options.Authority);
+        Assert.Equal("workbench.api", options.Audience);
+        Assert.Equal("workbench", options.ClientId);
+        Assert.Equal("bootstrap-secret", options.ClientSecret);
+        Assert.Equal("https://app.test/signin-oidc", options.RedirectUri);
+        Assert.Equal("https://app.test/", options.PostLogoutRedirectUri);
+        Assert.Equal("openid profile workbench.api", options.Scope);
     }
 
     private sealed class ProductionEnvironment : IHostEnvironment

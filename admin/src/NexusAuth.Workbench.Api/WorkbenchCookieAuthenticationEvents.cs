@@ -1,7 +1,8 @@
 using System.Globalization;
 using System.Security.Claims;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Workbench.Api;
 
@@ -9,10 +10,12 @@ namespace NexusAuth.Workbench.Api;
 /// Keeps the Workbench authentication ticket alive while rotating its OIDC tokens.
 /// </summary>
 public class WorkbenchCookieAuthenticationEvents(
-    IWorkbenchOidcClient oidcService,
-    WorkbenchAuthenticationSettings settings,
+    IWorkbenchTokenClient tokenClient,
+    IOptions<WorkbenchAuthenticationOptions> authenticationOptions,
     IWorkbenchTokenRefreshCoordinator refreshCoordinator) : CookieAuthenticationEvents
 {
+    private readonly WorkbenchAuthenticationOptions settings = authenticationOptions.Value;
+
     private static readonly TimeSpan AccessTokenRefreshWindow = TimeSpan.FromMinutes(1);
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {
@@ -47,7 +50,7 @@ public class WorkbenchCookieAuthenticationEvents(
         {
             try
             {
-                var introspection = await oidcService.IntrospectAccessTokenAsync(
+                var introspection = await tokenClient.IntrospectAccessTokenAsync(
                     accessToken,
                     context.HttpContext.RequestAborted);
                 var subject = context.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -83,7 +86,7 @@ public class WorkbenchCookieAuthenticationEvents(
             // A completed refresh may be reused briefly by concurrent requests.
             // Recheck its persisted state in case an administrator revoked the
             // user after that result was produced.
-            var introspection = await oidcService.IntrospectAccessTokenAsync(
+            var introspection = await tokenClient.IntrospectAccessTokenAsync(
                 refreshed.AccessToken, context.HttpContext.RequestAborted);
             if (!introspection.Active
                 || !string.Equals(introspection.Subject, context.Principal.FindFirstValue(ClaimTypes.NameIdentifier), StringComparison.Ordinal)

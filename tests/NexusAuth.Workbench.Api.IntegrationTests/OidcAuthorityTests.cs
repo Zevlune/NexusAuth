@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using NexusAuth.Workbench.Api;
@@ -21,9 +22,11 @@ public sealed class OidcAuthorityTests
         using var recorder = new RequestRecorder(DiscoveryJson);
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
+        var manager = scope.ServiceProvider.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme)
+            .ConfigurationManager!;
 
-        var discovery = await client.FetchConfigurationAsync(CancellationToken.None);
+        var discovery = await manager.GetConfigurationAsync(CancellationToken.None);
 
         var request = Assert.Single(recorder.Requests);
         Assert.Equal("GET", request.Method);
@@ -44,7 +47,7 @@ public sealed class OidcAuthorityTests
             """{"access_token":"access","refresh_token":"rotated","id_token":"id","expires_in":120}""");
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
 
         var result = await client.RefreshTokensAsync("refresh", CancellationToken.None);
 
@@ -76,7 +79,7 @@ public sealed class OidcAuthorityTests
             """{"active":true,"sub":"user-1","client_id":"workbench"}""");
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
 
         var result = await client.IntrospectAccessTokenAsync("access-token", CancellationToken.None);
 
@@ -107,8 +110,8 @@ public sealed class OidcAuthorityTests
         using var scope = provider.CreateScope();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
-                .FetchConfigurationAsync(CancellationToken.None));
+            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+                .RefreshTokensAsync("refresh", CancellationToken.None));
 
         Assert.Contains("issuer", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Single(recorder.Requests);
@@ -123,8 +126,18 @@ public sealed class OidcAuthorityTests
     [InlineData("http://login.example.test/identity")]
     public void Authority_must_be_absolute_https_without_user_info_query_or_fragment(string authority)
     {
-        var exception = Assert.Throws<InvalidOperationException>(() =>
-            WorkbenchAuthenticationSettings.FromConfiguration(CreateConfiguration(authority)));
+        var exception = Assert.Throws<OptionsValidationException>(() =>
+        {
+            var services = new ServiceCollection();
+            services.AddWorkbenchAuthentication(CreateConfiguration(authority));
+            using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+            {
+                ValidateScopes = true,
+                ValidateOnBuild = true
+            });
+            _ = provider.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+                .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
+        });
 
         Assert.Contains("Auth:Authority", exception.Message, StringComparison.Ordinal);
     }
@@ -145,9 +158,11 @@ public sealed class OidcAuthorityTests
             authority: httpAuthority,
             requireHttpsMetadata: false);
         using var scope = provider.CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme)
+            .ConfigurationManager!;
 
-        var discovery = await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
-            .FetchConfigurationAsync(CancellationToken.None);
+        var discovery = await manager.GetConfigurationAsync(CancellationToken.None);
 
         Assert.Equal(httpAuthority, discovery.Issuer);
         var discoveryRequest = Assert.Single(
@@ -167,7 +182,7 @@ public sealed class OidcAuthorityTests
     }
 
     [Fact]
-    public async Task Fetch_configuration_honors_cancellation_even_if_manager_ignores_it()
+    public async Task Refresh_honors_cancellation_even_if_manager_ignores_it()
     {
         var manager = new NeverCompletingConfigurationManager();
         var services = new ServiceCollection();
@@ -181,8 +196,8 @@ public sealed class OidcAuthorityTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
-                .FetchConfigurationAsync(cancellation.Token));
+            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+                .RefreshTokensAsync("refresh", cancellation.Token));
     }
 
     [Fact]
@@ -193,8 +208,8 @@ public sealed class OidcAuthorityTests
         using var scope = provider.CreateScope();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
-                .FetchConfigurationAsync(CancellationToken.None));
+            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+                .RefreshTokensAsync("refresh", CancellationToken.None));
 
         Assert.DoesNotContain("client-secret", exception.ToString(), StringComparison.Ordinal);
         Assert.Null(Assert.Single(recorder.Requests).Authorization);
@@ -212,8 +227,8 @@ public sealed class OidcAuthorityTests
         using var scope = provider.CreateScope();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
-                .FetchConfigurationAsync(CancellationToken.None));
+            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+                .RefreshTokensAsync("refresh", CancellationToken.None));
 
         Assert.DoesNotContain("client-secret", exception.ToString(), StringComparison.Ordinal);
         Assert.Null(Assert.Single(recorder.Requests).Authorization);
@@ -225,7 +240,7 @@ public sealed class OidcAuthorityTests
         using var recorder = new RequestRecorder(DiscoveryJson);
         using var provider = CreateProvider(recorder);
         using var client = provider.GetRequiredService<IHttpClientFactory>()
-            .CreateClient(WorkbenchOidcClient.HttpClientName);
+            .CreateClient(WorkbenchTokenClient.HttpClientName);
 
         Assert.Equal(TimeSpan.FromSeconds(30), client.Timeout);
     }
@@ -238,7 +253,7 @@ public sealed class OidcAuthorityTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddWorkbenchAuthentication(CreateConfiguration(authority, requireHttpsMetadata));
-        services.AddHttpClient(WorkbenchOidcClient.HttpClientName)
+        services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => recorder);
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

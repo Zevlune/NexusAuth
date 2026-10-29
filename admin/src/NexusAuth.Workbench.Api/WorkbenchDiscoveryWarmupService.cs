@@ -1,11 +1,11 @@
-using Microsoft.IdentityModel.Protocols;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Workbench.Api;
 
 /// <summary>Primes the standard metadata/key cache without coupling startup to Provider uptime.</summary>
 internal sealed class WorkbenchDiscoveryWarmupService(
-    IConfigurationManager<OpenIdConnectConfiguration> metadata,
+    IOptionsMonitor<OpenIdConnectOptions> options,
     ILogger<WorkbenchDiscoveryWarmupService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -14,7 +14,8 @@ internal sealed class WorkbenchDiscoveryWarmupService(
         {
             try
             {
-                await metadata.GetConfigurationAsync(stoppingToken).WaitAsync(stoppingToken);
+                await options.Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme).ConfigurationManager!
+                    .GetConfigurationAsync(stoppingToken).WaitAsync(stoppingToken);
                 return;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }

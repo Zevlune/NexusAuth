@@ -153,8 +153,8 @@ public sealed class WorkbenchTokenRevocationTests
                         if (method.Name == nameof(ISsoSessionService.RevokeAllForUserAsync)) SessionRevocations.Add((Guid)args![0]!);
                         return null;
                     }));
-                    services.RemoveAll<IWorkbenchOidcClient>();
-                    services.AddScoped<IWorkbenchOidcClient>(provider =>
+                    services.RemoveAll<IWorkbenchTokenClient>();
+                    services.AddScoped<IWorkbenchTokenClient>(provider =>
                         new IntrospectionClient(token => IntrospectAsync(token,
                             provider.GetRequiredService<IUserTokenValidator>())));
                     services.PostConfigure<OpenIdConnectOptions>(WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
@@ -215,10 +215,9 @@ public sealed class WorkbenchTokenRevocationTests
     }
 
     private sealed class IntrospectionClient(Func<string, Task<WorkbenchIntrospectionResult>> introspect)
-        : IWorkbenchOidcClient
+        : IWorkbenchTokenClient
     {
         public Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(string token, CancellationToken ct) => introspect(token);
-        public Task<OpenIdConnectConfiguration> FetchConfigurationAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<WorkbenchTokenResult> RefreshTokensAsync(string token, CancellationToken ct) => throw new NotSupportedException();
         public Task RevokeTokenAsync(string token, string hint, CancellationToken ct) => throw new NotSupportedException();
     }

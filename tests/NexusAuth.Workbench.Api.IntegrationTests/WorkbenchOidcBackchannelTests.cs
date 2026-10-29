@@ -21,7 +21,7 @@ public sealed class WorkbenchOidcBackchannelTests
         using var handler = new ProviderHandler();
         using var services = CreateProvider(handler);
         using var scope = services.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
 
         await client.RevokeTokenAsync("refresh+secret&value", "refresh_token", CancellationToken.None);
 
@@ -42,25 +42,21 @@ public sealed class WorkbenchOidcBackchannelTests
     {
         using var handler = new ProviderHandler();
         using var services = CreateProvider(handler);
-        var manager = services.GetRequiredService<IConfigurationManager<OpenIdConnectConfiguration>>();
         var oidcOptions = services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
             .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
+        var manager = oidcOptions.ConfigurationManager!;
 
-        Assert.Same(manager, oidcOptions.ConfigurationManager);
-
-        var configurations = await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ =>
+        var introspections = await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ =>
         {
             using var scope = services.CreateScope();
-            Assert.Same(
-                manager,
-                scope.ServiceProvider.GetRequiredService<IConfigurationManager<OpenIdConnectConfiguration>>());
-            return await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
-                .FetchConfigurationAsync(CancellationToken.None);
+            return await scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+                .IntrospectAccessTokenAsync("access", CancellationToken.None);
         }));
 
         Assert.Equal(1, handler.DiscoveryRequests);
         Assert.Equal(1, handler.JwksRequests);
-        Assert.All(configurations, configuration => Assert.Same(configurations[0], configuration));
+        Assert.Equal(12, handler.IntrospectionRequests);
+        Assert.All(introspections, result => Assert.True(result.Active));
     }
 
     [Theory]
@@ -81,7 +77,7 @@ public sealed class WorkbenchOidcBackchannelTests
         using var scope = services.CreateScope();
 
         await Assert.ThrowsAnyAsync<Exception>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
+            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
                 .RevokeTokenAsync("private-token", "refresh_token", CancellationToken.None));
 
         Assert.Empty(handler.Revocations);
@@ -102,7 +98,7 @@ public sealed class WorkbenchOidcBackchannelTests
         using var scope = services.CreateScope();
 
         var exception = await Assert.ThrowsAsync<WorkbenchProtocolException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
+            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
                 .RevokeTokenAsync("refresh", "refresh_token", CancellationToken.None));
 
         Assert.Equal("invalid_token", exception.Error);
@@ -128,7 +124,7 @@ public sealed class WorkbenchOidcBackchannelTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddWorkbenchAuthentication(configuration);
-        services.AddHttpClient(WorkbenchOidcClient.HttpClientName)
+        services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -143,6 +139,7 @@ public sealed class WorkbenchOidcBackchannelTests
 
         public int DiscoveryRequests;
         public int JwksRequests;
+        public int IntrospectionRequests;
         public string Issuer { get; init; } = "https://issuer.example.test";
         public string RevocationEndpoint { get; init; } =
             "https://issuer.example.test/custom/revoke";
@@ -162,6 +159,7 @@ public sealed class WorkbenchOidcBackchannelTests
                 {
                     issuer = Issuer,
                     jwks_uri = "https://issuer.example.test/.well-known/jwks.json",
+                    introspection_endpoint = "https://issuer.example.test/custom/introspect",
                     revocation_endpoint = RevocationEndpoint
                 }));
             }
@@ -170,6 +168,12 @@ public sealed class WorkbenchOidcBackchannelTests
             {
                 Interlocked.Increment(ref JwksRequests);
                 return JsonResponse("""{"keys":[]}""");
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/custom/introspect", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref IntrospectionRequests);
+                return JsonResponse("""{"active":true,"sub":"user-1","client_id":"workbench"}""");
             }
 
             var body = request.Content is null

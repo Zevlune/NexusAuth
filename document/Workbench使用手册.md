@@ -324,12 +324,12 @@ Swagger 未显式配置时仅在 `Development` 环境注册；其他环境默认
 4. 启动后台服务预热 Discovery。预热失败只记录日志并按有限延迟重试，不阻塞应用启动；运行时元数据与 JWKS 由标准配置管理器刷新。
 5. Host 回调 `GET /signin-oidc`。OIDC handler 完成标准校验后，API 写入 `.NexusAuth.Workbench` HttpOnly Cookie，并跳转前端 `/auth/callback`。
 6. 之后的管理请求使用 Cookie。未登录返回 `401`，已登录但没有管理访问权限返回 `403`。
-7. Cookie 验证在 access token 接近过期时使用内部 `IWorkbenchOidcClient` 刷新，并复检 token 状态；失败则拒绝并清除 Cookie。
+7. Cookie 验证在 access token 接近过期时使用内部 `IWorkbenchTokenClient` 刷新，并复检 token 状态；失败则拒绝并清除 Cookie。
 8. `POST /api/auth/logout` 尽力撤销 refresh token 和 access token，返回前端所需的 JSON `logoutUrl`，并始终清除本地 Cookie。
 
 Workbench 只有 Cookie+OIDC BFF 一种登录模式。微软 `AddOpenIdConnect` 负责 Discovery、JWKS、授权码兑换、PKCE、nonce 和 ID Token 校验。Workbench 通过专用 `HttpClient` delegating handler 将 `client_secret_basic` 写入 token 请求头，不调用 `HandleCodeRedemption`，也不重复执行 `ProtocolValidator`。
 
-内部 `IWorkbenchOidcClient` 只承担 refresh、introspection 和 revoke，并从标准 `OpenIdConnectOptions` 读取 Authority、ClientId、ClientSecret、Scope、metadata 与 HTTPS 配置。它不负责浏览器登录、PKCE 生成或 ID Token 校验。
+内部 `IWorkbenchTokenClient` 只承担 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。它不负责浏览器登录、PKCE 生成或 ID Token 校验。
 
 默认 `UseInMemory()` 只适用于单实例或带粘性路由的部署。多实例应使用 Redis 流程存储，并共享 ASP.NET Core Data Protection key ring。
 
@@ -358,7 +358,7 @@ Workbench API 启动时由 `WorkbenchClientCredentialHostedService` 幂等地登
 
 ### 6.3 OIDC 后通道与流程状态扩展
 
-Workbench 的浏览器登录完全由标准 `AddOpenIdConnect` 和 Cookie 中间件处理。内部 `IWorkbenchOidcClient` 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions` 中的 Authority、ClientId、ClientSecret、Scope、metadata 和 HTTPS 配置。Basic 客户端认证由 Workbench 专用 `HttpClient` delegating handler 适配；它不接管授权码兑换，也不重复验证 nonce 或 ID Token。
+Workbench 的浏览器登录完全由标准 `AddOpenIdConnect` 和 Cookie 中间件处理。内部 `IWorkbenchTokenClient` 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。Basic 客户端认证由 Workbench 专用 `HttpClient` delegating handler 适配；它不接管授权码兑换，也不重复验证 nonce 或 ID Token。
 
 `admin/src/NexusAuth.Extension` 已不再是 OAuth/OIDC 协议 SDK。它只发布可复用的 OIDC 流程状态扩展，并与标准 `AddOpenIdConnect` 组合使用，不依赖 `NexusAuth.Shared` 或 `NexusAuth.Workbench`，不提供登录端点，也不生成 PKCE。接入说明见 [Extension README](../admin/src/NexusAuth.Extension/README.md)。
 
@@ -386,7 +386,10 @@ services.AddOpenIdConnectFlowState().UseRedis(options =>
 }
 ```
 
-`OpenIdConnectFlowStateOptions` 提供 `Lifetime` 和 `Capacity`；`OpenIdConnectFlowState` 是扩展入口。`UseFlowStateStore<T>()` 可替换自定义存储。`Auth:FlowState:Provider` 默认 `InMemory`，多实例部署应改为 `Redis`。Redis 实现继续保证浏览器绑定、原子一次消费和跨实例共享容量；所有实例使用相同的 Lifetime、Capacity、Redis 数据库和 KeyPrefix。
+`OpenIdConnectFlowStateOptions` 提供 `Provider`、`Lifetime` 和 `Capacity`；`OpenIdConnectFlowState` 是扩展入口。`UseFlowStateStore<T>()` 可替换自定义存储。`Auth:FlowState:Provider` 默认 `InMemory`，多实例部署应改为 `Redis`。Redis 实现继续保证浏览器绑定、原子一次消费和跨实例共享容量；所有实例使用相同的 Lifetime、Capacity、Redis 数据库和 KeyPrefix。
+
+Workbench 使用 `AddOpenIdConnectFlowState().UseConfiguration(configuration.GetSection("Auth:FlowState"))` 一次完成接入；扩展通过 Options 绑定和启动校验选择存储，Workbench 不再维护 Provider switch 或重复的 Redis/TTL 校验。
+
 
 扩展保留现有 TTL、容量、限流、安全、会话撤销和 JSON 持久化契约。多实例部署必须同时共享并持久化 ASP.NET Core Data Protection key ring；Redis 只共享流程状态，不能替代 Cookie 和 nonce/correlation 票据所需的 key ring。
 

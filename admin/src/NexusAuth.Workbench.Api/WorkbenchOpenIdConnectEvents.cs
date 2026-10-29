@@ -1,7 +1,8 @@
 using System.Globalization;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
@@ -10,9 +11,11 @@ namespace NexusAuth.Workbench.Api;
 
 /// <summary>Adapts standard OIDC authentication to Workbench's JSON login and session contract.</summary>
 public sealed class WorkbenchOpenIdConnectEvents(
-    WorkbenchAuthenticationSettings settings,
+    IOptions<WorkbenchAuthenticationOptions> authenticationOptions,
     OpenIdConnectFlowState flows) : OpenIdConnectEvents
 {
+    private readonly WorkbenchAuthenticationOptions settings = authenticationOptions.Value;
+
     private const string ExchangeStartedKey = "Workbench.Oidc.ExchangeStarted";
 
     public override Task RedirectToIdentityProvider(RedirectContext context)

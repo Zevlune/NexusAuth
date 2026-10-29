@@ -90,7 +90,7 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
         var allowedClientIds = new HashSet<string>(
             [normalizedClientId, "additional-bearer-client"],
             StringComparer.Ordinal);
-        var oidcClient = new TestOidcClient(metadata, normalizedClientId);
+        var tokenClient = new TestTokenClient(normalizedClientId);
 
         factory = new WebApplicationFactory<WorkbenchApiModule>().WithWebHostBuilder(builder =>
         {
@@ -149,10 +149,8 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                         ? new PagedResult<ManagedUserDto>([], 0, 1, 10)
                         : null));
 
-                services.RemoveAll<IConfigurationManager<OpenIdConnectConfiguration>>();
-                services.AddSingleton<IConfigurationManager<OpenIdConnectConfiguration>>(metadata);
-                services.RemoveAll<IWorkbenchOidcClient>();
-                services.AddScoped<IWorkbenchOidcClient>(_ => oidcClient);
+                services.RemoveAll<IWorkbenchTokenClient>();
+                services.AddScoped<IWorkbenchTokenClient>(_ => tokenClient);
                 services.AddSingleton(new TestBearerAuthenticationState(signingKey, allowedClientIds));
                 services.AddAuthentication(options =>
                     {
@@ -327,13 +325,8 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
         }
     }
 
-    private sealed class TestOidcClient(
-        IConfigurationManager<OpenIdConnectConfiguration> metadata,
-        string clientId) : IWorkbenchOidcClient
+    private sealed class TestTokenClient(string clientId) : IWorkbenchTokenClient
     {
-        public Task<OpenIdConnectConfiguration> FetchConfigurationAsync(CancellationToken ct) =>
-            metadata.GetConfigurationAsync(ct);
-
         public Task<WorkbenchTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct) =>
             throw new NotSupportedException();
 

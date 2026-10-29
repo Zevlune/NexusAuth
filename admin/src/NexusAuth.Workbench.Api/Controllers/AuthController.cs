@@ -1,7 +1,9 @@
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using NexusAuth.Extension;
 using NexusAuth.Workbench.Api.Authorization;
 
@@ -11,10 +13,13 @@ namespace NexusAuth.Workbench.Api.Controllers;
 [Route("api/[controller]")]
 public class AuthController(
     OpenIdConnectFlowState flows,
-    IWorkbenchOidcClient client,
-    WorkbenchAuthenticationSettings settings,
+    IWorkbenchTokenClient client,
+    IOptions<WorkbenchAuthenticationOptions> authenticationOptions,
+    IOptionsMonitor<OpenIdConnectOptions> oidcOptions,
     ILogger<AuthController> logger) : ControllerBase
 {
+    private readonly WorkbenchAuthenticationOptions settings = authenticationOptions.Value;
+
     [HttpGet("/api/auth/config")]
     [AllowAnonymous]
     public IActionResult Config() => Ok(new
@@ -88,7 +93,9 @@ public class AuthController(
             {
                 try
                 {
-                    await client.FetchConfigurationAsync(timeout.Token);
+                    // Prime the handler's own cache within the shared logout budget.
+                    await oidcOptions.Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme).ConfigurationManager!
+                        .GetConfigurationAsync(timeout.Token).WaitAsync(timeout.Token);
                     await HttpContext.SignOutAsync(WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
                         new AuthenticationProperties { RedirectUri = settings.PostLogoutRedirectUri });
                     logoutUrl = Response.Headers.Location.ToString();

@@ -109,10 +109,10 @@ public sealed class WorkbenchSecurityDefaultsTests
         var exception = Assert.Throws<InvalidOperationException>(() =>
             WorkbenchSecurityOptions.ConfigureForwardedHeaders(
                 options,
-                Configuration(new Dictionary<string, string?>
+                new WorkbenchSecurityOptions
                 {
-                    ["Security:ForwardedHeadersEnabled"] = "true",
-                })));
+                    ForwardedHeadersEnabled = true,
+                }));
 
         Assert.Contains("trusted proxies or networks", exception.Message);
     }
@@ -158,7 +158,9 @@ public sealed class WorkbenchSecurityDefaultsTests
             Assert.Equal("2", configuration["Security:ForwardLimit"]);
             Assert.Equal("10.0.0.2", configuration["Security:KnownProxies"]);
             Assert.Equal("10.0.0.0/8", configuration["Security:KnownNetworks"]);
-            Assert.Equal("false", configuration["Swagger:Enabled"]);
+            var swagger = configuration.GetSection(WorkbenchSwaggerOptions.SectionName)
+                .Get<WorkbenchSwaggerOptions>();
+            Assert.False(swagger!.Enabled);
         }
         finally
         {
@@ -197,11 +199,11 @@ public sealed class WorkbenchSecurityDefaultsTests
         var options = new ForwardedHeadersOptions();
         WorkbenchSecurityOptions.ConfigureForwardedHeaders(
             options,
-            Configuration(new Dictionary<string, string?>
+            new WorkbenchSecurityOptions
             {
-                ["Security:ForwardedHeadersEnabled"] = "true",
-                ["Security:KnownProxies"] = trustedProxy,
-            }));
+                ForwardedHeadersEnabled = true,
+                KnownProxies = trustedProxy,
+            });
         return options;
     }
 
@@ -234,7 +236,4 @@ public sealed class WorkbenchSecurityDefaultsTests
         app.Run(_ => Task.CompletedTask);
         await app.Build()(context);
     }
-
-    private static IConfiguration Configuration(IDictionary<string, string?> values) =>
-        new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 }

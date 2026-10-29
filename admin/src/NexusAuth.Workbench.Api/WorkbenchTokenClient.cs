@@ -1,19 +1,19 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace NexusAuth.Workbench.Api;
 
 /// <summary>Additional token operations needed by the BFF session, using the standard OIDC metadata.</summary>
-public sealed class WorkbenchOidcClient(
+public sealed class WorkbenchTokenClient(
     IHttpClientFactory httpClientFactory,
-    IOptionsMonitor<OpenIdConnectOptions> options) : IWorkbenchOidcClient
+    IOptionsMonitor<OpenIdConnectOptions> options) : IWorkbenchTokenClient
 {
     public const string HttpClientName = "Workbench.Oidc";
 
-    public async Task<OpenIdConnectConfiguration> FetchConfigurationAsync(CancellationToken ct)
+    private async Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken ct)
     {
         var oidc = options.Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
         var configuration = await oidc.ConfigurationManager!.GetConfigurationAsync(ct).WaitAsync(ct);
@@ -25,7 +25,7 @@ public sealed class WorkbenchOidcClient(
     public async Task<WorkbenchTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(refreshToken);
-        var configuration = await FetchConfigurationAsync(ct);
+        var configuration = await GetConfigurationAsync(ct);
         return await SendTokenRequestAsync(RequireEndpoint(configuration.TokenEndpoint, "token"),
             new Dictionary<string, string>
             {
@@ -41,7 +41,7 @@ public sealed class WorkbenchOidcClient(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
 
-        var configuration = await FetchConfigurationAsync(ct);
+        var configuration = await GetConfigurationAsync(ct);
         var endpoint = RequireEndpoint(configuration.IntrospectionEndpoint, "introspection");
         using var response = await SendFormAsync(
             endpoint,
@@ -76,7 +76,7 @@ public sealed class WorkbenchOidcClient(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
 
-        var configuration = await FetchConfigurationAsync(ct);
+        var configuration = await GetConfigurationAsync(ct);
         var endpoint = RequireEndpoint(configuration.RevocationEndpoint, "revocation");
         var form = new Dictionary<string, string> { ["token"] = token };
         if (!string.IsNullOrEmpty(tokenTypeHint))

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -99,11 +100,11 @@ public sealed class WorkbenchCookieRevocationTests
 
         public Harness()
         {
-            var oidc = RecordingDispatchProxy.Create<IWorkbenchOidcClient>((method, _) => method.Name switch
+            var oidc = RecordingDispatchProxy.Create<IWorkbenchTokenClient>((method, _) => method.Name switch
             {
                 "get_ClientId" => "workbench-client",
-                nameof(IWorkbenchOidcClient.RefreshTokensAsync) => Refresh(),
-                nameof(IWorkbenchOidcClient.IntrospectAccessTokenAsync) => Introspect(),
+                nameof(IWorkbenchTokenClient.RefreshTokensAsync) => Refresh(),
+                nameof(IWorkbenchTokenClient.IntrospectAccessTokenAsync) => Introspect(),
                 _ => throw new NotSupportedException(method.Name),
             });
             var authentication = RecordingDispatchProxy.Create<IAuthenticationService>((method, _) =>
@@ -117,8 +118,18 @@ public sealed class WorkbenchCookieRevocationTests
                 .AddSingleton<IWorkbenchTokenRefreshCoordinator, WorkbenchTokenRefreshCoordinator>()
                 .BuildServiceProvider();
             Events = new WorkbenchCookieAuthenticationEvents(oidc,
-                new WorkbenchAuthenticationSettings("https://issuer.test", "workbench.api", "workbench-client",
-                    "secret", "https://app.test/signin-oidc", "https://app.test/", "openid offline_access", true, true),
+                Options.Create(new WorkbenchAuthenticationOptions
+                {
+                    Authority = "https://issuer.test",
+                    Audience = "workbench.api",
+                    ClientId = "workbench-client",
+                    ClientSecret = "secret",
+                    RedirectUri = "https://app.test/signin-oidc",
+                    PostLogoutRedirectUri = "https://app.test/",
+                    Scope = "openid offline_access",
+                    SignOutProvider = true,
+                    RequireHttpsMetadata = true
+                }),
                 services.GetRequiredService<IWorkbenchTokenRefreshCoordinator>());
         }
 

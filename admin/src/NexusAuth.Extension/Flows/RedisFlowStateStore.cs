@@ -137,7 +137,7 @@ public sealed class RedisFlowStateStore : IFlowStateStore
 
         var redisSettings = redisOptions.Value;
         var flowSettings = flowOptions.Value;
-        redisSettings.Validate();
+        redisSettings.Validate(configurationRequired: false);
 
         if (flowSettings.Capacity is < 1 or > 100_000)
         {

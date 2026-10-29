@@ -26,21 +26,20 @@ public sealed class WorkbenchSecurityOptions
 
     public static void ConfigureForwardedHeaders(
         ForwardedHeadersOptions options,
-        IConfiguration configuration)
+        WorkbenchSecurityOptions security)
     {
-        var section = configuration.GetSection(SectionName);
         options.KnownProxies.Clear();
         options.KnownIPNetworks.Clear();
         options.ForwardedHeaders = ForwardedHeaders.None;
-        if (!section.GetValue("ForwardedHeadersEnabled", false))
+        if (!security.ForwardedHeadersEnabled)
             return;
 
-        var forwardLimit = section.GetValue("ForwardLimit", 1);
+        var forwardLimit = security.ForwardLimit;
         if (forwardLimit is < 1 or > 10)
             throw new InvalidOperationException("Security:ForwardLimit must be between 1 and 10.");
         options.ForwardLimit = forwardLimit;
 
-        foreach (var entry in Split(section["KnownProxies"]))
+        foreach (var entry in Split(security.KnownProxies))
         {
             if (!IPAddress.TryParse(entry, out var address))
                 throw new InvalidOperationException("Security:KnownProxies contains an invalid IP address.");
@@ -49,7 +48,7 @@ public sealed class WorkbenchSecurityOptions
                 options.KnownProxies.Add(address.MapToIPv6());
         }
 
-        foreach (var entry in Split(section["KnownNetworks"]))
+        foreach (var entry in Split(security.KnownNetworks))
         {
             if (!System.Net.IPNetwork.TryParse(entry, out var network))
                 throw new InvalidOperationException("Security:KnownNetworks contains an invalid CIDR network.");

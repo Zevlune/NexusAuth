@@ -52,7 +52,7 @@ public sealed class WorkbenchBffAuthenticationTests
         Assert.Equal(typeof(WorkbenchCookieAuthenticationEvents), cookie.EventsType);
 
         using var scope = factory.Services.CreateScope();
-        Assert.NotNull(scope.ServiceProvider.GetService<IWorkbenchOidcClient>());
+        Assert.NotNull(scope.ServiceProvider.GetService<IWorkbenchTokenClient>());
         Assert.NotNull(scope.ServiceProvider.GetService<IFlowStateStore>());
         Assert.NotNull(scope.ServiceProvider.GetService<IOptions<OpenIdConnectFlowStateOptions>>());
     }
@@ -64,9 +64,9 @@ public sealed class WorkbenchBffAuthenticationTests
         using var firstScope = factory.Services.CreateScope();
         using var secondScope = factory.Services.CreateScope();
 
-        var first = firstScope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
-        var sameScope = firstScope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
-        var otherScope = secondScope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
+        var first = firstScope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
+        var sameScope = firstScope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
+        var otherScope = secondScope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
 
         Assert.Same(first, sameScope);
         Assert.NotSame(first, otherScope);

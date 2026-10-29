@@ -30,7 +30,7 @@ Workbench API 从 `Auth:Authority` 读取 Provider 公开 Issuer，必须与 Dis
 
 Workbench 为 OIDC 后通道配置专用 `HttpClient` delegating handler。该 handler 只把 token 请求中的客户端凭据改为 `Authorization: Basic ...` 请求头，以匹配 Bootstrap 登记的 `client_secret_basic`。它不调用 `HandleCodeRedemption`，也不重复执行 `ProtocolValidator`。
 
-内部 [`IWorkbenchOidcClient`](../admin/src/NexusAuth.Workbench.Api/IWorkbenchOidcClient.cs) 只提供 refresh、introspection 和 revoke，并从标准 `OpenIdConnectOptions` 读取 Authority、ClientId、ClientSecret、Scope、metadata 和 HTTPS 配置。它不负责登录端点、PKCE 或 ID Token 校验。
+内部 [`IWorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/IWorkbenchTokenClient.cs) 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。它不负责登录端点、PKCE 或 ID Token 校验。
 
 ## 流程状态
 
@@ -59,7 +59,7 @@ services.AddOpenIdConnectFlowState()
 管理请求统一使用 `.NexusAuth.Workbench` Cookie；Workbench 不注册 JWT Bearer 认证方案，也不接受外部 access token。[`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/WorkbenchCookieAuthenticationEvents.cs) 在 Cookie 验证时检查保存的 access token：
 
 - 距离过期超过一分钟时，通过 introspection 确认令牌仍有效，且 subject、client_id 与当前会话匹配；
-- 接近过期时使用 `IWorkbenchOidcClient` 刷新，再对新 token 执行 introspection；
+- 接近过期时使用 `IWorkbenchTokenClient` 刷新，再对新 token 执行 introspection；
 - 成功后保存轮换后的 access/refresh token，并续到新的 24 小时本地会话窗口；
 - 任一步失败时拒绝 Principal 并清除 Cookie。
 
@@ -74,7 +74,7 @@ Provider 登录页的“几天内免登录”和 Workbench 的 24 小时 BFF 会
 - [`AuthController`](../admin/src/NexusAuth.Workbench.Api/Controllers/AuthController.cs)：发起标准 OIDC challenge、返回登录地址和执行本地登出。
 - [`WorkbenchAuthenticationExtensions`](../admin/src/NexusAuth.Workbench.Api/WorkbenchAuthenticationExtensions.cs)：Cookie、OpenID Connect、流程状态和 Basic 后通道配置。
 - [`WorkbenchBasicAuthenticationHandler`](../admin/src/NexusAuth.Workbench.Api/WorkbenchBasicAuthenticationHandler.cs)：只适配 token 请求的 Basic 认证头。
-- [`WorkbenchOidcClient`](../admin/src/NexusAuth.Workbench.Api/WorkbenchOidcClient.cs)：refresh、introspection 和 revoke。
+- [`WorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/WorkbenchTokenClient.cs)：refresh、introspection 和 revoke。
 - [`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/WorkbenchCookieAuthenticationEvents.cs)：会话 introspection 与 refresh token 轮换。
 - [`CurrentIdentityController`](../admin/src/NexusAuth.Workbench.Api/Controllers/CurrentIdentityController.cs)：`GET /api/auth/me`。
 

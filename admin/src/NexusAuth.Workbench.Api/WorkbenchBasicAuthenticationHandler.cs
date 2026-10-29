@@ -1,13 +1,16 @@
-using System.Net;
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Workbench.Api;
 
 /// <summary>Preserves the registered Basic authentication while the standard handler redeems codes.</summary>
-public sealed class WorkbenchBasicAuthenticationHandler(WorkbenchAuthenticationSettings settings) : DelegatingHandler
+public sealed class WorkbenchBasicAuthenticationHandler(IOptions<WorkbenchAuthenticationOptions> authenticationOptions) : DelegatingHandler
 {
+    private readonly WorkbenchAuthenticationOptions settings = authenticationOptions.Value;
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         RequireEndpoint(request.RequestUri, settings.RequireHttpsMetadata);

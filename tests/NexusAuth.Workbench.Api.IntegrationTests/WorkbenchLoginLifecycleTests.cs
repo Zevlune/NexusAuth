@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Security.Claims;
@@ -314,6 +315,37 @@ public sealed class WorkbenchLoginLifecycleTests
     }
 
     [Fact]
+    public async Task Unresponsive_discovery_during_logout_is_bounded_and_still_clears_the_cookie()
+    {
+        using var harness = new Harness();
+        var login = await harness.BeginLogin();
+        using var signedIn = await harness.Callback(login);
+        AssertCallbackSucceeded(signedIn);
+        var cookie = SessionCookie(signedIn);
+        var discoveriesBeforeLogout = harness.Provider.Discoveries;
+        harness.Provider.NeverCompleteDiscovery = true;
+        harness.Provider.FailRevocation = true;
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout");
+        request.Headers.Add("Cookie", cookie);
+        var stopwatch = Stopwatch.StartNew();
+        using var response = await harness.Client.SendAsync(request)
+            .WaitAsync(TimeSpan.FromSeconds(7));
+        stopwatch.Stop();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(7),
+            $"Logout exceeded its discovery budget: {stopwatch.Elapsed}.");
+        Assert.Equal(discoveriesBeforeLogout + 1, harness.Provider.Discoveries);
+        Assert.Contains(
+            response.Headers.GetValues("Set-Cookie"),
+            value => value.StartsWith(".NexusAuth.Workbench=;", StringComparison.Ordinal));
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(string.Empty, body.RootElement.GetProperty("logoutUrl").GetString());
+    }
+
+    [Fact]
     public async Task State_expires_and_frees_capacity_without_consuming_another_browsers_flow()
     {
         var clock = new TestClock();
@@ -451,20 +483,18 @@ public sealed class WorkbenchLoginLifecycleTests
                     .UseSetting("Auth:SignOutProvider", signOutProvider.ToString());
                 builder.ConfigureServices(services =>
                 {
-                    services.RemoveAll<IConfigurationManager<OpenIdConnectConfiguration>>();
-                    services.AddSingleton<IConfigurationManager<OpenIdConnectConfiguration>>(metadata);
-                    services.RemoveAll<IWorkbenchOidcClient>();
-                    services.AddScoped<IWorkbenchOidcClient>(_ => Provider);
+                    services.RemoveAll<IWorkbenchTokenClient>();
+                    services.AddScoped<IWorkbenchTokenClient>(_ => Provider);
                     services.Configure<OpenIdConnectFlowStateOptions>(options => options.Capacity = capacity);
                     services.AddSingleton(clock ?? TimeProvider.System);
-                    services.AddHttpClient(WorkbenchOidcClient.HttpClientName)
+                    services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
                         .ConfigurePrimaryHttpMessageHandler(() => backchannel);
                     services.AddOptions<OpenIdConnectOptions>(
                             WorkbenchAuthenticationDefaults.OpenIdConnectScheme)
                         .PostConfigure<IHttpClientFactory>((options, clients) =>
                         {
                             options.ConfigurationManager = metadata;
-                            options.Backchannel = clients.CreateClient(WorkbenchOidcClient.HttpClientName);
+                            options.Backchannel = clients.CreateClient(WorkbenchTokenClient.HttpClientName);
                         });
                     RemoveDiscoveryWarmup(services);
                     services.PostConfigure<CookieAuthenticationOptions>(
@@ -560,7 +590,7 @@ public sealed class WorkbenchLoginLifecycleTests
     private sealed class ProviderStub(
         TestMetadataManager metadata,
         SecurityKey trustedKey,
-        SecurityKey untrustedKey) : IWorkbenchOidcClient
+        SecurityKey untrustedKey) : IWorkbenchTokenClient
     {
         private readonly ConcurrentDictionary<string, string> nonces = new(StringComparer.Ordinal);
         private readonly object exchangeGate = new();
@@ -572,6 +602,12 @@ public sealed class WorkbenchLoginLifecycleTests
         {
             get => metadata.Fail;
             set => metadata.Fail = value;
+        }
+
+        public bool NeverCompleteDiscovery
+        {
+            get => metadata.NeverCompleteDiscovery;
+            set => metadata.NeverCompleteDiscovery = value;
         }
 
         public bool FailRevocation { get; set; }
@@ -593,9 +629,6 @@ public sealed class WorkbenchLoginLifecycleTests
         public void RegisterLogin(string state, string nonce) => nonces[state] = nonce;
 
         public string CodeFor(string state) => "code:" + state;
-
-        public Task<OpenIdConnectConfiguration> FetchConfigurationAsync(CancellationToken ct) =>
-            metadata.GetConfigurationAsync(ct);
 
         public async Task<HttpResponseMessage> HandleTokenRequestAsync(
             HttpRequestMessage request,
@@ -739,13 +772,22 @@ public sealed class WorkbenchLoginLifecycleTests
     private sealed class TestMetadataManager(OpenIdConnectConfiguration configuration)
         : IConfigurationManager<OpenIdConnectConfiguration>
     {
+        private readonly TaskCompletionSource<OpenIdConnectConfiguration> neverCompleting =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int calls;
         private volatile bool fail;
+        private volatile bool neverCompleteDiscovery;
 
         public bool Fail
         {
             get => fail;
             set => fail = value;
+        }
+
+        public bool NeverCompleteDiscovery
+        {
+            get => neverCompleteDiscovery;
+            set => neverCompleteDiscovery = value;
         }
 
         public int Calls => Volatile.Read(ref calls);
@@ -754,14 +796,25 @@ public sealed class WorkbenchLoginLifecycleTests
         {
             cancel.ThrowIfCancellationRequested();
             Interlocked.Increment(ref calls);
-            return Fail
-                ? Task.FromException<OpenIdConnectConfiguration>(
-                    new HttpRequestException("Provider unavailable"))
+            if (Fail)
+            {
+                return Task.FromException<OpenIdConnectConfiguration>(
+                    new HttpRequestException("Provider unavailable"));
+            }
+            return NeverCompleteDiscovery
+                ? WaitForUnresponsiveProviderAsync(cancel)
                 : Task.FromResult(configuration);
         }
 
         public void RequestRefresh()
         {
+        }
+
+        private async Task<OpenIdConnectConfiguration> WaitForUnresponsiveProviderAsync(
+            CancellationToken cancellationToken)
+        {
+            await neverCompleting.Task.WaitAsync(cancellationToken);
+            return configuration;
         }
     }
 

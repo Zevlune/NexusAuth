@@ -43,8 +43,12 @@ public class WorkbenchApiModule : LuckAppModule
                 options => WorkbenchSecurityOptions.TryParseCookieSecurePolicy(options.CookieSecurePolicy, out _),
                 "Security:CookieSecurePolicy must be SameAsRequest or Always.")
             .ValidateOnStart();
-        services.Configure<ForwardedHeadersOptions>(
-            options => WorkbenchSecurityOptions.ConfigureForwardedHeaders(options, configuration));
+        services.AddOptions<ForwardedHeadersOptions>()
+            .Configure<IOptions<WorkbenchSecurityOptions>>((options, security) =>
+                WorkbenchSecurityOptions.ConfigureForwardedHeaders(options, security.Value));
+        services.AddOptions<WorkbenchSwaggerOptions>()
+            .Bind(configuration.GetSection(WorkbenchSwaggerOptions.SectionName))
+            .ValidateOnStart();
     }
 
     public override void ApplicationInitialization(ApplicationContext context)

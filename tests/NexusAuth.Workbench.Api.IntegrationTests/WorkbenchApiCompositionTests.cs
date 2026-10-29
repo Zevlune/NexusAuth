@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using NexusAuth.Application.Users;
 using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Workbench.Api;
@@ -66,7 +67,7 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
                 });
             });
         Assert.Equal("Production", production.Services.GetRequiredService<IWebHostEnvironment>().EnvironmentName);
-        Assert.Null(production.Services.GetRequiredService<IConfiguration>()["Swagger:Enabled"]);
+        Assert.Null(production.Services.GetRequiredService<IOptions<WorkbenchSwaggerOptions>>().Value.Enabled);
         using var client = production.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false,

@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -18,19 +17,22 @@ public sealed class WorkbenchMetadataStartupTests
     {
         var metadata = new TrackingMetadata();
         await using var factory = CreateFactory(metadata);
-        var manager = factory.Services.GetRequiredService<IConfigurationManager<OpenIdConnectConfiguration>>();
+        using var startupClient = factory.CreateClient();
         await metadata.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var options = factory.Services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
             .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
-        Assert.Same(manager, options.ConfigurationManager);
+        Assert.Same(metadata, options.ConfigurationManager);
         Assert.True(options.UsePkce);
         Assert.True(options.SaveTokens);
         using var first = factory.Services.CreateScope();
         using var second = factory.Services.CreateScope();
-        var firstClient = first.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
-        var secondClient = second.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
+        var firstClient = first.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
+        var secondClient = second.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
         Assert.NotSame(firstClient, secondClient);
-        Assert.Same(metadata.Configuration, await firstClient.FetchConfigurationAsync(CancellationToken.None));
+        var callsBeforeRefresh = metadata.CallCount;
+        var refreshed = await firstClient.RefreshTokensAsync("refresh", CancellationToken.None);
+        Assert.Equal("access", refreshed.AccessToken);
+        Assert.Equal(callsBeforeRefresh + 1, metadata.CallCount);
     }
 
     [Theory]
@@ -42,7 +44,7 @@ public sealed class WorkbenchMetadataStartupTests
         var factory = CreateFactory(metadata);
         try
         {
-            Assert.NotNull(factory.Services);
+            using var client = factory.CreateClient();
             await metadata.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
@@ -73,26 +75,50 @@ public sealed class WorkbenchMetadataStartupTests
                 .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/");
             builder.ConfigureServices(services =>
             {
-                services.RemoveAll<IConfigurationManager<OpenIdConnectConfiguration>>();
-                services.AddSingleton<IConfigurationManager<OpenIdConnectConfiguration>>(metadata);
                 services.PostConfigure<OpenIdConnectOptions>(WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
                     options => options.ConfigurationManager = metadata);
+                services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => new TokenResponseHandler());
             });
         });
 
     private sealed class TrackingMetadata : IConfigurationManager<OpenIdConnectConfiguration>
     {
-        public OpenIdConnectConfiguration Configuration { get; } = new() { Issuer = "https://issuer.example.test" };
+        private int callCount;
+
+        public OpenIdConnectConfiguration Configuration { get; } = new()
+        {
+            Issuer = "https://issuer.example.test",
+            TokenEndpoint = "https://issuer.example.test/token"
+        };
         public TaskCompletionSource Called { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool ThrowImmediately { get; init; }
         public bool NeverComplete { get; init; }
+        public int CallCount => Volatile.Read(ref callCount);
         public Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken cancel)
         {
+            Interlocked.Increment(ref callCount);
             Called.TrySetResult();
             if (ThrowImmediately) throw new HttpRequestException("Provider unavailable.");
             if (NeverComplete) return new TaskCompletionSource<OpenIdConnectConfiguration>().Task;
             return Task.FromResult(Configuration);
         }
         public void RequestRefresh() { }
+    }
+
+    private sealed class TokenResponseHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Method != HttpMethod.Post)
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"access_token":"access"}""")
+            });
+        }
     }
 }

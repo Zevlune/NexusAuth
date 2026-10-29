@@ -12,26 +12,45 @@
 using NexusAuth.Extension;
 
 services.AddOpenIdConnectFlowState()
-    .UseInMemory(options =>
-    {
-        options.Lifetime = TimeSpan.FromMinutes(10);
-        options.Capacity = 10_000;
-    });
+    .UseConfiguration(configuration.GetSection("Auth:FlowState"));
 ```
 
-多实例部署使用 Redis，让回调可以落到任意实例：
+`UseConfiguration` 只绑定传入的配置节。默认使用进程内存储：
 
-```csharp
-services.AddOpenIdConnectFlowState()
-    .UseRedis(options =>
-    {
-        configuration.GetSection("OpenIdConnect:FlowState:Redis").Bind(options);
-    });
+```json
+{
+  "Auth": {
+    "FlowState": {
+      "Provider": "InMemory",
+      "Lifetime": "00:10:00",
+      "Capacity": 10000
+    }
+  }
+}
 ```
 
-`UseInMemory()` 适合单实例或带粘性路由的部署；`UseRedis(...)` 提供跨实例共享、原子一次消费和共享容量，默认 KeyPrefix 为 `NexusAuth:oidc:flow`。也可以通过 `UseFlowStateStore<T>()` 注册自定义 `IFlowStateStore` 实现。
+多实例部署将 `Provider` 设为 `Redis`，让回调可以落到任意实例：
 
-`OpenIdConnectFlowStateOptions` 提供 `Lifetime` 和 `Capacity`；`OpenIdConnectFlowState` 是组合标准 OIDC 流程状态的服务入口。默认 TTL 为 10 分钟，默认容量为 10,000 个待完成流程。应用应将 `Lifetime` 与 `AddOpenIdConnect` 的远程认证超时保持一致，并在容量或请求限流触发时返回明确的 `429`。
+```json
+{
+  "Auth": {
+    "FlowState": {
+      "Provider": "Redis",
+      "Redis": {
+        "Configuration": "localhost:6379",
+        "KeyPrefix": "NexusAuth:oidc:flow",
+        "Database": -1
+      }
+    }
+  }
+}
+```
+
+`Provider` 区分大小写，只接受 `InMemory` 和 `Redis`。容量、TTL、Provider 与 Redis 配置会在应用启动时校验；未选择 Redis 时不会创建 Redis 连接。已经注册 `IConnectionMultiplexer` 时，Redis 存储会复用该连接，`Redis.Configuration` 可以留空。
+
+`UseInMemory()`、`UseRedis(...)` 和 `UseFlowStateStore<T>()` 仍可用于代码注册。自定义 `IFlowStateStore` 默认注册为 Scoped，也可以显式选择 Singleton。`UseRedis(...)` 提供跨实例共享、原子一次消费和共享容量，默认 KeyPrefix 为 `NexusAuth:oidc:flow`。
+
+`OpenIdConnectFlowStateOptions` 提供 `Provider`、`Lifetime` 和 `Capacity`；`OpenIdConnectFlowState` 是组合标准 OIDC 流程状态的服务入口。默认 TTL 为 10 分钟，默认容量为 10,000 个待完成流程。应用应将 `Lifetime` 与 `AddOpenIdConnect` 的远程认证超时保持一致，并在容量或请求限流触发时返回明确的 `429`。
 
 ## 与 AddOpenIdConnect 接线
 

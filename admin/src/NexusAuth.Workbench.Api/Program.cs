@@ -40,17 +40,15 @@ try
                 }));
     });
 
-    var swaggerEnabled = builder.Configuration.IsWorkbenchSwaggerEnabled(builder.Environment);
-    if (swaggerEnabled)
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(c =>
     {
-        builder.Services.AddEndpointsApiExplorer();
-        builder.Services.AddSwaggerGen(c =>
-        {
-            c.SwaggerDoc("v1", new() { Title = "NexusAuth Workbench API", Version = "v1" });
-        });
-    }
+        c.SwaggerDoc("v1", new() { Title = "NexusAuth Workbench API", Version = "v1" });
+    });
 
     var app = builder.Build();
+    var swaggerEnabled = app.Services.GetRequiredService<IOptions<WorkbenchSwaggerOptions>>().Value.Enabled
+        ?? app.Environment.IsDevelopment();
 
     var security = app.Services.GetRequiredService<IOptions<WorkbenchSecurityOptions>>().Value;
     if (security.ForwardedHeadersEnabled)

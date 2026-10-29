@@ -90,7 +90,10 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 
 ### 单一 Authority
 
-`Auth:Authority` 是 Workbench 唯一使用的 Provider 基础地址。微软 OIDC handler 用它完成 Discovery、JWKS 获取、授权跳转、授权码兑换和 ID Token 校验；Workbench 内部 `IWorkbenchOidcClient` 也从同一发现文档读取 refresh、introspection 和 revoke 端点。它必须与 Provider 的 issuer 完全一致。基础配置为空且 `Auth:RequireHttpsMetadata=true`；其他环境必须使用 HTTPS Authority。
+`Auth:Authority` 是 Workbench 唯一使用的 Provider 基础地址。微软 OIDC handler 用它完成 Discovery、JWKS 获取、授权跳转、授权码兑换和 ID Token 校验；Workbench 内部 `IWorkbenchTokenClient` 也从同一发现文档读取 refresh、introspection 和 revoke 端点。它必须与 Provider 的 issuer 完全一致。基础配置为空且 `Auth:RequireHttpsMetadata=true`；其他环境必须使用 HTTPS Authority。
+
+Workbench 配置通过 `IOptions<WorkbenchAuthenticationOptions>`、`IOptions<WorkbenchSecurityOptions>`、`IOptions<WorkbenchSwaggerOptions>` 和 `IOptions<WorkbenchBootstrapOptions>` 获取。认证选项统一绑定、规范化并在启动时校验，不直接注册配置对象单例。`IWorkbenchTokenClient` 仅处理刷新、内省和撤销；发现文档由标准 OIDC handler 的配置管理器共享缓存，没有额外的发现服务注册。
+
 
 浏览器和 Workbench API 进程都必须能直接访问同一个 `Auth:Authority`。容器内的 `localhost` 指向容器自身；跨容器部署应使用浏览器和各工作负载都能访问的同一域名或 IP，并通过网络 DNS 或入口路由把它解析到 Provider。不要把 `Auth:Authority` 改成容器服务名，也不要再额外配置内网地址或 HTTP 地址改写。
 

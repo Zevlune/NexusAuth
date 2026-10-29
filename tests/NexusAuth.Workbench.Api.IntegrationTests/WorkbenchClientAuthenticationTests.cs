@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using NexusAuth.Application.Clients;
 using NexusAuth.Shared.OAuth;
@@ -28,7 +30,7 @@ public sealed class WorkbenchClientAuthenticationTests
         using var handler = new CapturingHandler();
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
 
         switch (operation)
         {
@@ -73,9 +75,8 @@ public sealed class WorkbenchClientAuthenticationTests
     [Fact]
     public async Task Native_code_exchange_form_is_converted_to_basic_without_duplicate_credentials()
     {
-        var settings = CreateSettings();
         using var terminal = new CapturingHandler();
-        using var adapter = new WorkbenchBasicAuthenticationHandler(settings)
+        using var adapter = new WorkbenchBasicAuthenticationHandler(CreateOptions())
         {
             InnerHandler = terminal
         };
@@ -119,9 +120,11 @@ public sealed class WorkbenchClientAuthenticationTests
         using var handler = new CapturingHandler();
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme)
+            .ConfigurationManager!;
 
-        await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
-            .FetchConfigurationAsync(CancellationToken.None);
+        await manager.GetConfigurationAsync(CancellationToken.None);
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal("GET", request.Method);
@@ -138,7 +141,7 @@ public sealed class WorkbenchClientAuthenticationTests
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
 
-        var result = await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
+        var result = await scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
             .RefreshTokensAsync("refresh-token", CancellationToken.None);
 
         Assert.Equal("access", result.AccessToken);
@@ -158,7 +161,7 @@ public sealed class WorkbenchClientAuthenticationTests
         using var scope = provider.CreateScope();
 
         var exception = await Assert.ThrowsAsync<WorkbenchProtocolException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
+            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
                 .RefreshTokensAsync("refresh-token", CancellationToken.None));
 
         Assert.Equal("invalid_response", exception.Error);
@@ -171,7 +174,7 @@ public sealed class WorkbenchClientAuthenticationTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddWorkbenchAuthentication(CreateConfiguration());
-        services.AddHttpClient(WorkbenchOidcClient.HttpClientName)
+        services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -180,9 +183,20 @@ public sealed class WorkbenchClientAuthenticationTests
         });
     }
 
-    private static WorkbenchAuthenticationSettings CreateSettings()
+    private static IOptions<WorkbenchAuthenticationOptions> CreateOptions()
     {
-        return WorkbenchAuthenticationSettings.FromConfiguration(CreateConfiguration());
+        return Options.Create(new WorkbenchAuthenticationOptions
+        {
+            Authority = Authority,
+            Audience = "workbench.api",
+            ClientId = ExpectedClientId,
+            ClientSecret = ExpectedClientSecret,
+            RedirectUri = "https://app.test/signin-oidc",
+            PostLogoutRedirectUri = "https://app.test/",
+            Scope = "openid profile offline_access",
+            SignOutProvider = true,
+            RequireHttpsMetadata = true
+        });
     }
 
     private static IConfiguration CreateConfiguration()

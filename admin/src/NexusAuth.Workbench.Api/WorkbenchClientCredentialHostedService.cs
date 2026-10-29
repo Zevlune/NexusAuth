@@ -11,7 +11,7 @@ namespace NexusAuth.Workbench.Api;
 /// </summary>
 public sealed class WorkbenchClientCredentialHostedService(
     IServiceScopeFactory scopeFactory,
-    IConfiguration configuration,
+    IOptions<WorkbenchAuthenticationOptions> authenticationOptions,
     IOptions<WorkbenchBootstrapOptions> bootstrapOptions,
     IHostEnvironment environment,
     ILogger<WorkbenchClientCredentialHostedService> logger) : IHostedService
@@ -27,14 +27,12 @@ public sealed class WorkbenchClientCredentialHostedService(
             return;
         }
 
-        var credentials = WorkbenchClientCredentials.FromConfiguration(
-            configuration["Auth:ClientId"],
-            configuration["Auth:ClientSecret"]);
-        var clientId = credentials.ClientId;
-        var clientSecret = credentials.ClientSecret;
-        var redirectUri = configuration["Auth:RedirectUri"]?.Trim();
-        var postLogoutRedirectUri = configuration["Auth:PostLogoutRedirectUri"]?.Trim();
-        var audience = configuration["Auth:Audience"]?.Trim();
+        var authentication = authenticationOptions.Value;
+        var clientId = authentication.ClientId;
+        var clientSecret = authentication.ClientSecret;
+        var redirectUri = authentication.RedirectUri;
+        var postLogoutRedirectUri = authentication.PostLogoutRedirectUri;
+        var audience = authentication.Audience;
         var options = bootstrapOptions.Value;
         var resourceName = options.ResourceName?.Trim();
 

@@ -69,15 +69,4 @@ public static class WorkbenchConfigurationExtensions
         return configuration;
     }
 
-    public static bool IsWorkbenchSwaggerEnabled(this IConfiguration configuration, IHostEnvironment environment)
-    {
-        var value = configuration["Swagger:Enabled"];
-        if (string.IsNullOrWhiteSpace(value))
-            return environment.IsDevelopment();
-        if (bool.TryParse(value, out var enabled))
-            return enabled;
-
-        throw new InvalidOperationException(
-            "Swagger:Enabled (NEXUSAUTH_WORKBENCH_SWAGGER_ENABLED) must be true or false.");
-    }
 }

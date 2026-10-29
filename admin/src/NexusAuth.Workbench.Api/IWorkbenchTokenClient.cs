@@ -1,11 +1,9 @@
 using System.Net;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace NexusAuth.Workbench.Api;
 
-public interface IWorkbenchOidcClient
+public interface IWorkbenchTokenClient
 {
-    Task<OpenIdConnectConfiguration> FetchConfigurationAsync(CancellationToken ct);
     Task<WorkbenchTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct);
     Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(string accessToken, CancellationToken ct);
     Task RevokeTokenAsync(string token, string tokenTypeHint, CancellationToken ct);
