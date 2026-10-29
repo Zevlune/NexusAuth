@@ -8,7 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Luck.Logging.Serilog" />
+        <PackageReference Include="Luck.Logging.Serilog" Condition="'$(MSBuildProjectName)' != 'NexusAuth.Extension'" />
     </ItemGroup>
 
 </Project>

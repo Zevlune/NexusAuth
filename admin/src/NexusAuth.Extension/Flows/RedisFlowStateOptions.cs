@@ -1,10 +1,10 @@
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Extension;
 
 /// <summary>Configures the Redis connection and key namespace used for pending login flows.</summary>
 public sealed class RedisFlowStateOptions
 {
     /// <summary>The default namespace for Redis-backed flow-state keys.</summary>
-    public const string DefaultKeyPrefix = "NexusAuth:workbench:flow";
+    public const string DefaultKeyPrefix = "NexusAuth:oidc:flow";
 
     /// <summary>Gets or sets the StackExchange.Redis configuration string.</summary>
     public string? Configuration { get; set; }

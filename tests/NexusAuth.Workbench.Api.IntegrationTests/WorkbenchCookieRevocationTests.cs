@@ -4,8 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
-using NexusAuth.Extension;
+using Microsoft.Extensions.Configuration;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -100,11 +99,11 @@ public sealed class WorkbenchCookieRevocationTests
 
         public Harness()
         {
-            var oidc = RecordingDispatchProxy.Create<INexusAuthClient>((method, _) => method.Name switch
+            var oidc = RecordingDispatchProxy.Create<IWorkbenchOidcClient>((method, _) => method.Name switch
             {
                 "get_ClientId" => "workbench-client",
-                nameof(INexusAuthClient.RefreshTokensAsync) => Refresh(),
-                nameof(INexusAuthClient.IntrospectAccessTokenAsync) => Introspect(),
+                nameof(IWorkbenchOidcClient.RefreshTokensAsync) => Refresh(),
+                nameof(IWorkbenchOidcClient.IntrospectAccessTokenAsync) => Introspect(),
                 _ => throw new NotSupportedException(method.Name),
             });
             var authentication = RecordingDispatchProxy.Create<IAuthenticationService>((method, _) =>
@@ -118,21 +117,22 @@ public sealed class WorkbenchCookieRevocationTests
                 .AddSingleton<IWorkbenchTokenRefreshCoordinator, WorkbenchTokenRefreshCoordinator>()
                 .BuildServiceProvider();
             Events = new WorkbenchCookieAuthenticationEvents(oidc,
-                Options.Create(new NexusAuthClientOptions { ClientId = "workbench-client" }),
+                new WorkbenchAuthenticationSettings("https://issuer.test", "workbench.api", "workbench-client",
+                    "secret", "https://app.test/signin-oidc", "https://app.test/", "openid offline_access", true, true),
                 services.GetRequiredService<IWorkbenchTokenRefreshCoordinator>());
         }
 
-        private NexusAuthTokenResult Refresh()
+        private WorkbenchTokenResult Refresh()
         {
             RefreshCount++;
-            return new NexusAuthTokenResult("new-access", OmitOptionalTokens ? null : "new-refresh",
+            return new WorkbenchTokenResult("new-access", OmitOptionalTokens ? null : "new-refresh",
                 OmitOptionalTokens ? null : "new-id", 300);
         }
 
-        private AccessTokenIntrospectionResult Introspect()
+        private WorkbenchIntrospectionResult Introspect()
         {
             if (Failure == "exception") throw new HttpRequestException("Provider unavailable.");
-            return new AccessTokenIntrospectionResult(Active,
+            return new WorkbenchIntrospectionResult(Active,
                 Failure == "subject" ? "different-user" : subject,
                 Failure == "client" ? "different-client" : "workbench-client");
         }

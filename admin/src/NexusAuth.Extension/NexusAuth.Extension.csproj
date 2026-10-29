@@ -9,11 +9,9 @@
 
   <ItemGroup>
     <None Update="README.md" Pack="true" PackagePath="/" />
-    <!-- Keep the SDK independent of the repository's application logging stack. -->
-    <PackageReference Remove="Luck.Logging.Serilog" />
-    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
-    <PackageReference Include="Microsoft.Extensions.Http" />
-    <PackageReference Include="Microsoft.Extensions.Options" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
 </Project>

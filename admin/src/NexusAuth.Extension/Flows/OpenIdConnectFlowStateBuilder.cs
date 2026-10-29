@@ -1,13 +1,13 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Extension;
 
-/// <summary>Selects the storage provider for temporary Workbench login flows.</summary>
-public sealed class WorkbenchFlowStateBuilder
+/// <summary>Selects the storage provider for temporary OpenID Connect login flows.</summary>
+public sealed class OpenIdConnectFlowStateBuilder
 {
     /// <summary>Creates a builder over the application's service collection.</summary>
-    public WorkbenchFlowStateBuilder(IServiceCollection services)
+    public OpenIdConnectFlowStateBuilder(IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
         Services = services;
@@ -17,8 +17,8 @@ public sealed class WorkbenchFlowStateBuilder
     public IServiceCollection Services { get; }
 
     /// <summary>Selects bounded process-local storage shared across request scopes.</summary>
-    public WorkbenchFlowStateBuilder UseInMemory(
-        Action<WorkbenchFlowStateOptions>? configure = null)
+    public OpenIdConnectFlowStateBuilder UseInMemory(
+        Action<OpenIdConnectFlowStateOptions>? configure = null)
     {
         if (configure is not null)
             Services.Configure(configure);
@@ -27,7 +27,7 @@ public sealed class WorkbenchFlowStateBuilder
     }
 
     /// <summary>Selects a custom provider, replacing any previous flow-state registration.</summary>
-    public WorkbenchFlowStateBuilder UseFlowStateStore<TStore>(
+    public OpenIdConnectFlowStateBuilder UseFlowStateStore<TStore>(
         ServiceLifetime lifetime = ServiceLifetime.Scoped)
         where TStore : class, IFlowStateStore
     {

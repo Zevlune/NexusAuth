@@ -7,12 +7,14 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -29,7 +31,7 @@ public sealed class WorkbenchLoginLifecycleTests
     private const string ClientId = "workbench";
     private const string RedirectUri = "https://dashboard.example.test/signin-oidc";
     private const string PostLogoutRedirectUri = "https://dashboard.example.test/";
-    private const string WorkbenchBindingCookiePrefix = "__Host-NexusAuth.Workbench.Oidc.";
+    private const string WorkbenchBindingCookiePrefix = "__Host-NexusAuth.Oidc.";
     private const string CorrelationCookiePrefix = ".AspNetCore.Correlation.";
     private const string NonceCookiePrefix = ".AspNetCore.OpenIdConnect.Nonce.";
 
@@ -178,6 +180,22 @@ public sealed class WorkbenchLoginLifecycleTests
         Assert.Equal(1, harness.Provider.ExchangeCount);
     }
 
+    [Theory]
+    [InlineData("http_error")]
+    [InlineData("invalid_json")]
+    public async Task Token_endpoint_errors_and_invalid_json_cannot_create_a_session_cookie(string failure)
+    {
+        using var harness = new Harness();
+        var login = await harness.BeginLogin();
+        harness.Provider.TokenResponseFailure = failure;
+
+        using var response = await harness.Callback(login);
+
+        AssertCallbackRejected(response, "token_exchange_failed");
+        AssertNoSessionCookie(response);
+        Assert.Equal(1, harness.Provider.ExchangeCount);
+    }
+
     [Fact]
     public async Task Tampered_state_is_rejected_without_consuming_the_legitimate_flow()
     {
@@ -299,22 +317,20 @@ public sealed class WorkbenchLoginLifecycleTests
     public async Task State_expires_and_frees_capacity_without_consuming_another_browsers_flow()
     {
         var clock = new TestClock();
-        var services = new ServiceCollection();
-        services.AddSingleton<TimeProvider>(clock);
-        services.AddWorkbenchFlowState().UseInMemory(options => options.Capacity = 1);
-        using var provider = services.BuildServiceProvider();
-        var store = provider.GetRequiredService<IFlowStateStore>();
-
-        await store.AddAsync("state", new FlowState("binding"));
-        Assert.Null(await store.TryTakeAsync("state", "wrong"));
-        await Assert.ThrowsAsync<FlowStateCapacityExceededException>(
-            () => store.AddAsync("other", new FlowState("b")));
-
+        using var harness = new Harness(capacity: 1, clock: clock);
+        var expired = await harness.BeginLogin();
         clock.Advance(TimeSpan.FromMinutes(10));
-        Assert.Null(await store.TryTakeAsync("state", "binding"));
-        await store.AddAsync("other", new FlowState("b"));
-        Assert.NotNull(await store.TryTakeAsync("other", "b"));
-        Assert.Null(await store.TryTakeAsync("other", "b"));
+
+        using var stale = await harness.Callback(expired);
+        AssertCallbackRejected(stale, "invalid_callback");
+        Assert.Equal(0, harness.Provider.ExchangeCount);
+
+        var current = await harness.BeginLogin();
+        using var replay = await harness.Callback(expired);
+        AssertCallbackRejected(replay, "invalid_callback");
+        using var completed = await harness.Callback(current);
+        AssertCallbackSucceeded(completed);
+        Assert.Equal(1, harness.Provider.ExchangeCount);
     }
 
     private static void AssertCallbackSucceeded(HttpResponseMessage response)
@@ -401,7 +417,10 @@ public sealed class WorkbenchLoginLifecycleTests
         public ProviderStub Provider { get; }
         public HttpClient Client { get; }
 
-        public Harness(int capacity = 10_000, bool signOutProvider = true)
+        public Harness(
+            int capacity = 10_000,
+            bool signOutProvider = true,
+            TimeProvider? clock = null)
         {
             trustedRsa = RSA.Create(2048);
             untrustedRsa = RSA.Create(2048);
@@ -417,6 +436,7 @@ public sealed class WorkbenchLoginLifecycleTests
             configuration.SigningKeys.Add(trustedKey);
             var metadata = new TestMetadataManager(configuration);
             Provider = new ProviderStub(metadata, trustedKey, untrustedKey);
+            var backchannel = new ProviderBackchannelHandler(Provider);
 
             factory = new WebApplicationFactory<WorkbenchApiModule>().WithWebHostBuilder(builder =>
             {
@@ -433,9 +453,19 @@ public sealed class WorkbenchLoginLifecycleTests
                 {
                     services.RemoveAll<IConfigurationManager<OpenIdConnectConfiguration>>();
                     services.AddSingleton<IConfigurationManager<OpenIdConnectConfiguration>>(metadata);
-                    services.RemoveAll<INexusAuthClient>();
-                    services.AddSingleton<INexusAuthClient>(Provider);
-                    services.Configure<WorkbenchFlowStateOptions>(options => options.Capacity = capacity);
+                    services.RemoveAll<IWorkbenchOidcClient>();
+                    services.AddScoped<IWorkbenchOidcClient>(_ => Provider);
+                    services.Configure<OpenIdConnectFlowStateOptions>(options => options.Capacity = capacity);
+                    services.AddSingleton(clock ?? TimeProvider.System);
+                    services.AddHttpClient(WorkbenchOidcClient.HttpClientName)
+                        .ConfigurePrimaryHttpMessageHandler(() => backchannel);
+                    services.AddOptions<OpenIdConnectOptions>(
+                            WorkbenchAuthenticationDefaults.OpenIdConnectScheme)
+                        .PostConfigure<IHttpClientFactory>((options, clients) =>
+                        {
+                            options.ConfigurationManager = metadata;
+                            options.Backchannel = clients.CreateClient(WorkbenchOidcClient.HttpClientName);
+                        });
                     RemoveDiscoveryWarmup(services);
                     services.PostConfigure<CookieAuthenticationOptions>(
                         WorkbenchAuthenticationDefaults.CookieScheme,
@@ -518,8 +548,9 @@ public sealed class WorkbenchLoginLifecycleTests
         {
             var descriptors = services
                 .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
-                    && descriptor.ImplementationType?.FullName
-                        == "NexusAuth.Workbench.Api.WorkbenchDiscoveryWarmupService")
+                    && descriptor.ImplementationType?.Name.EndsWith(
+                        "DiscoveryWarmupService",
+                        StringComparison.Ordinal) == true)
                 .ToArray();
             foreach (var descriptor in descriptors)
                 services.Remove(descriptor);
@@ -529,7 +560,7 @@ public sealed class WorkbenchLoginLifecycleTests
     private sealed class ProviderStub(
         TestMetadataManager metadata,
         SecurityKey trustedKey,
-        SecurityKey untrustedKey) : INexusAuthClient
+        SecurityKey untrustedKey) : IWorkbenchOidcClient
     {
         private readonly ConcurrentDictionary<string, string> nonces = new(StringComparer.Ordinal);
         private readonly object exchangeGate = new();
@@ -545,6 +576,7 @@ public sealed class WorkbenchLoginLifecycleTests
 
         public bool FailRevocation { get; set; }
         public string? IdTokenFailure { get; set; }
+        public string? TokenResponseFailure { get; set; }
         public int Discoveries => metadata.Calls;
         public int ExchangeCount => Volatile.Read(ref exchangeCount);
         public IReadOnlyList<ExchangeCall> Exchanges
@@ -565,36 +597,88 @@ public sealed class WorkbenchLoginLifecycleTests
         public Task<OpenIdConnectConfiguration> FetchConfigurationAsync(CancellationToken ct) =>
             metadata.GetConfigurationAsync(ct);
 
-        public Task<NexusAuthTokenResult> ExchangeCodeAsync(
-            string code,
-            string codeVerifier,
-            string redirectUri,
+        public async Task<HttpResponseMessage> HandleTokenRequestAsync(
+            HttpRequestMessage request,
             CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Equal(Authority + "/token", request.RequestUri?.GetLeftPart(UriPartial.Path));
+            Assert.True(request.Headers.Authorization?.Scheme == "Basic");
+            Assert.Equal(
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(ClientId + ":test-only-secret")),
+                request.Headers.Authorization.Parameter);
+            Assert.Equal("application/x-www-form-urlencoded", request.Content?.Headers.ContentType?.MediaType);
+
+            var body = await request.Content!.ReadAsStringAsync(ct);
+            var form = QueryHelpers.ParseQuery(body);
+            var code = form["code"].ToString();
+            var codeVerifier = form["code_verifier"].ToString();
+            var redirectUri = form["redirect_uri"].ToString();
+            Assert.Equal("authorization_code", form["grant_type"].ToString());
+            Assert.False(string.IsNullOrWhiteSpace(code));
+            Assert.False(string.IsNullOrWhiteSpace(codeVerifier));
+            Assert.Equal(RedirectUri, redirectUri);
+
             Interlocked.Increment(ref exchangeCount);
             lock (exchangeGate)
                 exchanges.Add(new ExchangeCall(code, codeVerifier, redirectUri));
+
+            if (TokenResponseFailure == "http_error")
+            {
+                return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent(
+                        """{"error":"invalid_grant","error_description":"provider-secret-detail"}""",
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+            }
+
+            if (TokenResponseFailure == "invalid_json")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{not-json", Encoding.UTF8, "application/json"),
+                };
+            }
 
             var state = code["code:".Length..];
             if (!nonces.TryGetValue(state, out var nonce))
                 throw new InvalidOperationException("No nonce is registered for this login.");
 
             var idToken = CreateIdToken(nonce);
-            return Task.FromResult(new NexusAuthTokenResult(
-                "access",
-                "refresh",
-                idToken,
-                120));
+            var response = new
+            {
+                access_token = "access",
+                refresh_token = "refresh",
+                id_token = idToken,
+                token_type = "Bearer",
+                expires_in = 120,
+            };
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(response),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
         }
 
-        public Task<NexusAuthTokenResult> RefreshTokensAsync(
+        public Task<WorkbenchTokenResult> RefreshTokensAsync(
             string refreshToken,
-            CancellationToken ct) => throw new NotSupportedException();
+            CancellationToken ct) => Task.FromResult(new WorkbenchTokenResult(
+                "refreshed-access",
+                "refreshed-refresh",
+                null,
+                120));
 
-        public Task<AccessTokenIntrospectionResult> IntrospectAccessTokenAsync(
+        public Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(
             string accessToken,
-            CancellationToken ct) => throw new NotSupportedException();
+            CancellationToken ct) => Task.FromResult(new WorkbenchIntrospectionResult(
+                true,
+                "alice",
+                ClientId));
 
         public Task RevokeTokenAsync(
             string token,
@@ -642,6 +726,14 @@ public sealed class WorkbenchLoginLifecycleTests
                 credentials);
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
+    }
+
+    private sealed class ProviderBackchannelHandler(ProviderStub provider) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            provider.HandleTokenRequestAsync(request, cancellationToken);
     }
 
     private sealed class TestMetadataManager(OpenIdConnectConfiguration configuration)

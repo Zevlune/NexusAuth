@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using NexusAuth.Workbench.Api;
+using NexusAuth.Extension;
 using StackExchange.Redis;
 using Xunit;
 
@@ -164,7 +164,7 @@ public sealed class RedisFlowStateStoreTests
         var services = new ServiceCollection();
         services.AddSingleton<IConnectionMultiplexer>(
             _ => ConnectionMultiplexer.Connect(Connection()));
-        services.AddWorkbenchFlowState().UseRedis();
+        services.AddOpenIdConnectFlowState().UseRedis();
 
         using var provider = services.BuildServiceProvider(Validation());
         var connection = provider.GetRequiredService<IConnectionMultiplexer>();
@@ -239,13 +239,13 @@ public sealed class RedisFlowStateStoreTests
         TimeSpan? lifetime = null)
     {
         var services = new ServiceCollection();
-        services.Configure<WorkbenchFlowStateOptions>(options =>
+        services.Configure<OpenIdConnectFlowStateOptions>(options =>
         {
             options.Capacity = capacity;
             options.Lifetime = lifetime ?? TimeSpan.FromMinutes(1);
         });
         services
-            .AddWorkbenchFlowState()
+            .AddOpenIdConnectFlowState()
             .UseRedis(options =>
             {
                 options.Configuration = Connection();

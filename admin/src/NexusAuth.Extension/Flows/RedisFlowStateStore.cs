@@ -3,7 +3,7 @@ using System.Text;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Extension;
 
 /// <summary>
 /// Stores browser-bound OIDC flow evidence in Redis with shared capacity and atomic one-time
@@ -129,7 +129,7 @@ public sealed class RedisFlowStateStore : IFlowStateStore
     public RedisFlowStateStore(
         IConnectionMultiplexer connection,
         IOptions<RedisFlowStateOptions> redisOptions,
-        IOptions<WorkbenchFlowStateOptions> flowOptions)
+        IOptions<OpenIdConnectFlowStateOptions> flowOptions)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(redisOptions);

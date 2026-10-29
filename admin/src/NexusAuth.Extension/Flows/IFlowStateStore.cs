@@ -1,4 +1,4 @@
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Extension;
 
 /// <summary>Defines storage operations for temporary OIDC login flows.</summary>
 public interface IFlowStateStore

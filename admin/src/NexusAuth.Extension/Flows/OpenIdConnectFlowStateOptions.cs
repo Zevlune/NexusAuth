@@ -1,7 +1,7 @@
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Extension;
 
-/// <summary>Limits the lifetime and number of pending browser login flows.</summary>
-public sealed class WorkbenchFlowStateOptions
+/// <summary>Limits the lifetime and number of pending OpenID Connect login flows.</summary>
+public sealed class OpenIdConnectFlowStateOptions
 {
     /// <summary>Maximum lifetime of a pending flow; defaults to ten minutes.</summary>
     public TimeSpan Lifetime { get; set; } = TimeSpan.FromMinutes(10);

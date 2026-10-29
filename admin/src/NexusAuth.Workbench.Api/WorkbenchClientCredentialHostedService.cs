@@ -35,31 +35,27 @@ public sealed class WorkbenchClientCredentialHostedService(
         var redirectUri = configuration["Auth:RedirectUri"]?.Trim();
         var postLogoutRedirectUri = configuration["Auth:PostLogoutRedirectUri"]?.Trim();
         var audience = configuration["Auth:Audience"]?.Trim();
-        var gatewayEnabled = configuration.IsWorkbenchGatewayEnabled();
         var options = bootstrapOptions.Value;
         var resourceName = options.ResourceName?.Trim();
 
         if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret)
-            || (!gatewayEnabled && (string.IsNullOrWhiteSpace(redirectUri) || string.IsNullOrWhiteSpace(postLogoutRedirectUri)))
+            || string.IsNullOrWhiteSpace(redirectUri) || string.IsNullOrWhiteSpace(postLogoutRedirectUri)
             || string.IsNullOrWhiteSpace(audience) || string.IsNullOrWhiteSpace(resourceName))
         {
             throw new InvalidOperationException(
                 "Workbench initialization requires Auth:ClientId, Auth:ClientSecret, Auth:RedirectUri, " +
-                "Auth:PostLogoutRedirectUri (non-gateway mode), Auth:Audience and Bootstrap:ResourceName.");
+                "Auth:PostLogoutRedirectUri, Auth:Audience and Bootstrap:ResourceName.");
         }
 
         RequireValue(options.ResourceDisplayName, "Bootstrap:ResourceDisplayName");
         RequireValue(options.ClientName, "Bootstrap:ClientName");
-        var managedScopes = (gatewayEnabled ? Array.Empty<string>() : StaticClientScopes)
+        var managedScopes = StaticClientScopes
             .Append(audience)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        string[] redirectUris = gatewayEnabled ? [] : [redirectUri!];
-        string[] postLogoutRedirectUris = gatewayEnabled ? [] : [postLogoutRedirectUri!];
-        // The gateway owns its login client; keep this application's registration without enabling new grants.
-        string[] grantTypes = gatewayEnabled
-            ? []
-            : [OAuthGrantTypes.AuthorizationCode, OAuthGrantTypes.RefreshToken];
+        string[] redirectUris = [redirectUri!];
+        string[] postLogoutRedirectUris = [postLogoutRedirectUri!];
+        string[] grantTypes = [OAuthGrantTypes.AuthorizationCode, OAuthGrantTypes.RefreshToken];
 
         using var scope = scopeFactory.CreateScope();
         var clientRepository = scope.ServiceProvider.GetRequiredService<IOAuthClientRepository>();

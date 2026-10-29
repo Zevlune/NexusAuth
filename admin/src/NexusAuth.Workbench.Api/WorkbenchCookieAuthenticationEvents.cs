@@ -2,8 +2,6 @@ using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.Extensions.Options;
-using NexusAuth.Extension;
 
 namespace NexusAuth.Workbench.Api;
 
@@ -11,9 +9,9 @@ namespace NexusAuth.Workbench.Api;
 /// Keeps the Workbench authentication ticket alive while rotating its OIDC tokens.
 /// </summary>
 public class WorkbenchCookieAuthenticationEvents(
-    INexusAuthClient oidcService,
-    IOptions<NexusAuthClientOptions> clientOptions,
-    IWorkbenchTokenRefreshCoordinator refreshCoordinator) : CookieAuthenticationEvents, IWorkbenchCookieAuthenticationEvents
+    IWorkbenchOidcClient oidcService,
+    WorkbenchAuthenticationSettings settings,
+    IWorkbenchTokenRefreshCoordinator refreshCoordinator) : CookieAuthenticationEvents
 {
     private static readonly TimeSpan AccessTokenRefreshWindow = TimeSpan.FromMinutes(1);
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
@@ -55,7 +53,7 @@ public class WorkbenchCookieAuthenticationEvents(
                 var subject = context.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (!introspection.Active
                     || !string.Equals(introspection.Subject, subject, StringComparison.Ordinal)
-                    || !string.Equals(introspection.ClientId, clientOptions.Value.ClientId, StringComparison.Ordinal))
+                    || !string.Equals(introspection.ClientId, settings.ClientId, StringComparison.Ordinal))
                 {
                     await RejectAndSignOutAsync(context);
                 }
@@ -89,7 +87,7 @@ public class WorkbenchCookieAuthenticationEvents(
                 refreshed.AccessToken, context.HttpContext.RequestAborted);
             if (!introspection.Active
                 || !string.Equals(introspection.Subject, context.Principal.FindFirstValue(ClaimTypes.NameIdentifier), StringComparison.Ordinal)
-                || !string.Equals(introspection.ClientId, clientOptions.Value.ClientId, StringComparison.Ordinal))
+                || !string.Equals(introspection.ClientId, settings.ClientId, StringComparison.Ordinal))
                 throw new InvalidOperationException("The refreshed token is no longer active.");
 
             var refreshedExpiresAt = DateTimeOffset.UtcNow.AddSeconds(refreshed.ExpiresIn);

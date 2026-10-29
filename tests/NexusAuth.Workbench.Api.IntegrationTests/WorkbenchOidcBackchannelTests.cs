@@ -1,11 +1,14 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
-using NexusAuth.Extension;
+using NexusAuth.Workbench.Api;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -18,7 +21,7 @@ public sealed class WorkbenchOidcBackchannelTests
         using var handler = new ProviderHandler();
         using var services = CreateProvider(handler);
         using var scope = services.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<INexusAuthClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
 
         await client.RevokeTokenAsync("refresh+secret&value", "refresh_token", CancellationToken.None);
 
@@ -27,6 +30,8 @@ public sealed class WorkbenchOidcBackchannelTests
         var form = QueryHelpers.ParseQuery("?" + request.Body);
         Assert.Equal("refresh+secret&value", form["token"].ToString());
         Assert.Equal("refresh_token", form["token_type_hint"].ToString());
+        Assert.False(form.ContainsKey("client_id"));
+        Assert.False(form.ContainsKey("client_secret"));
         var credentials = Encoding.UTF8.GetString(
             Convert.FromBase64String(request.Authorization!["Basic ".Length..]));
         Assert.Equal("workbench:secret%2Bvalue", credentials);
@@ -38,6 +43,10 @@ public sealed class WorkbenchOidcBackchannelTests
         using var handler = new ProviderHandler();
         using var services = CreateProvider(handler);
         var manager = services.GetRequiredService<IConfigurationManager<OpenIdConnectConfiguration>>();
+        var oidcOptions = services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
+
+        Assert.Same(manager, oidcOptions.ConfigurationManager);
 
         var configurations = await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ =>
         {
@@ -45,7 +54,7 @@ public sealed class WorkbenchOidcBackchannelTests
             Assert.Same(
                 manager,
                 scope.ServiceProvider.GetRequiredService<IConfigurationManager<OpenIdConnectConfiguration>>());
-            return await scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+            return await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
                 .FetchConfigurationAsync(CancellationToken.None);
         }));
 
@@ -72,7 +81,7 @@ public sealed class WorkbenchOidcBackchannelTests
         using var scope = services.CreateScope();
 
         await Assert.ThrowsAnyAsync<Exception>(() =>
-            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
                 .RevokeTokenAsync("private-token", "refresh_token", CancellationToken.None));
 
         Assert.Empty(handler.Revocations);
@@ -92,8 +101,8 @@ public sealed class WorkbenchOidcBackchannelTests
         using var services = CreateProvider(handler);
         using var scope = services.CreateScope();
 
-        var exception = await Assert.ThrowsAsync<NexusAuthProtocolException>(() =>
-            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+        var exception = await Assert.ThrowsAsync<WorkbenchProtocolException>(() =>
+            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
                 .RevokeTokenAsync("refresh", "refresh_token", CancellationToken.None));
 
         Assert.Equal("invalid_token", exception.Error);
@@ -104,14 +113,22 @@ public sealed class WorkbenchOidcBackchannelTests
 
     private static ServiceProvider CreateProvider(ProviderHandler handler)
     {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Auth:Authority"] = "https://issuer.example.test",
+                ["Auth:Audience"] = "workbench.api",
+                ["Auth:ClientId"] = "workbench",
+                ["Auth:ClientSecret"] = "secret+value",
+                ["Auth:RedirectUri"] = "https://app.test/signin-oidc",
+                ["Auth:PostLogoutRedirectUri"] = "https://app.test/",
+                ["Auth:Scope"] = "openid profile offline_access"
+            })
+            .Build();
         var services = new ServiceCollection();
-        services.AddNexusAuth(options =>
-        {
-            options.Authority = "https://issuer.example.test";
-            options.ClientId = "workbench";
-            options.ClientSecret = "secret+value";
-        });
-        services.AddHttpClient(NexusAuthClient.HttpClientName)
+        services.AddLogging();
+        services.AddWorkbenchAuthentication(configuration);
+        services.AddHttpClient(WorkbenchOidcClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -122,6 +139,8 @@ public sealed class WorkbenchOidcBackchannelTests
 
     private sealed class ProviderHandler : HttpMessageHandler
     {
+        private readonly object revocationGate = new();
+
         public int DiscoveryRequests;
         public int JwksRequests;
         public string Issuer { get; init; } = "https://issuer.example.test";
@@ -156,10 +175,14 @@ public sealed class WorkbenchOidcBackchannelTests
             var body = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(ct);
-            Revocations.Add((
-                request.RequestUri.ToString(),
-                body,
-                request.Headers.Authorization?.ToString()));
+            lock (revocationGate)
+            {
+                Revocations.Add((
+                    request.RequestUri.ToString(),
+                    body,
+                    request.Headers.Authorization?.ToString()));
+            }
+
             return RevocationStatus == HttpStatusCode.OK
                 ? new HttpResponseMessage(HttpStatusCode.OK)
                 : JsonResponse(JsonSerializer.Serialize(new

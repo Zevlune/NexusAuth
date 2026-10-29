@@ -17,7 +17,6 @@ public static class WorkbenchConfigurationExtensions
             ["NEXUSAUTH_SMTP_FROM_NAME"] = "Smtp:FromName",
             ["NEXUSAUTH_SMTP_VERIFICATION_CODE_COOLDOWN_SECONDS"] = "Smtp:VerificationCodeCooldownSeconds",
             ["NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES"] = "Smtp:VerificationCodeLifetimeMinutes",
-            ["NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED"] = "Gateway:Enabled",
             ["NEXUSAUTH_WORKBENCH_CONNECTION_STRINGS_DEFAULT"] = "ConnectionStrings:Default",
             ["NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY"] = "Auth:Authority",
             ["NEXUSAUTH_WORKBENCH_AUTH_CLIENT_ID"] = "Auth:ClientId",
@@ -68,17 +67,6 @@ public static class WorkbenchConfigurationExtensions
             configuration.AddInMemoryCollection(values);
 
         return configuration;
-    }
-
-    public static bool IsWorkbenchGatewayEnabled(this IConfiguration configuration)
-    {
-        var value = configuration["Gateway:Enabled"];
-        if (value is null)
-            return false;
-        if (bool.TryParse(value, out var enabled))
-            return enabled;
-        throw new InvalidOperationException(
-            "Gateway:Enabled (NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED) must be true or false.");
     }
 
     public static bool IsWorkbenchSwaggerEnabled(this IConfiguration configuration, IHostEnvironment environment)

@@ -3,14 +3,14 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Extension;
 
 /// <summary>Registers Redis-backed pending login-flow storage.</summary>
 public static class RedisFlowStateExtensions
 {
     /// <summary>Selects Redis storage and creates a shared multiplexer when none is registered.</summary>
-    public static WorkbenchFlowStateBuilder UseRedis(
-        this WorkbenchFlowStateBuilder builder,
+    public static OpenIdConnectFlowStateBuilder UseRedis(
+        this OpenIdConnectFlowStateBuilder builder,
         Action<RedisFlowStateOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -36,15 +36,15 @@ public static class RedisFlowStateExtensions
     }
 
     /// <summary>Selects Redis storage using an already registered multiplexer.</summary>
-    public static WorkbenchFlowStateBuilder UseRedis(
-        this WorkbenchFlowStateBuilder builder)
+    public static OpenIdConnectFlowStateBuilder UseRedis(
+        this OpenIdConnectFlowStateBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.AddOptions<RedisFlowStateOptions>();
         return RegisterStore(builder);
     }
 
-    private static WorkbenchFlowStateBuilder RegisterStore(
-        WorkbenchFlowStateBuilder builder) =>
+    private static OpenIdConnectFlowStateBuilder RegisterStore(
+        OpenIdConnectFlowStateBuilder builder) =>
         builder.UseFlowStateStore<RedisFlowStateStore>(ServiceLifetime.Scoped);
 }

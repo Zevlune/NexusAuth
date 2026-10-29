@@ -8,25 +8,16 @@ public sealed record WorkbenchAuthenticationSettings(
     string RedirectUri,
     string PostLogoutRedirectUri,
     string Scope,
-    bool GatewayEnabled,
     bool SignOutProvider,
-    bool RequireHttpsMetadata,
-    IReadOnlySet<string> AllowedBearerClientIds)
+    bool RequireHttpsMetadata)
 {
     public static WorkbenchAuthenticationSettings FromConfiguration(IConfiguration configuration)
     {
-        var gatewayEnabled = configuration.IsWorkbenchGatewayEnabled();
         var scope = EnsureResourceScope(configuration["Auth:Scope"], configuration["Auth:Audience"]);
-        var requireHttpsMetadata = ValidateConfiguration(configuration, gatewayEnabled, scope);
+        var requireHttpsMetadata = ValidateConfiguration(configuration, scope);
 
         var credentials = WorkbenchClientCredentials.FromConfiguration(
             configuration["Auth:ClientId"], configuration["Auth:ClientSecret"]);
-        var allowedClientIds = configuration.GetSection("Auth:AllowedBearerClientIds").GetChildren()
-            .Select(entry => entry.Value?.Trim())
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => value!)
-            .ToHashSet(StringComparer.Ordinal);
-        allowedClientIds.Add(credentials.ClientId);
 
         return new WorkbenchAuthenticationSettings(
             Authority: configuration["Auth:Authority"]!.Trim().TrimEnd('/'),
@@ -36,13 +27,11 @@ public sealed record WorkbenchAuthenticationSettings(
             RedirectUri: configuration["Auth:RedirectUri"] ?? string.Empty,
             PostLogoutRedirectUri: configuration["Auth:PostLogoutRedirectUri"] ?? string.Empty,
             Scope: scope ?? string.Empty,
-            GatewayEnabled: gatewayEnabled,
             SignOutProvider: !bool.TryParse(configuration["Auth:SignOutProvider"], out var signOutProvider) || signOutProvider,
-            RequireHttpsMetadata: requireHttpsMetadata,
-            AllowedBearerClientIds: allowedClientIds);
+            RequireHttpsMetadata: requireHttpsMetadata);
     }
 
-    private static bool ValidateConfiguration(IConfiguration configuration, bool gatewayEnabled, string? scope)
+    private static bool ValidateConfiguration(IConfiguration configuration, string? scope)
     {
         var errors = new List<string>();
         var requireHttpsMetadata = true;
@@ -58,12 +47,9 @@ public sealed record WorkbenchAuthenticationSettings(
         RequireValue(configuration["Auth:Audience"], "Audience", "AUDIENCE", errors);
         RequireValue(configuration["Auth:ClientId"], "ClientId", "CLIENT_ID", errors);
         RequireValue(configuration["Auth:ClientSecret"], "ClientSecret", "CLIENT_SECRET", errors);
-        if (!gatewayEnabled)
-        {
-            RequireValue(configuration["Auth:RedirectUri"], "RedirectUri", "REDIRECT_URI", errors);
-            RequireValue(configuration["Auth:PostLogoutRedirectUri"], "PostLogoutRedirectUri", "POST_LOGOUT_REDIRECT_URI", errors);
-            RequireValue(scope, "Scope", "SCOPE", errors);
-        }
+        RequireValue(configuration["Auth:RedirectUri"], "RedirectUri", "REDIRECT_URI", errors);
+        RequireValue(configuration["Auth:PostLogoutRedirectUri"], "PostLogoutRedirectUri", "POST_LOGOUT_REDIRECT_URI", errors);
+        RequireValue(scope, "Scope", "SCOPE", errors);
         if (!Uri.TryCreate(configuration["Auth:Authority"], UriKind.Absolute, out var authority)
             || authority.Scheme is not ("http" or "https")
             || !string.IsNullOrEmpty(authority.UserInfo)

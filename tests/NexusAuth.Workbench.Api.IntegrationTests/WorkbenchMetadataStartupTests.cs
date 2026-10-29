@@ -6,7 +6,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
-using NexusAuth.Extension;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -28,8 +27,8 @@ public sealed class WorkbenchMetadataStartupTests
         Assert.True(options.SaveTokens);
         using var first = factory.Services.CreateScope();
         using var second = factory.Services.CreateScope();
-        var firstClient = first.ServiceProvider.GetRequiredService<INexusAuthClient>();
-        var secondClient = second.ServiceProvider.GetRequiredService<INexusAuthClient>();
+        var firstClient = first.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
+        var secondClient = second.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
         Assert.NotSame(firstClient, secondClient);
         Assert.Same(metadata.Configuration, await firstClient.FetchConfigurationAsync(CancellationToken.None));
     }
@@ -76,6 +75,8 @@ public sealed class WorkbenchMetadataStartupTests
             {
                 services.RemoveAll<IConfigurationManager<OpenIdConnectConfiguration>>();
                 services.AddSingleton<IConfigurationManager<OpenIdConnectConfiguration>>(metadata);
+                services.PostConfigure<OpenIdConnectOptions>(WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
+                    options => options.ConfigurationManager = metadata);
             });
         });
 

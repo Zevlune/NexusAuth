@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using NexusAuth.Workbench.Api;
+using NexusAuth.Extension;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -11,7 +11,7 @@ public sealed class WorkbenchDependencyInjectionTests
     public async Task In_memory_store_is_shared_across_scopes_and_consumes_atomically()
     {
         var services = CreateServices()
-            .AddWorkbenchFlowState()
+            .AddOpenIdConnectFlowState()
             .UseInMemory()
             .Services;
         using var provider = BuildProvider(services);
@@ -52,7 +52,7 @@ public sealed class WorkbenchDependencyInjectionTests
         services.AddSingleton<StoreDisposalTracker>();
 
         var builder = services
-            .AddWorkbenchFlowState()
+            .AddOpenIdConnectFlowState()
             .UseFlowStateStore<ScopedFlowStateStore>();
 
         var mapping = Assert.Single(
@@ -84,7 +84,7 @@ public sealed class WorkbenchDependencyInjectionTests
         services.AddSingleton<StoreDisposalTracker>();
 
         var builder = services
-            .AddWorkbenchFlowState()
+            .AddOpenIdConnectFlowState()
             .UseFlowStateStore<ScopedFlowStateStore>()
             .UseInMemory(options => options.Capacity = 17);
 
@@ -102,7 +102,7 @@ public sealed class WorkbenchDependencyInjectionTests
             secondScope.ServiceProvider.GetRequiredService<IFlowStateStore>());
         Assert.Equal(
             17,
-            provider.GetRequiredService<IOptions<WorkbenchFlowStateOptions>>()
+            provider.GetRequiredService<IOptions<OpenIdConnectFlowStateOptions>>()
                 .Value.Capacity);
     }
 
@@ -113,7 +113,7 @@ public sealed class WorkbenchDependencyInjectionTests
         var services = CreateServices();
         services.AddSingleton<TimeProvider>(clock);
         services
-            .AddWorkbenchFlowState()
+            .AddOpenIdConnectFlowState()
             .UseInMemory(options =>
             {
                 options.Capacity = 1;
@@ -137,24 +137,28 @@ public sealed class WorkbenchDependencyInjectionTests
     }
 
     [Fact]
-    public void Add_workbench_flow_state_registers_clock_and_options_once()
+    public void Add_openidconnect_flow_state_registers_clock_options_and_scoped_service_once()
     {
         var clock = new ManualTimeProvider();
         var services = CreateServices();
         services.AddSingleton<TimeProvider>(clock);
 
         var builder = services
-            .AddWorkbenchFlowState()
+            .AddOpenIdConnectFlowState()
             .UseInMemory();
 
         Assert.Single(
             builder.Services,
             descriptor => descriptor.ServiceType == typeof(TimeProvider));
+        var flowState = Assert.Single(
+            builder.Services,
+            descriptor => descriptor.ServiceType == typeof(OpenIdConnectFlowState));
+        Assert.Equal(ServiceLifetime.Scoped, flowState.Lifetime);
 
         using var provider = BuildProvider(builder.Services);
         Assert.Same(clock, provider.GetRequiredService<TimeProvider>());
         Assert.NotNull(
-            provider.GetRequiredService<IOptions<WorkbenchFlowStateOptions>>());
+            provider.GetRequiredService<IOptions<OpenIdConnectFlowStateOptions>>());
     }
 
     [Fact]
@@ -163,7 +167,7 @@ public sealed class WorkbenchDependencyInjectionTests
         var clock = new ManualTimeProvider();
         var services = CreateServices();
         services.AddSingleton<TimeProvider>(clock);
-        services.AddWorkbenchFlowState().UseInMemory();
+        services.AddOpenIdConnectFlowState().UseInMemory();
 
         var provider = BuildProvider(services);
         Assert.IsType<InMemoryFlowStateStore>(

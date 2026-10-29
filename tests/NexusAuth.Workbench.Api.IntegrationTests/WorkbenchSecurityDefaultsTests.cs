@@ -1,6 +1,6 @@
 using System.Net;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -9,7 +9,6 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using NexusAuth.Extension;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -34,11 +33,9 @@ public sealed class WorkbenchSecurityDefaultsTests
     public void Require_https_metadata_defaults_to_true_and_is_forwarded_to_oidc()
     {
         using var factory = CreateFactory();
-        var jwt = factory.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
-            .Get(WorkbenchAuthenticationDefaults.BearerScheme);
-        var oidc = factory.Services.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
+        var oidc = factory.Services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
 
-        Assert.True(jwt.RequireHttpsMetadata);
         Assert.True(oidc.RequireHttpsMetadata);
     }
 
@@ -58,11 +55,9 @@ public sealed class WorkbenchSecurityDefaultsTests
         using var factory = CreateFactory(
             authority: "http://localhost:5100",
             settings: new() { ["Auth:RequireHttpsMetadata"] = "false" });
-        var jwt = factory.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
-            .Get(WorkbenchAuthenticationDefaults.BearerScheme);
-        var oidc = factory.Services.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
+        var oidc = factory.Services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
 
-        Assert.False(jwt.RequireHttpsMetadata);
         Assert.False(oidc.RequireHttpsMetadata);
     }
 

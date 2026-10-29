@@ -2,11 +2,12 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using NexusAuth.Application.Clients;
-using NexusAuth.Extension;
 using NexusAuth.Shared.OAuth;
+using NexusAuth.Workbench.Api;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -18,31 +19,27 @@ public sealed class WorkbenchClientAuthenticationTests
     private const string ExpectedClientSecret = "secret+value%: 空格🔑";
 
     [Theory]
-    [InlineData("exchange")]
     [InlineData("refresh")]
     [InlineData("introspection")]
+    [InlineData("revocation")]
     public async Task Basic_credentials_are_form_encoded_before_base64_and_roundtrip_through_host_parser(
         string operation)
     {
         using var handler = new CapturingHandler();
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<INexusAuthClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
 
         switch (operation)
         {
-            case "exchange":
-                await client.ExchangeCodeAsync(
-                    "authorization-code",
-                    "code-verifier",
-                    "https://app.test/signin-oidc",
-                    CancellationToken.None);
-                break;
             case "refresh":
                 await client.RefreshTokensAsync("refresh-token", CancellationToken.None);
                 break;
             case "introspection":
                 await client.IntrospectAccessTokenAsync("access-token", CancellationToken.None);
+                break;
+            case "revocation":
+                await client.RevokeTokenAsync("refresh-token", "refresh_token", CancellationToken.None);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(operation), operation, null);
@@ -55,6 +52,11 @@ public sealed class WorkbenchClientAuthenticationTests
         Assert.Equal(
             $"{WebUtility.UrlEncode(ExpectedClientId)}:{WebUtility.UrlEncode(ExpectedClientSecret)}",
             encodedCredentials);
+
+        var protectedRequest = Assert.Single(handler.ProtectedRequests);
+        var form = QueryHelpers.ParseQuery("?" + protectedRequest.Body);
+        Assert.False(form.ContainsKey("client_id"));
+        Assert.False(form.ContainsKey("client_secret"));
 
         var parsed = OAuthClientAuthenticationParser.ResolveClientAuthentication(
             authorization.ToString(),
@@ -69,84 +71,80 @@ public sealed class WorkbenchClientAuthenticationTests
     }
 
     [Fact]
+    public async Task Native_code_exchange_form_is_converted_to_basic_without_duplicate_credentials()
+    {
+        var settings = CreateSettings();
+        using var terminal = new CapturingHandler();
+        using var adapter = new WorkbenchBasicAuthenticationHandler(settings)
+        {
+            InnerHandler = terminal
+        };
+        using var httpClient = new HttpClient(adapter, disposeHandler: false);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{Authority}/connect/token")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = OpenIdConnectGrantTypes.AuthorizationCode,
+                ["code"] = "authorization-code",
+                ["redirect_uri"] = "https://app.test/signin-oidc",
+                ["code_verifier"] = "code-verifier",
+                ["client_id"] = ExpectedClientId,
+                ["client_secret"] = ExpectedClientSecret
+            })
+        };
+
+        using var response = await httpClient.SendAsync(request, CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var protectedRequest = Assert.Single(terminal.ProtectedRequests);
+        var form = QueryHelpers.ParseQuery("?" + protectedRequest.Body);
+        Assert.Equal(OpenIdConnectGrantTypes.AuthorizationCode, form["grant_type"].ToString());
+        Assert.Equal("authorization-code", form["code"].ToString());
+        Assert.False(form.ContainsKey("client_id"));
+        Assert.False(form.ContainsKey("client_secret"));
+
+        var authorization = Assert.Single(terminal.AuthorizationHeaders);
+        var credentials = Encoding.UTF8.GetString(
+            Convert.FromBase64String(Assert.IsType<string>(authorization.Parameter)));
+        Assert.Equal(
+            $"{WebUtility.UrlEncode(ExpectedClientId)}:{WebUtility.UrlEncode(ExpectedClientSecret)}",
+            credentials);
+    }
+
+    [Fact]
+    public async Task Discovery_get_never_sends_client_credentials()
+    {
+        using var handler = new CapturingHandler();
+        using var provider = CreateProvider(handler);
+        using var scope = provider.CreateScope();
+
+        await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
+            .FetchConfigurationAsync(CancellationToken.None);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("GET", request.Method);
+        Assert.Null(request.Authorization);
+        Assert.Empty(request.Body);
+        Assert.Empty(handler.AuthorizationHeaders);
+        Assert.Empty(handler.ProtectedRequests);
+    }
+
+    [Fact]
     public async Task Missing_refresh_token_is_preserved_as_null_and_expires_in_is_not_defaulted()
     {
         using var handler = new CapturingHandler();
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
 
-        var result = await scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
-            .ExchangeCodeAsync(
-                "authorization-code",
-                "code-verifier",
-                "https://app.test/signin-oidc",
-                CancellationToken.None);
+        var result = await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
+            .RefreshTokensAsync("refresh-token", CancellationToken.None);
 
         Assert.Equal("access", result.AccessToken);
         Assert.Null(result.RefreshToken);
         Assert.Null(result.IdToken);
         Assert.Equal(0, result.ExpiresIn);
-    }
-
-    [Fact]
-    public async Task Basic_authentication_does_not_trim_sdk_client_secret()
-    {
-        const string secret = " \tsecret+value\n ";
-        using var handler = new CapturingHandler();
-        using var provider = CreateProvider(handler, clientSecret: secret);
-        using var scope = provider.CreateScope();
-
-        await scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
-            .RefreshTokensAsync("refresh-token", CancellationToken.None);
-
-        var authorization = Assert.Single(handler.AuthorizationHeaders);
-        var credentials = Encoding.UTF8.GetString(
-            Convert.FromBase64String(Assert.IsType<string>(authorization.Parameter)));
-        Assert.Equal(
-            $"{WebUtility.UrlEncode(ExpectedClientId)}:{WebUtility.UrlEncode(secret)}",
-            credentials);
-    }
-
-    [Fact]
-    public async Task Client_secret_post_sends_credentials_in_form_without_basic_header()
-    {
-        using var handler = new CapturingHandler();
-        using var provider = CreateProvider(
-            handler,
-            clientSecret: "post+secret",
-            ClientAuthenticationMethod.ClientSecretPost);
-        using var scope = provider.CreateScope();
-
-        await scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
-            .RefreshTokensAsync("refresh-token", CancellationToken.None);
-
-        Assert.Empty(handler.AuthorizationHeaders);
-        var request = Assert.Single(handler.ProtectedRequests);
-        var form = QueryHelpers.ParseQuery("?" + request.Body);
-        Assert.Equal(ExpectedClientId, form["client_id"].ToString());
-        Assert.Equal("post+secret", form["client_secret"].ToString());
-    }
-
-    [Fact]
-    public async Task Public_client_sends_only_client_id_and_does_not_require_secret()
-    {
-        using var handler = new CapturingHandler();
-        using var provider = CreateProvider(
-            handler,
-            clientSecret: null,
-            ClientAuthenticationMethod.None);
-        using var scope = provider.CreateScope();
-
-        var options = scope.ServiceProvider.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
-        Assert.Null(options.ClientSecret);
-        await scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
-            .RefreshTokensAsync("refresh-token", CancellationToken.None);
-
-        Assert.Empty(handler.AuthorizationHeaders);
-        var request = Assert.Single(handler.ProtectedRequests);
-        var form = QueryHelpers.ParseQuery("?" + request.Body);
-        Assert.Equal(ExpectedClientId, form["client_id"].ToString());
-        Assert.False(form.ContainsKey("client_secret"));
     }
 
     [Theory]
@@ -159,28 +157,21 @@ public sealed class WorkbenchClientAuthenticationTests
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
 
-        var exception = await Assert.ThrowsAsync<NexusAuthProtocolException>(() =>
-            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+        var exception = await Assert.ThrowsAsync<WorkbenchProtocolException>(() =>
+            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
                 .RefreshTokensAsync("refresh-token", CancellationToken.None));
 
         Assert.Equal("invalid_response", exception.Error);
         Assert.Equal(HttpStatusCode.OK, exception.StatusCode);
+        Assert.DoesNotContain(ExpectedClientSecret, exception.ToString(), StringComparison.Ordinal);
     }
 
-    private static ServiceProvider CreateProvider(
-        CapturingHandler handler,
-        string? clientSecret = ExpectedClientSecret,
-        ClientAuthenticationMethod authenticationMethod = ClientAuthenticationMethod.ClientSecretBasic)
+    private static ServiceProvider CreateProvider(CapturingHandler handler)
     {
         var services = new ServiceCollection();
-        services.AddNexusAuth(options =>
-        {
-            options.Authority = Authority;
-            options.ClientId = ExpectedClientId;
-            options.ClientSecret = clientSecret;
-            options.ClientAuthenticationMethod = authenticationMethod;
-        });
-        services.AddHttpClient(NexusAuthClient.HttpClientName)
+        services.AddLogging();
+        services.AddWorkbenchAuthentication(CreateConfiguration());
+        services.AddHttpClient(WorkbenchOidcClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -189,29 +180,65 @@ public sealed class WorkbenchClientAuthenticationTests
         });
     }
 
+    private static WorkbenchAuthenticationSettings CreateSettings()
+    {
+        return WorkbenchAuthenticationSettings.FromConfiguration(CreateConfiguration());
+    }
+
+    private static IConfiguration CreateConfiguration()
+    {
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Auth:Authority"] = Authority,
+                ["Auth:Audience"] = "workbench.api",
+                ["Auth:ClientId"] = ExpectedClientId,
+                ["Auth:ClientSecret"] = ExpectedClientSecret,
+                ["Auth:RedirectUri"] = "https://app.test/signin-oidc",
+                ["Auth:PostLogoutRedirectUri"] = "https://app.test/",
+                ["Auth:Scope"] = "openid profile offline_access"
+            })
+            .Build();
+    }
+
     private sealed class CapturingHandler : HttpMessageHandler
     {
         public string TokenResponseBody { get; init; } = """{"access_token":"access"}""";
         public List<AuthenticationHeaderValue> AuthorizationHeaders { get; } = [];
+        public List<RecordedRequest> Requests { get; } = [];
         public List<RecordedRequest> ProtectedRequests { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            if (request.RequestUri!.AbsolutePath.EndsWith("openid-configuration", StringComparison.Ordinal))
-                return JsonResponse(DiscoveryJson);
-
-            if (request.Headers.Authorization is not null)
-                AuthorizationHeaders.Add(request.Headers.Authorization);
-
             var requestBody = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);
-            ProtectedRequests.Add(new RecordedRequest(request.RequestUri.ToString(), requestBody));
+            Requests.Add(new RecordedRequest(
+                request.Method.Method,
+                request.RequestUri!.ToString(),
+                request.Headers.Authorization?.ToString(),
+                requestBody));
+
+            if (request.RequestUri.AbsolutePath.EndsWith("openid-configuration", StringComparison.Ordinal))
+                return JsonResponse(DiscoveryJson);
+
+            if (request.Method == HttpMethod.Post)
+            {
+                if (request.Headers.Authorization is not null)
+                    AuthorizationHeaders.Add(request.Headers.Authorization);
+                ProtectedRequests.Add(new RecordedRequest(
+                    request.Method.Method,
+                    request.RequestUri.ToString(),
+                    request.Headers.Authorization?.ToString(),
+                    requestBody));
+            }
 
             if (request.RequestUri.AbsolutePath.EndsWith("/connect/introspect", StringComparison.Ordinal))
                 return JsonResponse("""{"active":true,"sub":"user-1","client_id":"client-id"}""");
+            if (request.RequestUri.AbsolutePath.EndsWith("/connect/revoke", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK);
 
             return JsonResponse(TokenResponseBody);
         }
@@ -225,13 +252,18 @@ public sealed class WorkbenchClientAuthenticationTests
         }
     }
 
-    private sealed record RecordedRequest(string Url, string Body);
+    private sealed record RecordedRequest(
+        string Method,
+        string Url,
+        string? Authorization,
+        string Body);
 
     private const string DiscoveryJson = """
         {
           "issuer":"https://login.example.test/identity",
           "token_endpoint":"https://login.example.test/identity/connect/token",
-          "introspection_endpoint":"https://login.example.test/identity/connect/introspect"
+          "introspection_endpoint":"https://login.example.test/identity/connect/introspect",
+          "revocation_endpoint":"https://login.example.test/identity/connect/revoke"
         }
         """;
 }

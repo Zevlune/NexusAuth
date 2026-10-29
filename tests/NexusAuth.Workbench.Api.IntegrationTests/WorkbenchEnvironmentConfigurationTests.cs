@@ -50,7 +50,6 @@ public sealed class WorkbenchEnvironmentConfigurationTests
     {
         var values = new Dictionary<string, string>
         {
-            ["NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED"] = "true",
             ["NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_NAME"] = "nexusauth.workbench.api",
             ["NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DISPLAY_NAME"] = "Workbench API",
             ["NEXUSAUTH_WORKBENCH_BOOTSTRAP_CLIENT_NAME"] = "Workbench",
@@ -64,7 +63,6 @@ public sealed class WorkbenchEnvironmentConfigurationTests
                 Environment.SetEnvironmentVariable(name, value);
             using var configuration = new ConfigurationManager();
             configuration.AddWorkbenchEnvironmentVariables();
-            Assert.True(configuration.IsWorkbenchGatewayEnabled());
 
             var options = configuration.GetSection("Bootstrap").Get<WorkbenchBootstrapOptions>();
 
@@ -78,6 +76,26 @@ public sealed class WorkbenchEnvironmentConfigurationTests
         {
             foreach (var (name, value) in originalValues)
                 Environment.SetEnvironmentVariable(name, value);
+        }
+    }
+
+    [Fact]
+    public void Retired_gateway_environment_variable_is_not_mapped()
+    {
+        const string variable = "NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED";
+        var originalValue = Environment.GetEnvironmentVariable(variable);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, "true");
+            using var configuration = new ConfigurationManager();
+
+            configuration.AddWorkbenchEnvironmentVariables();
+
+            Assert.Null(configuration["Gateway:Enabled"]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, originalValue);
         }
     }
 }

@@ -5,7 +5,7 @@ NexusAuth 包含身份认证服务和管理工作台两套用途不同的应用�
 | 应用 | 组成 | 用途 | 使用文档 |
 | --- | --- | --- | --- |
 | **NexusAuth.Host** | `src/NexusAuth.Host` | 独立运行的 OAuth/OIDC 身份认证服务器；承载登录、账号安全、令牌签发及身份接口 | [Host 使用手册](document/NexusAuth.Host使用手册.md) |
-| **Workbench + Dashboard** | `admin/src/NexusAuth.Workbench.Api` + `admin/src/NexusAuth.Workbench.Dashboard` | 一套管理工作台；API 默认使用 ASP.NET Core OpenID Connect + Cookie 提供 BFF 登录，Gateway 模式支持 Bearer access token，Dashboard 提供操作界面 | [Workbench 联合使用手册](document/Workbench使用手册.md) |
+| **Workbench + Dashboard** | `admin/src/NexusAuth.Workbench.Api` + `admin/src/NexusAuth.Workbench.Dashboard` | 一套管理工作台；API 使用 ASP.NET Core OpenID Connect + Cookie 提供 BFF 登录，Dashboard 提供操作界面 | [Workbench 联合使用手册](document/Workbench使用手册.md) |
 
 Host 可以单独部署。Workbench 依赖可用的身份认证服务，当前实现与 Host 共用 NexusAuth 数据库；Dashboard 通过 Workbench API 操作管理数据。Dashboard 不能单独承担认证服务的职责。
 
@@ -16,7 +16,6 @@ Host 的应用配置从 `appsettings.json` 和 `appsettings.{环境}.json` 读�
 - **提供统一登录、接入业务系统或调用身份协议**：阅读 [Host 使用手册](document/NexusAuth.Host使用手册.md)，按“独立启动 → 配置 → 协议接入”的顺序操作。
 - **管理用户、客户端、API 资源或审计数据**：阅读 [Workbench 使用手册](document/Workbench使用手册.md)，将 Workbench API 和 Dashboard 作为一套启动和配置。
 - **阅读协议细节**：查看 [OAuth/OIDC 协议设计](document/11-OAuth-OIDC协议设计.md)。
-- **接入 APISIX**：查看 [APISIX 网关对接手册](document/13-APISIX网关对接手册.md)，先核对网关模式与默认 BFF 模式的区别。
 
 ## 安全默认值与本地运行
 
@@ -47,7 +46,7 @@ src/
 admin/src/
   NexusAuth.Workbench.Api/          管理工作台 API 与 BFF
   NexusAuth.Workbench.Dashboard/    管理工作台界面
-  NexusAuth.Extension/              通用 OIDC 薄协议客户端
+  NexusAuth.Extension/              OIDC 流程状态扩展
 
 demo/                              各类业务接入示例
 tests/                             自动化测试

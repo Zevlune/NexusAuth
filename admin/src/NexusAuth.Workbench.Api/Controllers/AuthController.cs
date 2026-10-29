@@ -1,10 +1,7 @@
-using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.Extensions.Options;
 using NexusAuth.Extension;
 using NexusAuth.Workbench.Api.Authorization;
 
@@ -13,11 +10,9 @@ namespace NexusAuth.Workbench.Api.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 public class AuthController(
-    IFlowStateStore flows,
-    INexusAuthClient client,
+    OpenIdConnectFlowState flows,
+    IWorkbenchOidcClient client,
     WorkbenchAuthenticationSettings settings,
-    IOptions<WorkbenchFlowStateOptions> flowOptions,
-    IOptionsMonitor<CookieAuthenticationOptions> cookieOptions,
     ILogger<AuthController> logger) : ControllerBase
 {
     [HttpGet("/api/auth/config")]
@@ -34,29 +29,15 @@ public class AuthController(
     [EnableRateLimiting("workbench-login")]
     public async Task<IActionResult> Login(CancellationToken ct)
     {
-        var flow = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        var binding = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        try
-        {
-            await flows.AddAsync(flow, new FlowState(WorkbenchLoginFlow.Hash(binding)), ct);
-        }
-        catch (FlowStateCapacityExceededException)
-        {
-            Response.Headers.RetryAfter = "60";
-            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "too_many_login_requests" });
-        }
-
-        var cookie = WorkbenchLoginFlow.CookieOptions(HttpContext, cookieOptions, flowOptions.Value.Lifetime);
-        Response.Cookies.Append(WorkbenchLoginFlow.CookieName(flow, cookie.Secure), binding, cookie);
         var properties = new AuthenticationProperties
         {
             RedirectUri = settings.PostLogoutRedirectUri.TrimEnd('/') + "/auth/callback",
             IsPersistent = true,
             AllowRefresh = true,
         };
-        properties.Items[WorkbenchLoginFlow.PropertyKey] = flow;
         try
         {
+            await flows.BeginAsync(HttpContext, properties, WorkbenchAuthenticationDefaults.OpenIdConnectScheme, ct);
             await HttpContext.ChallengeAsync(WorkbenchAuthenticationDefaults.OpenIdConnectScheme, properties);
             var authorizeUrl = Response.Headers.Location.ToString();
             if (string.IsNullOrEmpty(authorizeUrl))
@@ -65,9 +46,14 @@ public class AuthController(
             Response.StatusCode = StatusCodes.Status200OK;
             return Ok(new { authorizeUrl });
         }
+        catch (FlowStateCapacityExceededException)
+        {
+            Response.Headers.RetryAfter = "60";
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "too_many_login_requests" });
+        }
         catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            await flows.RemoveAsync(flow, CancellationToken.None);
+            await flows.CancelAsync(HttpContext, properties, WorkbenchAuthenticationDefaults.OpenIdConnectScheme, CancellationToken.None);
             Response.Headers.Remove("Set-Cookie");
             Response.Headers.Remove("Location");
             logger.LogWarning("Provider discovery failed during login. FailureType={FailureType}", exception.GetType().Name);

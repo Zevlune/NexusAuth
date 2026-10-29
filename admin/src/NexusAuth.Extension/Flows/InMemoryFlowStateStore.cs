@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Options;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Extension;
 
 /// <summary>Bounded, expiring process-local login state shared across request scopes.</summary>
 public sealed class InMemoryFlowStateStore : IFlowStateStore, IDisposable
@@ -16,7 +16,7 @@ public sealed class InMemoryFlowStateStore : IFlowStateStore, IDisposable
 
     /// <summary>Creates a bounded store whose timer is owned by the DI container.</summary>
     public InMemoryFlowStateStore(
-        IOptions<WorkbenchFlowStateOptions> options,
+        IOptions<OpenIdConnectFlowStateOptions> options,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(options);

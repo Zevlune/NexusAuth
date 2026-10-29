@@ -2,9 +2,9 @@
 
 本目录是 NexusAuth Workbench 的源码根，对应解决方案 `admin/NexusAuth.Admin.sln`。Workbench 是一套独立于认证服务器的管理工作台，不是认证服务本身。
 
-- **Workbench API**：`admin/src/NexusAuth.Workbench.Api`，默认使用 ASP.NET Core OpenID Connect + Cookie 的 BFF 登录；启用 Gateway 后接受 Bearer access token，另含管理 API 与 Swagger。
+- **Workbench API**：`admin/src/NexusAuth.Workbench.Api`，固定使用 ASP.NET Core OpenID Connect + Cookie 的 BFF 登录，另含管理 API 与 Swagger。
 - **Dashboard**：`admin/src/NexusAuth.Workbench.Dashboard`，React 管理界面，见 [Dashboard README](./src/NexusAuth.Workbench.Dashboard/README.md)。
-- **接入扩展**：`admin/src/NexusAuth.Extension`，可被其他 .NET 应用复用的 OIDC 薄协议客户端，见 [Extension README](./src/NexusAuth.Extension/README.md)。
+- **流程状态扩展**：`admin/src/NexusAuth.Extension`，与标准 ASP.NET Core `AddOpenIdConnect` 组合使用的可复用流程状态存储，见 [Extension README](./src/NexusAuth.Extension/README.md)。
 
 两套应用的分工：**Workbench API + Dashboard 是一套管理工作台；[NexusAuth.Host](../src/NexusAuth.Host) 是独立的身份认证服务器。** Host 提供登录、授权、令牌和身份协议，可单独运行；Workbench 通过 OIDC 委托 Host 完成人员登录，再管理用户、客户端、资源、凭证和审计。当前实现下两者共用同一个 `nexusauth` 数据库和 schema。
 
@@ -63,9 +63,9 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 | `NEXUSAUTH_WORKBENCH_AUTH_AUDIENCE` | `Auth:Audience` | 是 |
 | `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_ID` | `Auth:ClientId` | 是 |
 | `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET` | `Auth:ClientSecret` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI` | `Auth:RedirectUri` | 非网关模式必填 |
-| `NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI` | `Auth:PostLogoutRedirectUri` | 非网关模式必填 |
-| `NEXUSAUTH_WORKBENCH_AUTH_SCOPE` | `Auth:Scope` | 非网关模式必填 |
+| `NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI` | `Auth:RedirectUri` | 是 |
+| `NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI` | `Auth:PostLogoutRedirectUri` | 是 |
+| `NEXUSAUTH_WORKBENCH_AUTH_SCOPE` | `Auth:Scope` | 是 |
 | `NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA` | `Auth:RequireHttpsMetadata` | 否 |
 | `NEXUSAUTH_WORKBENCH_AUTH_SIGN_OUT_PROVIDER` | `Auth:SignOutProvider` | 否 |
 | `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_PROVIDER` | `Auth:FlowState:Provider` | 否（默认 `InMemory`） |
@@ -80,7 +80,6 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 | `NEXUSAUTH_WORKBENCH_SECURITY_KNOWN_PROXIES` | `Security:KnownProxies` | 启用转发头时二选一 |
 | `NEXUSAUTH_WORKBENCH_SECURITY_KNOWN_NETWORKS` | `Security:KnownNetworks` | 启用转发头时二选一 |
 | `NEXUSAUTH_WORKBENCH_SWAGGER_ENABLED` | `Swagger:Enabled` | 否 |
-| `NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED` | `Gateway:Enabled` | 否 |
 | `NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_NAME` | `Bootstrap:ResourceName` | 是 |
 | `NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DISPLAY_NAME` | `Bootstrap:ResourceDisplayName` | 是 |
 | `NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DESCRIPTION` | `Bootstrap:ResourceDescription` | 否 |
@@ -91,7 +90,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 
 ### 单一 Authority
 
-`Auth:Authority` 是 Workbench 唯一使用的 Provider 基础地址。微软 OIDC handler 用它完成 Discovery、授权跳转和 ID Token 校验；Workbench 的 JWT Bearer handler 用它校验 access token。`NexusAuth.Extension` 使用同一发现文档访问令牌、JWKS、introspection 和撤销端点。它必须与 Provider 的 issuer 完全一致。基础配置为空且 `Auth:RequireHttpsMetadata=true`；其他环境必须使用 HTTPS Authority。
+`Auth:Authority` 是 Workbench 唯一使用的 Provider 基础地址。微软 OIDC handler 用它完成 Discovery、JWKS 获取、授权跳转、授权码兑换和 ID Token 校验；Workbench 内部 `IWorkbenchOidcClient` 也从同一发现文档读取 refresh、introspection 和 revoke 端点。它必须与 Provider 的 issuer 完全一致。基础配置为空且 `Auth:RequireHttpsMetadata=true`；其他环境必须使用 HTTPS Authority。
 
 浏览器和 Workbench API 进程都必须能直接访问同一个 `Auth:Authority`。容器内的 `localhost` 指向容器自身；跨容器部署应使用浏览器和各工作负载都能访问的同一域名或 IP，并通过网络 DNS 或入口路由把它解析到 Provider。不要把 `Auth:Authority` 改成容器服务名，也不要再额外配置内网地址或 HTTP 地址改写。
 
@@ -103,11 +102,11 @@ Swagger 由 `Swagger:Enabled` 控制：未设置时只在 Development 开启，�
 
 ### 自身 Bootstrap
 
-Workbench API 启动时幂等登记自己的 OAuth 客户端和 API resource（见 `WorkbenchClientCredentialHostedService`）：客户端固定使用 `client_secret_basic`、PKCE 必需、grant 为 `authorization_code` + `refresh_token`，scope 为 `openid profile offline_access` 加 `Auth:Audience`；若数据库密钥与 `Auth:ClientSecret` 不一致会按配置同步。`openid`/`profile`/`offline_access` 是静态 scope，不会建成资源。
+Workbench API 启动时幂等登记自己的 OAuth 客户端和 API resource（见 `WorkbenchClientCredentialHostedService`）：客户端固定使用 `client_secret_basic`、PKCE 必需、grant 为 `authorization_code` + `refresh_token`，scope 为 `openid profile offline_access` 加 `Auth:Audience`；`Auth:Audience` 同时作为 API resource 的 audience。若数据库密钥与 `Auth:ClientSecret` 不一致会按配置同步。`openid`/`profile`/`offline_access` 是静态 scope，不会建成资源。
 
 ## 管理接口与权限
 
-管理接口需要 Workbench Cookie 或合法的 Workbench Bearer access token。未登录返回 `401`，已登录但没有管理访问权限返回 `403`。**并非所有接口都是系统管理员专属**：
+管理接口需要 Workbench Cookie。未登录返回 `401`，已登录但没有管理访问权限返回 `403`。**并非所有接口都是系统管理员专属**：
 
 第一档，任何已登录用户可访问（控制器只标 `[Authorize]`）：
 
@@ -139,15 +138,11 @@ Workbench API 启动时幂等登记自己的 OAuth 客户端和 API resource（�
 6. `/api` 与 `/signin-oidc` 响应使用 `Cache-Control: no-store` 和 `Pragma: no-cache`。
 7. Cookie 默认 `SecurePolicy=Always`；Development 为本地 HTTP 显式使用 `SameAsRequest`。Cookie 验证在 access token 距过期超过 1 分钟时执行 introspection，接近过期时用 refresh token 刷新并复检，随后续到新的 24 小时窗口；失败则拒绝并清 Cookie。
 8. `POST /api/auth/logout` 使用最长 5 秒的 best-effort 窗口撤销 refresh token 和 access token；`SignOutProvider=true` 时从 Discovery 获取 endsession 端点并返回带 `id_token_hint`、`post_logout_redirect_uri` 的 `logoutUrl`。无论撤销或 Discovery 是否失败，最终都会清除本地 Cookie。
-9. 默认 BFF 模式的管理请求不带 `Authorization` 时使用 Cookie；带 `Authorization: Bearer` 时由 policy scheme 转交 Workbench 自身的 JWT Bearer handler。网关模式下默认认证方案直接使用该 Bearer handler。
+9. 标准 OIDC handler 负责授权码兑换、nonce 与 ID Token 校验。Workbench 为 token 请求配置专用 `HttpClient` delegating handler，以 `client_secret_basic` 写入认证头；它不接管 `HandleCodeRedemption`，也不重复运行 `ProtocolValidator`。
 
 管理 API 的结果过滤器保留原始 HTTP 状态和 `204 No Content`；未知异常记录日志后返回固定文案的 HTTP 500，不把异常详情返回客户端。
 
-Workbench 在 `NexusAuth.Workbench.Api/Authentication/Flows` 注册流程状态：`services.AddWorkbenchFlowState().UseInMemory()` 为默认方式，`UseRedis()` 用于多实例共享。配置位于 `Auth:FlowState`；Redis 连接、KeyPrefix 和 Database 位于 `Auth:FlowState:Redis`。Redis 实现继续保证浏览器绑定、原子一次消费和跨实例共享容量。多实例部署还必须共享 ASP.NET Core Data Protection key ring。
-
-## 网关模式
-
-`NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED=true` 时，API 只接受网关转发的 Bearer access token，`AuthController` 被移除，`/api/auth/config`、`/api/auth/login`、`/signin-oidc`、`/api/auth/logout` 返回 404，`/api/auth/me` 仍在。Bootstrap 仍登记客户端但不开 grant/回调。Dashboard 不会随该开关切换登录方式，网关登录客户端需另行创建并加入 `Auth:AllowedBearerClientIds`。详见 [Workbench 使用手册第 11 节](../document/Workbench使用手册.md#11-网关模式边界)。
+Workbench 使用 `NexusAuth.Extension` 的流程状态扩展：`services.AddOpenIdConnectFlowState().UseInMemory()` 为默认方式，`UseRedis(...)` 用于多实例共享。配置位于 `Auth:FlowState`；Redis 连接、KeyPrefix 和 Database 位于 `Auth:FlowState:Redis`。Redis 实现继续保证浏览器绑定、原子一次消费和跨实例共享容量。多实例部署还必须共享 ASP.NET Core Data Protection key ring。
 
 ## 构建与部署
 
@@ -167,4 +162,3 @@ Dockerfile：API 为 `admin/src/NexusAuth.Workbench.Api/Dockerfile`（SDK 10 构
 - [Workbench API 统一登录接入模板](../document/Workbench-API统一登录接入模板.md)
 - [Workbench Dashboard 统一登录接入模板](../document/Workbench-Dashboard统一登录接入模板.md)
 - [OAuth/OIDC 协议设计](../document/11-OAuth-OIDC协议设计.md)
-- [APISIX 网关对接手册](../document/13-APISIX网关对接手册.md)

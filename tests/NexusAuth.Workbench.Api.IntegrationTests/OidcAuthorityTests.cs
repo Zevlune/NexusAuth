@@ -1,11 +1,11 @@
 using System.Net;
 using System.Text;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
-using NexusAuth.Extension;
+using NexusAuth.Workbench.Api;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -21,13 +21,15 @@ public sealed class OidcAuthorityTests
         using var recorder = new RequestRecorder(DiscoveryJson);
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<INexusAuthClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
 
         var discovery = await client.FetchConfigurationAsync(CancellationToken.None);
 
-        Assert.Equal(
-            $"{Authority}/.well-known/openid-configuration",
-            Assert.Single(recorder.Requests).RequestUri);
+        var request = Assert.Single(recorder.Requests);
+        Assert.Equal("GET", request.Method);
+        Assert.Equal($"{Authority}/.well-known/openid-configuration", request.RequestUri);
+        Assert.Null(request.Authorization);
+        Assert.Empty(request.Body);
         Assert.Equal(Authority, discovery.Issuer);
         Assert.Equal($"{Authority}/connect/authorize", discovery.AuthorizationEndpoint);
         Assert.Equal($"{Authority}/connect/token", discovery.TokenEndpoint);
@@ -35,23 +37,19 @@ public sealed class OidcAuthorityTests
     }
 
     [Fact]
-    public async Task Authorization_code_exchange_uses_discovered_endpoint_and_basic_authentication()
+    public async Task Refresh_uses_discovered_endpoint_and_basic_authentication()
     {
         using var recorder = new RequestRecorder(
             DiscoveryJson,
-            """{"access_token":"access","refresh_token":"refresh","id_token":"id","expires_in":120}""");
+            """{"access_token":"access","refresh_token":"rotated","id_token":"id","expires_in":120}""");
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<INexusAuthClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
 
-        var result = await client.ExchangeCodeAsync(
-            "authorization-code",
-            "code-verifier",
-            "https://app.example.test/signin-oidc",
-            CancellationToken.None);
+        var result = await client.RefreshTokensAsync("refresh", CancellationToken.None);
 
         Assert.Equal("access", result.AccessToken);
-        Assert.Equal("refresh", result.RefreshToken);
+        Assert.Equal("rotated", result.RefreshToken);
         Assert.Equal("id", result.IdToken);
         Assert.Equal(120, result.ExpiresIn);
         Assert.Equal(
@@ -63,6 +61,11 @@ public sealed class OidcAuthorityTests
         var tokenRequest = recorder.Requests[1];
         Assert.Equal("POST", tokenRequest.Method);
         Assert.Equal($"Basic {ExpectedBasicCredentials}", tokenRequest.Authorization);
+        var form = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery("?" + tokenRequest.Body);
+        Assert.Equal(OpenIdConnectGrantTypes.RefreshToken, form["grant_type"].ToString());
+        Assert.Equal("refresh", form["refresh_token"].ToString());
+        Assert.False(form.ContainsKey("client_id"));
+        Assert.False(form.ContainsKey("client_secret"));
     }
 
     [Fact]
@@ -73,11 +76,9 @@ public sealed class OidcAuthorityTests
             """{"active":true,"sub":"user-1","client_id":"workbench"}""");
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<INexusAuthClient>();
+        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>();
 
-        var result = await client.IntrospectAccessTokenAsync(
-            "access-token",
-            CancellationToken.None);
+        var result = await client.IntrospectAccessTokenAsync("access-token", CancellationToken.None);
 
         Assert.True(result.Active);
         Assert.Equal("user-1", result.Subject);
@@ -106,7 +107,7 @@ public sealed class OidcAuthorityTests
         using var scope = provider.CreateScope();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
                 .FetchConfigurationAsync(CancellationToken.None));
 
         Assert.Contains("issuer", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -122,10 +123,10 @@ public sealed class OidcAuthorityTests
     [InlineData("http://login.example.test/identity")]
     public void Authority_must_be_absolute_https_without_user_info_query_or_fragment(string authority)
     {
-        var exception = Assert.Throws<OptionsValidationException>(() =>
-            CreateValidatedOptions(authority, requireHttps: true));
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            WorkbenchAuthenticationSettings.FromConfiguration(CreateConfiguration(authority)));
 
-        Assert.Contains("Authority must be", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Auth:Authority", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -135,76 +136,87 @@ public sealed class OidcAuthorityTests
         using var recorder = new RequestRecorder($$"""
             {
               "issuer":"{{httpAuthority}}",
-              "token_endpoint":"{{httpAuthority}}/connect/token"
+              "token_endpoint":"{{httpAuthority}}/connect/token",
+              "jwks_uri":"{{httpAuthority}}/.well-known/jwks.json"
             }
-            """);
+            """, """{"keys":[]}""");
         using var provider = CreateProvider(
             recorder,
             authority: httpAuthority,
             requireHttpsMetadata: false);
         using var scope = provider.CreateScope();
 
-        var discovery = await scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+        var discovery = await scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
             .FetchConfigurationAsync(CancellationToken.None);
 
         Assert.Equal(httpAuthority, discovery.Issuer);
-        Assert.Equal(
-            $"{httpAuthority}/.well-known/openid-configuration",
-            Assert.Single(recorder.Requests).RequestUri);
+        var discoveryRequest = Assert.Single(
+            recorder.Requests, request =>
+                request.RequestUri.EndsWith("/.well-known/openid-configuration", StringComparison.Ordinal));
+        Assert.Equal($"{httpAuthority}/.well-known/openid-configuration", discoveryRequest.RequestUri);
+        Assert.Contains(
+            recorder.Requests,
+            request => request.RequestUri == $"{httpAuthority}/.well-known/jwks.json");
+        Assert.All(recorder.Requests, request =>
+        {
+            Assert.Equal("GET", request.Method);
+            Assert.StartsWith($"{httpAuthority}/", request.RequestUri, StringComparison.Ordinal);
+            Assert.Null(request.Authorization);
+            Assert.Empty(request.Body);
+        });
     }
 
     [Fact]
     public async Task Fetch_configuration_honors_cancellation_even_if_manager_ignores_it()
     {
+        var manager = new NeverCompletingConfigurationManager();
         var services = new ServiceCollection();
-        services.AddNexusAuth(options =>
-        {
-            options.Authority = Authority;
-            options.ClientId = "workbench";
-            options.ClientSecret = "client-secret";
-        });
-        services.RemoveAll<IConfigurationManager<OpenIdConnectConfiguration>>();
-        services.AddSingleton<IConfigurationManager<OpenIdConnectConfiguration>>(
-            new NeverCompletingConfigurationManager());
+        services.AddLogging();
+        services.AddWorkbenchAuthentication(CreateConfiguration());
+        services.PostConfigure<OpenIdConnectOptions>(
+            WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
+            options => options.ConfigurationManager = manager);
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
                 .FetchConfigurationAsync(cancellation.Token));
     }
 
     [Fact]
-    public async Task Non_object_discovery_json_becomes_protocol_exception()
+    public async Task Non_object_discovery_json_fails_closed_without_credentials()
     {
         using var recorder = new RequestRecorder("[]");
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
 
-        var exception = await Assert.ThrowsAsync<NexusAuthProtocolException>(() =>
-            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
                 .FetchConfigurationAsync(CancellationToken.None));
 
-        Assert.Equal("invalid_response", exception.Error);
+        Assert.DoesNotContain("client-secret", exception.ToString(), StringComparison.Ordinal);
+        Assert.Null(Assert.Single(recorder.Requests).Authorization);
     }
 
     [Fact]
-    public async Task Discovery_http_error_becomes_protocol_exception_with_status_and_error_code()
+    public async Task Discovery_http_error_fails_closed_without_exposing_credentials()
     {
-        using var recorder = new RequestRecorder("""{"error":"temporarily_unavailable"}""")
+        using var recorder = new RequestRecorder(
+            """{"error":"temporarily_unavailable","client_secret":"client-secret"}""")
         {
             ResponseStatusCode = HttpStatusCode.BadGateway
         };
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
 
-        var exception = await Assert.ThrowsAsync<NexusAuthProtocolException>(() =>
-            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            scope.ServiceProvider.GetRequiredService<IWorkbenchOidcClient>()
                 .FetchConfigurationAsync(CancellationToken.None));
 
-        Assert.Equal("temporarily_unavailable", exception.Error);
-        Assert.Equal(HttpStatusCode.BadGateway, exception.StatusCode);
+        Assert.DoesNotContain("client-secret", exception.ToString(), StringComparison.Ordinal);
+        Assert.Null(Assert.Single(recorder.Requests).Authorization);
     }
 
     [Fact]
@@ -213,7 +225,7 @@ public sealed class OidcAuthorityTests
         using var recorder = new RequestRecorder(DiscoveryJson);
         using var provider = CreateProvider(recorder);
         using var client = provider.GetRequiredService<IHttpClientFactory>()
-            .CreateClient(NexusAuthClient.HttpClientName);
+            .CreateClient(WorkbenchOidcClient.HttpClientName);
 
         Assert.Equal(TimeSpan.FromSeconds(30), client.Timeout);
     }
@@ -224,14 +236,9 @@ public sealed class OidcAuthorityTests
         bool requireHttpsMetadata = true)
     {
         var services = new ServiceCollection();
-        services.AddNexusAuth(options =>
-        {
-            options.Authority = authority;
-            options.ClientId = "workbench";
-            options.ClientSecret = "client-secret";
-            options.RequireHttpsMetadata = requireHttpsMetadata;
-        });
-        services.AddHttpClient(NexusAuthClient.HttpClientName)
+        services.AddLogging();
+        services.AddWorkbenchAuthentication(CreateConfiguration(authority, requireHttpsMetadata));
+        services.AddHttpClient(WorkbenchOidcClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => recorder);
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -240,55 +247,76 @@ public sealed class OidcAuthorityTests
         });
     }
 
-    private static NexusAuthClientOptions CreateValidatedOptions(
-        string authority,
-        bool requireHttps)
+    private static IConfiguration CreateConfiguration(
+        string authority = Authority,
+        bool requireHttpsMetadata = true)
     {
-        var services = new ServiceCollection();
-        services.AddNexusAuth(options =>
-        {
-            options.Authority = authority;
-            options.ClientId = "workbench";
-            options.ClientSecret = "client-secret";
-            options.RequireHttpsMetadata = requireHttps;
-        });
-        using var provider = services.BuildServiceProvider();
-        return provider.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Auth:Authority"] = authority,
+                ["Auth:Audience"] = "workbench.api",
+                ["Auth:ClientId"] = "workbench",
+                ["Auth:ClientSecret"] = "client-secret",
+                ["Auth:RedirectUri"] = "https://app.test/signin-oidc",
+                ["Auth:PostLogoutRedirectUri"] = "https://app.test/",
+                ["Auth:Scope"] = "openid profile offline_access",
+                ["Auth:RequireHttpsMetadata"] = requireHttpsMetadata.ToString()
+            })
+            .Build();
     }
 
     private sealed class RequestRecorder(params string[] responseBodies) : HttpMessageHandler
     {
+        private readonly object gate = new();
         private readonly Queue<string> responses = new(
             responseBodies.Length == 0 ? ["{}"] : responseBodies);
+        private string? lastResponse;
 
         public List<RecordedRequest> Requests { get; } = [];
         public HttpStatusCode ResponseStatusCode { get; init; } = HttpStatusCode.OK;
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            Requests.Add(new RecordedRequest(
-                request.Method.Method,
-                request.RequestUri!.ToString(),
-                request.Headers.Authorization?.ToString()));
-            return Task.FromResult(new HttpResponseMessage(ResponseStatusCode)
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            string responseBody;
+            lock (gate)
             {
-                Content = new StringContent(responses.Dequeue(), Encoding.UTF8, "application/json")
-            });
+                Requests.Add(new RecordedRequest(
+                    request.Method.Method,
+                    request.RequestUri!.ToString(),
+                    request.Headers.Authorization?.ToString(),
+                    body));
+                if (responses.Count > 0)
+                    lastResponse = responses.Dequeue();
+                responseBody = lastResponse ?? "{}";
+            }
+
+            return new HttpResponseMessage(ResponseStatusCode)
+            {
+                Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
+            };
         }
     }
 
-    private sealed record RecordedRequest(string Method, string RequestUri, string? Authorization);
+    private sealed record RecordedRequest(
+        string Method,
+        string RequestUri,
+        string? Authorization,
+        string Body);
 
     private sealed class NeverCompletingConfigurationManager
         : IConfigurationManager<OpenIdConnectConfiguration>
     {
-        private readonly TaskCompletionSource<OpenIdConnectConfiguration> _configuration =
+        private readonly TaskCompletionSource<OpenIdConnectConfiguration> configuration =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken cancel) =>
-            _configuration.Task;
+            configuration.Task;
 
         public void RequestRefresh()
         {

@@ -2,7 +2,6 @@ using Luck.AutoDependencyInjection;
 using Luck.AspNetCore.Extensions;
 using Luck.Logging.Serilog;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using NexusAuth.Persistence;
 using NexusAuth.Workbench.Api;
@@ -17,11 +16,6 @@ try
     builder.Services.AddApiResult();
 
     builder.Services.AddControllers()
-        .ConfigureApplicationPartManager(manager =>
-        {
-            if (builder.Configuration.IsWorkbenchGatewayEnabled())
-                manager.FeatureProviders.Add(new GatewayControllerFeatureProvider());
-        })
         .AddJsonOptions(options =>
         {
             options.JsonSerializerOptions.Converters.Add(new SystemTextJsonConvert.DateTimeConverter());
@@ -30,8 +24,6 @@ try
             options.JsonSerializerOptions.Converters.Add(new SystemTextJsonConvert.DateTimeOffsetNullConverter());
         });
     builder.Services.AddApplication<WorkbenchApiModule>();
-    if (builder.Configuration.IsWorkbenchGatewayEnabled())
-        builder.Services.RemoveAll<IWorkbenchCookieAuthenticationEvents>();
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
