@@ -3,6 +3,10 @@
 This optional package stores pending Workbench OIDC flows in Redis so login initiation and callback
 requests can reach different application instances.
 
+`NexusAuth.Extension` is a standalone integration SDK and does not depend on
+`NexusAuth.Shared` or any server-side project. The core SDK uses standard .NET and OIDC
+packages. Add this optional Redis provider separately when applications need shared flow state.
+
 ## Registration
 
 Use an application-owned multiplexer:

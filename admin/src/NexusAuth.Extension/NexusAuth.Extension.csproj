@@ -7,15 +7,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Keep the SDK independent of the repository's application logging stack. -->
+    <PackageReference Remove="Luck.Logging.Serilog" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="Microsoft.Extensions.Options" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\..\src\NexusAuth.Shared\NexusAuth.Shared.csproj" />
   </ItemGroup>
 
 </Project>

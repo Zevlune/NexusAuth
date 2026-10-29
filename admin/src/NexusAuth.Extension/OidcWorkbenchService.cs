@@ -6,7 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.IdentityModel.Tokens;
-using NexusAuth.Shared.OAuth;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace NexusAuth.Extension;
 
@@ -228,7 +228,7 @@ public class OidcWorkbenchService(
 
         var form = new Dictionary<string, string>
         {
-            ["grant_type"] = OAuthGrantTypes.AuthorizationCode,
+            ["grant_type"] = OpenIdConnectGrantTypes.AuthorizationCode,
             ["code"] = code,
             ["redirect_uri"] = RedirectUri,
             ["code_verifier"] = codeVerifier,
@@ -257,7 +257,7 @@ public class OidcWorkbenchService(
 
         var form = new Dictionary<string, string>
         {
-            ["grant_type"] = OAuthGrantTypes.RefreshToken,
+            ["grant_type"] = OpenIdConnectGrantTypes.RefreshToken,
             ["refresh_token"] = refreshToken,
         };
 
