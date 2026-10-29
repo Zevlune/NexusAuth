@@ -63,7 +63,7 @@ public class WorkbenchApiModule : LuckAppModule
             options.Scope = settings.Scope;
             options.SignOutProvider = settings.SignOutProvider;
             options.RequireHttpsMetadata = settings.RequireHttpsMetadata;
-        });
+        }).UseInMemory();
     }
 
     private static void ConfigureCookieAuthentication(AuthenticationBuilder authentication)

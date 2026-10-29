@@ -116,7 +116,7 @@ public sealed class OidcAuthorityTests
     [InlineData("https://login.example.test/identity#fragment")]
     public void Authority_must_be_an_absolute_http_base_uri(string authority)
     {
-        var exception = Assert.Throws<InvalidOperationException>(() => CreateValidatedOptions(authority));
+        var exception = Assert.Throws<OptionsValidationException>(() => CreateValidatedOptions(authority));
 
         Assert.Contains("Authority must be an absolute HTTP(S) base URI", exception.Message);
     }
@@ -132,21 +132,26 @@ public sealed class OidcAuthorityTests
             options.RedirectUri = "http://localhost:5560/signin-oidc";
             options.PostLogoutRedirectUri = "http://localhost:5560/";
             options.Scope = OidcScopes.OpenId + " " + OidcScopes.Profile;
-        });
+        }).UseInMemory();
         services.AddHttpClient(OidcWorkbenchService.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => recorder);
         return services.BuildServiceProvider();
     }
 
-    private static ValidatedWorkbenchAuthOptions CreateValidatedOptions(string authority) => new(
-        Options.Create(new WorkbenchAuthOptions
+    private static WorkbenchAuthOptions CreateValidatedOptions(string authority)
+    {
+        var services = new ServiceCollection();
+        services.AddNexusAuth(options =>
         {
-            Authority = authority,
-            ClientId = "workbench",
-            RedirectUri = "http://localhost:5560/signin-oidc",
-            PostLogoutRedirectUri = "http://localhost:5560/",
-            Scope = OidcScopes.OpenId + " " + OidcScopes.Profile,
-        }));
+            options.Authority = authority;
+            options.ClientId = "workbench";
+            options.RedirectUri = "http://localhost:5560/signin-oidc";
+            options.PostLogoutRedirectUri = "http://localhost:5560/";
+            options.Scope = OidcScopes.OpenId + " " + OidcScopes.Profile;
+        }).UseInMemory();
+        using var provider = services.BuildServiceProvider();
+        return provider.GetRequiredService<IOptions<WorkbenchAuthOptions>>().Value;
+    }
 
     private sealed class RequestRecorder(params string[] responseBodies) : HttpMessageHandler
     {

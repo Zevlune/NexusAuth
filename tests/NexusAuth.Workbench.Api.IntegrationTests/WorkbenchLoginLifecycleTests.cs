@@ -149,7 +149,11 @@ public sealed class WorkbenchLoginLifecycleTests
     public async Task State_expires_and_frees_capacity_without_consuming_another_browsers_flow()
     {
         var clock = new TestClock();
-        using var store = new InMemoryFlowStateStore(Options.Create(new WorkbenchFlowStateOptions { Capacity = 1 }), clock);
+        var services = new ServiceCollection();
+        services.AddSingleton<TimeProvider>(clock);
+        services.AddNexusAuth(_ => { }).UseInMemory(options => options.Capacity = 1);
+        using var provider = services.BuildServiceProvider();
+        var store = provider.GetRequiredService<IFlowStateStore>();
         await store.AddAsync("state", new FlowState("verifier", "nonce", "binding"));
         Assert.Null(await store.TryTakeAsync("state", "wrong"));
         await Assert.ThrowsAsync<FlowStateCapacityExceededException>(() => store.AddAsync("other", new FlowState("v", "n", "b")));

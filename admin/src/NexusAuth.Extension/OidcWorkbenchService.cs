@@ -22,14 +22,14 @@ public class OidcWorkbenchService(
     IHttpClientFactory httpClientFactory,
     IFlowStateStore flowStateStore,
     IOptions<WorkbenchAuthOptions> authOptions,
-    WorkbenchDiscoveryCache? discoveryCache = null) : IOidcWorkbenchService
+    IWorkbenchDiscoveryCache discoveryCache) : IOidcWorkbenchService
 {
     /// <summary>The named HTTP client configured for OIDC provider backchannel traffic.</summary>
     public const string HttpClientName = "NexusAuth.OidcBackchannel";
 
     private readonly FrontendOptions _frontendOptions = new();
     private readonly WorkbenchAuthOptions _options = authOptions.Value;
-    private readonly WorkbenchDiscoveryCache _discoveryCache = discoveryCache ?? new();
+    private readonly IWorkbenchDiscoveryCache _discoveryCache = discoveryCache;
     private readonly WorkbenchClientCredentials _credentials =
         WorkbenchClientCredentials.FromConfiguration(authOptions.Value.ClientId, authOptions.Value.ClientSecret);
 

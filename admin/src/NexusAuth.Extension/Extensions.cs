@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace NexusAuth.Extension;
 
@@ -9,26 +11,28 @@ namespace NexusAuth.Extension;
 public static class OidcWorkbenchExtensions
 {
     /// <summary>
-    /// 中文：注册 NexusAuth OIDC 配置、HTTP 客户端、流程状态存储和 Workbench 服务。
-    /// English: Registers NexusAuth OIDC options, HTTP clients, flow-state storage, and Workbench services.
+    /// 中文：注册 NexusAuth OIDC 服务，由接入方在返回的构建器上选择流程状态存储。
+    /// English: Registers OIDC services; the caller selects flow-state storage on the returned builder.
     /// </summary>
     /// <param name="services">中文：要添加服务的依赖注入集合。English: The dependency injection collection to which services are added.</param>
     /// <param name="configure">中文：用于配置 Workbench OIDC 客户端的委托。English: A delegate that configures the Workbench OIDC client.</param>
-    /// <returns>中文：同一个服务集合，以支持链式调用。English: The same service collection for call chaining.</returns>
+    /// <returns>A builder for selecting an in-memory, Redis, or custom flow-state provider.</returns>
     /// <exception cref="ArgumentNullException">中文：<paramref name="services"/> 或 <paramref name="configure"/> 为 <see langword="null"/>。English: <paramref name="services"/> or <paramref name="configure"/> is <see langword="null"/>.</exception>
-    public static IServiceCollection AddNexusAuth(
+    public static NexusAuthBuilder AddNexusAuth(
         this IServiceCollection services,
         Action<WorkbenchAuthOptions> configure)
     {
-        services.Configure(configure);
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
+        services.AddOptions<WorkbenchAuthOptions>().Configure(configure).ValidateOnStart();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<WorkbenchAuthOptions>, WorkbenchAuthOptionsValidator>());
         services.AddOptions<WorkbenchFlowStateOptions>();
-        services.AddSingleton<ValidatedWorkbenchAuthOptions>();
-        services.AddSingleton<WorkbenchDiscoveryCache>();
+        services.TryAddSingleton<TimeProvider>(TimeProvider.System);
+        services.TryAddSingleton<IWorkbenchDiscoveryCache, WorkbenchDiscoveryCache>();
 
         services.AddHttpClient(OidcWorkbenchService.HttpClientName);
-        services.AddSingleton<IFlowStateStore, InMemoryFlowStateStore>();
-        services.AddScoped<IOidcWorkbenchService, OidcWorkbenchService>();
+        services.TryAddScoped<IOidcWorkbenchService, OidcWorkbenchService>();
 
-        return services;
+        return new NexusAuthBuilder(services);
     }
 }

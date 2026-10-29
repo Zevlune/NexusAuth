@@ -26,7 +26,7 @@ Workbench API 从 `Auth:Authority` 读取 Provider 公开 Issuer，必须与 Dis
 3. API 消费 `state`，用 verifier 和 `client_secret_basic` 向 `/connect/token` 兑换授权码，按 JWKS 校验 ID Token 的签名、issuer、audience、时效和 nonce。失败时不签发本地会话。
 4. 成功后，API 把用户身份和令牌保存在受保护的 `.NexusAuth.Workbench` HttpOnly Cookie 中，跳转 Dashboard 的 `/auth/callback`。浏览器持有加密票据，页面脚本无法读取其中的明文令牌；客户端密钥保留在服务端。
 
-可复用的协议客户端在 [`NexusAuth.Extension`](../admin/src/NexusAuth.Extension) 中，由 `AddNexusAuth` 注册。它提供 Discovery、PKCE、兑换、校验、刷新和 introspection，但不会自动添加登录端点、Cookie 或前端路由；这些由接入方自行实现。仓库内项目引用方式及注册示例见[Workbench 手册的扩展用法](./Workbench使用手册.md)。
+可复用的协议客户端在 [`NexusAuth.Extension`](../admin/src/NexusAuth.Extension) 中，由 `AddNexusAuth(...).UseInMemory()` 显式选择存储并注册；多实例接入可引用可选 Redis 提供程序，改用 `.UseRedis(...)`，其他存储通过 `.UseFlowStateStore<T>()` 注册。它提供 Discovery、PKCE、兑换、校验、刷新和 introspection，但不会自动添加登录端点、Cookie 或前端路由；这些由接入方自行实现。仓库内项目引用方式及注册示例见[Workbench 手册的扩展用法](./Workbench使用手册.md)。
 
 ## 验证每次请求与续期
 

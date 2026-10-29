@@ -136,7 +136,7 @@ Workbench API 启动时幂等登记自己的 OAuth 客户端和 API resource（�
 
 管理 API 的结果过滤器保留原始 HTTP 状态和 `204 No Content`；未知异常记录日志后返回固定文案的 HTTP 500，不把异常详情返回客户端。
 
-默认流程存储是进程内的。多实例部署必须把同一浏览器的登录发起和回调粘性路由到同一实例，或替换为跨实例共享且支持原子一次消费的 `IFlowStateStore`。所有实例还必须共享 ASP.NET Core Data Protection key ring。
+Workbench API 在接入处通过 `AddNexusAuth(...).UseInMemory()` 显式选择进程内存储。多实例部署必须把同一浏览器的登录发起和回调粘性路由到同一实例，或引用可选的 `NexusAuth.Extension.Redis` 并改用 `.UseRedis(...)`。其他实现通过 `.UseFlowStateStore<T>()` 注册（默认 Scoped）。内存存储与发现缓存通过接口注册为 Singleton，Redis 存储与 OIDC 服务为 Scoped，释放由容器管理。注册示例见 [Workbench 手册](../document/Workbench使用手册.md#63-扩展复用addnexusauth)。所有实例还必须共享 ASP.NET Core Data Protection key ring。
 
 ## 网关模式
 

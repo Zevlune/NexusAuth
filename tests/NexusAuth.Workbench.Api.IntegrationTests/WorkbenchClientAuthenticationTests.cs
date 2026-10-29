@@ -35,7 +35,9 @@ public sealed class WorkbenchClientAuthenticationTests
     {
         var handler = new CapturingHandler();
         using var httpClient = new HttpClient(handler);
-        var service = CreateService(httpClient);
+        using var provider = CreateProvider(httpClient);
+        using var scope = provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<IOidcWorkbenchService>();
 
         switch (operation)
         {
@@ -160,7 +162,9 @@ public sealed class WorkbenchClientAuthenticationTests
 
         var handler = new CapturingHandler();
         using var httpClient = new HttpClient(handler);
-        var oidc = CreateService(httpClient);
+        using var oidcProvider = CreateProvider(httpClient);
+        using var scope = oidcProvider.CreateScope();
+        var oidc = scope.ServiceProvider.GetRequiredService<IOidcWorkbenchService>();
         await oidc.ExchangeCodeAsync("authorization-code", "code-verifier", CancellationToken.None);
 
         var parsed = OAuthClientAuthenticationParser.ResolveClientAuthentication(
@@ -172,20 +176,20 @@ public sealed class WorkbenchClientAuthenticationTests
         Assert.True(client.VerifyClientSecret(parsed.Authentication.ClientSecret!));
     }
 
-    private static OidcWorkbenchService CreateService(HttpClient client)
+    private static ServiceProvider CreateProvider(HttpClient client)
     {
-        return new OidcWorkbenchService(
-            new SingleClientFactory(client),
-            new InMemoryFlowStateStore(),
-            Options.Create(new WorkbenchAuthOptions
-            {
-                Authority = Authority,
-                ClientId = Raw(ExpectedClientId),
-                ClientSecret = Raw(ExpectedClientSecret),
-                RedirectUri = "https://app.test/signin-oidc",
-                PostLogoutRedirectUri = "https://app.test/",
-                Scope = OidcScopes.OpenId + " " + OidcScopes.Profile,
-            }));
+        var services = new ServiceCollection();
+        services.AddNexusAuth(options =>
+        {
+            options.Authority = Authority;
+            options.ClientId = Raw(ExpectedClientId);
+            options.ClientSecret = Raw(ExpectedClientSecret);
+            options.RedirectUri = "https://app.test/signin-oidc";
+            options.PostLogoutRedirectUri = "https://app.test/";
+            options.Scope = OidcScopes.OpenId + " " + OidcScopes.Profile;
+        }).UseInMemory();
+        services.AddSingleton<IHttpClientFactory>(new SingleClientFactory(client));
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
     }
 
     private static string Raw(string value) => $" \t{value}\n ";

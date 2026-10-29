@@ -75,7 +75,7 @@ public sealed class WorkbenchOidcBackchannelTests
             options.RedirectUri = "https://dashboard.example.test/signin-oidc";
             options.PostLogoutRedirectUri = "https://dashboard.example.test/";
             options.Scope = "openid profile";
-        });
+        }).UseInMemory();
         services.AddHttpClient(OidcWorkbenchService.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => handler);
         return services.BuildServiceProvider();
     }

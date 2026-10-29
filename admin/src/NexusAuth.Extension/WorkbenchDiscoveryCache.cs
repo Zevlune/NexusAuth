@@ -1,7 +1,7 @@
 namespace NexusAuth.Extension;
 
 /// <summary>Shares discovery for five minutes and coalesces concurrent requests across service scopes.</summary>
-public sealed class WorkbenchDiscoveryCache : IDisposable
+internal sealed class WorkbenchDiscoveryCache(TimeProvider clock) : IWorkbenchDiscoveryCache, IDisposable
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<string, (DiscoveryDocument Document, DateTimeOffset ExpiresAt)> entries = new(StringComparer.Ordinal);
@@ -12,10 +12,10 @@ public sealed class WorkbenchDiscoveryCache : IDisposable
         await gate.WaitAsync(ct);
         try
         {
-            if (entries.TryGetValue(authority, out var entry) && entry.ExpiresAt > DateTimeOffset.UtcNow)
+            if (entries.TryGetValue(authority, out var entry) && entry.ExpiresAt > clock.GetUtcNow())
                 return entry.Document;
             var document = await load();
-            entries[authority] = (document, DateTimeOffset.UtcNow.AddMinutes(5));
+            entries[authority] = (document, clock.GetUtcNow().AddMinutes(5));
             return document;
         }
         finally { gate.Release(); }

@@ -14,14 +14,14 @@ public sealed class InMemoryFlowStateStore : IFlowStateStore, IDisposable
     private readonly int capacity;
     private readonly ITimer cleanupTimer;
 
-    /// <summary>Creates a bounded store with an optional clock for deterministic expiry.</summary>
-    public InMemoryFlowStateStore(IOptions<WorkbenchFlowStateOptions>? options = null, TimeProvider? timeProvider = null)
+    /// <summary>Creates a bounded store; the container owns the cleanup timer and supplies the clock.</summary>
+    public InMemoryFlowStateStore(IOptions<WorkbenchFlowStateOptions> options, TimeProvider timeProvider)
     {
-        var settings = options?.Value ?? new WorkbenchFlowStateOptions();
+        var settings = options.Value;
         if (settings.Capacity is < 1 or > 100_000 || settings.Lifetime <= TimeSpan.Zero
             || settings.Lifetime > TimeSpan.FromHours(1))
             throw new ArgumentOutOfRangeException(nameof(options), "Login state capacity or lifetime is invalid.");
-        clock = timeProvider ?? TimeProvider.System;
+        clock = timeProvider;
         lifetime = settings.Lifetime;
         capacity = settings.Capacity;
         cleanupTimer = clock.CreateTimer(_ => Cleanup(), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));

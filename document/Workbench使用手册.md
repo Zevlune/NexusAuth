@@ -322,7 +322,7 @@ Swagger 未显式配置时仅在 `Development` 环境注册；其他环境默认
 7. API 用授权码 + verifier 以 `client_secret_basic` 在服务端换取令牌，按 JWKS 校验 ID Token 的签名、issuer、audience、时效和 nonce。校验通过后写入 `.NexusAuth.Workbench` HttpOnly Cookie，并跳转前端 `/auth/callback`。
 8. 之后的管理请求不带 `Authorization` 时走 Cookie；带 `Authorization: Bearer` 时由 policy scheme 转交 JWT Bearer 校验。
 
-默认 `InMemoryFlowStateStore` 是单进程实现。多实例部署必须把同一浏览器的登录发起和回调粘性路由到同一实例，或替换为跨实例共享、支持绑定校验和原子一次消费的 `IFlowStateStore`。所有实例还必须共享 ASP.NET Core Data Protection key ring。
+Workbench API 显式选择的 `UseInMemory()` 使用单进程存储。多实例部署必须把同一浏览器的登录发起和回调粘性路由到同一实例，或替换为跨实例共享、支持绑定校验和原子一次消费的 `IFlowStateStore`。所有实例还必须共享 ASP.NET Core Data Protection key ring。
 
 认证端点与鉴权（源码见 `admin/src/NexusAuth.Workbench.Api/Controllers/AuthController.cs`）：
 
@@ -349,7 +349,7 @@ Workbench API 启动时由 `WorkbenchClientCredentialHostedService` 幂等地登
 
 ### 6.3 扩展复用（AddNexusAuth）
 
-`admin/src/NexusAuth.Extension` 是可选复用项。其他 .NET 应用引用该扩展后调用 `AddNexusAuth(options => { ... })` 即可获得：
+`admin/src/NexusAuth.Extension` 是可选复用项。其他 .NET 应用引用该扩展后调用 `AddNexusAuth(options => { ... })`，并选择流程存储，即可获得：
 
 - OIDC Discovery 文档获取；
 - PKCE 生成（`GeneratePkce`）；
@@ -360,7 +360,62 @@ Workbench API 启动时由 `WorkbenchClientCredentialHostedService` 幂等地登
 - 流程状态原子消费（`IFlowStateStore.TryTakeAsync`，同时校验浏览器绑定并确保一次成功取出后删除）；
 - Discovery 使用 `Auth:Authority`；令牌、JWKS 和 introspection 使用该发现文档声明的原始端点，不执行地址改写。
 
-`AddNexusAuth` 只提供协议能力和一个内存态 `IFlowStateStore`，**不会**自动添加登录端点、回调路由、Cookie 或前端页面。这些需要接入方自行实现，可参考 `AuthController` 与 `WorkbenchApiModule`。如果只想要离线 JWT 校验，另用 `AddNexusAuthJwtBearer`；它只做签名、issuer、audience、有效期和 `token_use=access_token` 校验，不查询吊销状态。
+`AddNexusAuth` 返回 `NexusAuthBuilder`，不再隐式选择存储；已有接入需要在注册末尾增加 `.UseInMemory()`，或选择 Redis / 自定义实现。后续普通 DI 注册可通过原来的 `services` 或 `builder.Services` 继续。它只提供协议能力，**不会**自动添加登录端点、回调路由、Cookie 或前端页面。这些需要接入方自行实现，可参考 `AuthController` 与 `WorkbenchApiModule`。如果只想要离线 JWT 校验，另用 `AddNexusAuthJwtBearer`；它只做签名、issuer、audience、有效期和 `token_use=access_token` 校验，不查询吊销状态。
+
+接入项目显式选择内存存储：
+
+```csharp
+using NexusAuth.Extension;
+
+services.AddNexusAuth(options =>
+{
+    options.Authority = "https://identity.example.com";
+    options.ClientId = "workbench";
+    options.ClientSecret = configuration["Auth:ClientSecret"];
+    options.RedirectUri = "https://app.example.com/signin-oidc";
+    options.PostLogoutRedirectUri = "https://app.example.com/";
+    options.Scope = "openid profile offline_access";
+}).UseInMemory(options =>
+{
+    options.Lifetime = TimeSpan.FromMinutes(10);
+    options.Capacity = 10_000;
+});
+```
+
+多实例应用可额外引用 `admin/src/NexusAuth.Extension.Redis/NexusAuth.Extension.Redis.csproj`，改用 Redis（从 Auth 配置节读取同一套 OIDC 配置）：
+
+```csharp
+using NexusAuth.Extension.Redis;
+
+services.AddNexusAuth(options => configuration.GetSection("Auth").Bind(options))
+.UseRedis(options =>
+{
+    options.Configuration = configuration.GetConnectionString("Redis");
+    options.KeyPrefix = "my-app:workbench:flows";
+});
+```
+
+同一应用的所有实例应使用相同 Redis 数据库、KeyPrefix、Lifetime 和 Capacity，不同应用应使用不同 KeyPrefix。Redis 提供程序通过同一 hash slot 内的 Lua 脚本完成到期清理、容量检查和浏览器绑定校验后的原子消费；这些语义不应被普通的先读取再删除替代。Redis 不保存已完成登录的会话，仍需共享 Data Protection key ring。
+
+如果应用已经通过接口注册 `IConnectionMultiplexer`，可以用无参 `.UseRedis()` 复用连接；需要设置前缀时仍可使用配置重载。提供程序不会覆盖已有的连接注册。连接由应用的 DI 容器管理，存储服务不释放它。
+
+自定义数据库或其他存储可实现 `IFlowStateStore`，然后调用 `.UseFlowStateStore<MyFlowStateStore>()`。默认注册为 Scoped，可直接依赖 Scoped 数据库会话；实现必须让不同请求访问同一份状态，并保证 `TryTakeAsync` 在校验到期时间和浏览器绑定后原子删除。重复选择提供程序时，以最后一次 `Use*` 为准，容器中只保留一条 `IFlowStateStore` 注册。
+
+| 服务 | 生命周期 | 原因 |
+| --- | --- | --- |
+| `IOidcWorkbenchService` | Scoped | 每个请求使用独立协议客户端服务 |
+| Redis / 默认自定义 `IFlowStateStore` | Scoped | 请求内使用存储服务，共享状态保存在外部存储 |
+| 内存 `IFlowStateStore` | Singleton，通过接口注册 | 登录发起与回调跨请求共享同一字典 |
+| `IWorkbenchDiscoveryCache` | Singleton，通过接口注册 | 跨请求缓存发现文档并合并并发加载 |
+| Redis `IConnectionMultiplexer` | Singleton，通过接口注册 | 跨请求共享连接，由容器统一释放 |
+
+业务代码只注入接口，不需要手动创建或释放这些服务。内存清理定时器和缓存同步资源仍由实现负责持有，容器销毁单例时调用其 `Dispose`。Workbench OIDC 配置通过标准 Options 管道在应用启动时校验。
+
+Redis 回归测试默认跳过；可针对独立测试 Redis 执行：
+
+```bash
+NEXUSAUTH_TEST_REDIS=127.0.0.1:16389 dotnet test tests/NexusAuth.Workbench.Api.IntegrationTests/NexusAuth.Workbench.Api.IntegrationTests.csproj --filter FullyQualifiedName~RedisFlowStateStoreTests
+```
 
 ### 6.4 API 结果与错误边界
 
@@ -627,7 +682,7 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 - Provider 登记的 `redirect_uri`、`post_logout_redirect_uri` 与 API 配置逐字符一致，且使用 HTTPS。
 - `Auth:Authority` 使用浏览器和 Workbench API 进程都能直接访问的 HTTPS 地址，并与 Provider issuer 和 token 的 `iss` 完全一致；通过 DNS 或入口路由保证该地址在两端可达。
 - `Auth:Audience` 与 Workbench API resource 的 audience 一致。
-- 多副本共享 Data Protection key ring；默认内存 flow 必须使用粘性路由，或替换为共享且原子一次消费的 `IFlowStateStore`。数据库使用持久卷并备份。
+- 多副本共享 Data Protection key ring；默认内存 flow 必须使用粘性路由，或通过 `UseRedis(...)` / `UseFlowStateStore<T>()` 选择共享且原子一次消费的存储。数据库使用持久卷并备份。
 - `/api` 与 `/signin-oidc` 在应用侧强制 `no-store`，反向代理也应为这两个路径禁用响应缓存。
 - 不提交或在镜像里固化真实 `ClientSecret`；不使用仓库内置的开发密钥；生产不执行 `demo/seed.sql`。
 
