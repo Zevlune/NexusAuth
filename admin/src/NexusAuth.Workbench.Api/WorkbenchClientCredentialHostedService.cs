@@ -2,7 +2,6 @@ using Microsoft.Extensions.Options;
 using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
-using NexusAuth.Extension;
 using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Workbench.Api;

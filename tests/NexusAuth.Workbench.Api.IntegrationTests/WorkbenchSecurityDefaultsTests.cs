@@ -36,7 +36,7 @@ public sealed class WorkbenchSecurityDefaultsTests
         using var factory = CreateFactory();
         var jwt = factory.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
             .Get(WorkbenchAuthenticationDefaults.BearerScheme);
-        var oidc = factory.Services.GetRequiredService<IOptions<WorkbenchAuthOptions>>().Value;
+        var oidc = factory.Services.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
 
         Assert.True(jwt.RequireHttpsMetadata);
         Assert.True(oidc.RequireHttpsMetadata);
@@ -60,7 +60,7 @@ public sealed class WorkbenchSecurityDefaultsTests
             settings: new() { ["Auth:RequireHttpsMetadata"] = "false" });
         var jwt = factory.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
             .Get(WorkbenchAuthenticationDefaults.BearerScheme);
-        var oidc = factory.Services.GetRequiredService<IOptions<WorkbenchAuthOptions>>().Value;
+        var oidc = factory.Services.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
 
         Assert.False(jwt.RequireHttpsMetadata);
         Assert.False(oidc.RequireHttpsMetadata);

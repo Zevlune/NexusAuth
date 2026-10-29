@@ -1,10 +1,11 @@
-namespace NexusAuth.Extension;
+namespace NexusAuth.Workbench.Api;
 
 /// <summary>Limits the lifetime and number of pending browser login flows.</summary>
 public sealed class WorkbenchFlowStateOptions
 {
     /// <summary>Maximum lifetime of a pending flow; defaults to ten minutes.</summary>
     public TimeSpan Lifetime { get; set; } = TimeSpan.FromMinutes(10);
+
     /// <summary>Maximum number of pending flows; defaults to ten thousand.</summary>
     public int Capacity { get; set; } = 10_000;
 }
@@ -13,5 +14,7 @@ public sealed class WorkbenchFlowStateOptions
 public sealed class FlowStateCapacityExceededException : InvalidOperationException
 {
     /// <summary>Creates a capacity error without including login state or credentials.</summary>
-    public FlowStateCapacityExceededException() : base("Too many pending login requests.") { }
+    public FlowStateCapacityExceededException() : base("Too many pending login requests.")
+    {
+    }
 }

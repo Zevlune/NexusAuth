@@ -1,9 +1,8 @@
-using System.Collections.Concurrent;
 using System.Globalization;
-using System.Threading;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Extensions.Options;
 using NexusAuth.Extension;
 
 namespace NexusAuth.Workbench.Api;
@@ -12,27 +11,17 @@ namespace NexusAuth.Workbench.Api;
 /// Keeps the Workbench authentication ticket alive while rotating its OIDC tokens.
 /// </summary>
 public class WorkbenchCookieAuthenticationEvents(
-    IOidcWorkbenchService oidcService) : CookieAuthenticationEvents, IWorkbenchCookieAuthenticationEvents
+    INexusAuthClient oidcService,
+    IOptions<NexusAuthClientOptions> clientOptions,
+    IWorkbenchTokenRefreshCoordinator refreshCoordinator) : CookieAuthenticationEvents, IWorkbenchCookieAuthenticationEvents
 {
     private static readonly TimeSpan AccessTokenRefreshWindow = TimeSpan.FromMinutes(1);
-    private static readonly TimeSpan CompletedRefreshRetention = TimeSpan.FromSeconds(5);
-    private static readonly ConcurrentDictionary<string, Lazy<Task<WorkbenchTokenResult>>> RefreshFlights = new(StringComparer.Ordinal);
-
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {
         if (context.Principal is null)
         {
             await RejectAndSignOutAsync(context);
             return;
-        }
-
-        // Keep old tickets readable after the ticket format changed. The token
-        // properties below are present on all newly issued tickets.
-        var compactPrincipal = WorkbenchPrincipalFactory.CompactLegacyPrincipal(context.Principal);
-        if (compactPrincipal is not null)
-        {
-            context.ReplacePrincipal(compactPrincipal);
-            context.ShouldRenew = true;
         }
 
         var refreshToken = context.Properties.GetTokenValue("refresh_token");
@@ -66,7 +55,7 @@ public class WorkbenchCookieAuthenticationEvents(
                 var subject = context.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (!introspection.Active
                     || !string.Equals(introspection.Subject, subject, StringComparison.Ordinal)
-                    || !string.Equals(introspection.ClientId, oidcService.ClientId, StringComparison.Ordinal))
+                    || !string.Equals(introspection.ClientId, clientOptions.Value.ClientId, StringComparison.Ordinal))
                 {
                     await RejectAndSignOutAsync(context);
                 }
@@ -80,12 +69,14 @@ public class WorkbenchCookieAuthenticationEvents(
 
         try
         {
-            var refreshed = await RefreshWithSingleFlightAsync(
+            var refreshed = await refreshCoordinator.RefreshAsync(
                 refreshToken,
                 context.HttpContext.RequestAborted);
             var idToken = refreshed.IdToken ?? context.Properties.GetTokenValue("id_token");
+            var nextRefreshToken = refreshed.RefreshToken ?? refreshToken;
             if (string.IsNullOrWhiteSpace(refreshed.AccessToken)
-                || string.IsNullOrWhiteSpace(refreshed.RefreshToken)
+                || refreshed.ExpiresIn <= 0
+                || string.IsNullOrWhiteSpace(nextRefreshToken)
                 || string.IsNullOrWhiteSpace(idToken))
             {
                 throw new InvalidOperationException("The refresh response did not contain the required tokens.");
@@ -98,7 +89,7 @@ public class WorkbenchCookieAuthenticationEvents(
                 refreshed.AccessToken, context.HttpContext.RequestAborted);
             if (!introspection.Active
                 || !string.Equals(introspection.Subject, context.Principal.FindFirstValue(ClaimTypes.NameIdentifier), StringComparison.Ordinal)
-                || !string.Equals(introspection.ClientId, oidcService.ClientId, StringComparison.Ordinal))
+                || !string.Equals(introspection.ClientId, clientOptions.Value.ClientId, StringComparison.Ordinal))
                 throw new InvalidOperationException("The refreshed token is no longer active.");
 
             var refreshedExpiresAt = DateTimeOffset.UtcNow.AddSeconds(refreshed.ExpiresIn);
@@ -107,7 +98,7 @@ public class WorkbenchCookieAuthenticationEvents(
                 .Concat(
                 [
                     new AuthenticationToken { Name = "access_token", Value = refreshed.AccessToken },
-                    new AuthenticationToken { Name = "refresh_token", Value = refreshed.RefreshToken },
+                    new AuthenticationToken { Name = "refresh_token", Value = nextRefreshToken },
                     new AuthenticationToken { Name = "id_token", Value = idToken },
                     new AuthenticationToken { Name = "expires_at", Value = refreshedExpiresAt.ToString("O", CultureInfo.InvariantCulture) },
                 ]);
@@ -125,41 +116,6 @@ public class WorkbenchCookieAuthenticationEvents(
         {
             await RejectAndSignOutAsync(context);
         }
-    }
-
-    private async Task<WorkbenchTokenResult> RefreshWithSingleFlightAsync(
-        string refreshToken,
-        CancellationToken requestCancellation)
-    {
-        var refresh = RefreshFlights.GetOrAdd(
-            refreshToken,
-            token => new Lazy<Task<WorkbenchTokenResult>>(
-                () => RefreshAndRetainAsync(token),
-                LazyThreadSafetyMode.ExecutionAndPublication));
-        var task = refresh.Value;
-
-        // The underlying rotation request is intentionally independent from a
-        // single request's disconnect. Other concurrent requests can still use
-        // the one result and receive the same rotated refresh token.
-        return await task.WaitAsync(requestCancellation);
-    }
-
-    private async Task<WorkbenchTokenResult> RefreshAndRetainAsync(string refreshToken)
-    {
-        try
-        {
-            return await oidcService.RefreshTokensAsync(refreshToken, CancellationToken.None);
-        }
-        finally
-        {
-            _ = RemoveRefreshFlightLaterAsync(refreshToken);
-        }
-    }
-
-    private static async Task RemoveRefreshFlightLaterAsync(string refreshToken)
-    {
-        await Task.Delay(CompletedRefreshRetention);
-        RefreshFlights.TryRemove(refreshToken, out _);
     }
 
     private static async Task RejectAndSignOutAsync(CookieValidatePrincipalContext context)

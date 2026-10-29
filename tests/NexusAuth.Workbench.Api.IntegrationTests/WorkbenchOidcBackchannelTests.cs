@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using NexusAuth.Extension;
 using Xunit;
 
@@ -13,55 +15,91 @@ public sealed class WorkbenchOidcBackchannelTests
     [Fact]
     public async Task Revocation_uses_discovered_endpoint_encoded_basic_credentials_and_correct_form()
     {
-        using var recorder = new ProviderHandler();
-        using var services = CreateProvider(recorder);
+        using var handler = new ProviderHandler();
+        using var services = CreateProvider(handler);
         using var scope = services.CreateScope();
-        var oidc = scope.ServiceProvider.GetRequiredService<IOidcWorkbenchService>();
-        await oidc.RevokeTokenAsync("refresh+secret&value", "refresh_token", CancellationToken.None);
-        var request = Assert.Single(recorder.Revocations);
+        var client = scope.ServiceProvider.GetRequiredService<INexusAuthClient>();
+
+        await client.RevokeTokenAsync("refresh+secret&value", "refresh_token", CancellationToken.None);
+
+        var request = Assert.Single(handler.Revocations);
         Assert.Equal("https://issuer.example.test/custom/revoke", request.Url);
         var form = QueryHelpers.ParseQuery("?" + request.Body);
         Assert.Equal("refresh+secret&value", form["token"].ToString());
         Assert.Equal("refresh_token", form["token_type_hint"].ToString());
-        var credentials = Encoding.UTF8.GetString(Convert.FromBase64String(request.Authorization!["Basic ".Length..]));
+        var credentials = Encoding.UTF8.GetString(
+            Convert.FromBase64String(request.Authorization!["Basic ".Length..]));
         Assert.Equal("workbench:secret%2Bvalue", credentials);
     }
 
     [Fact]
-    public async Task Discovery_is_shared_between_scopes_and_concurrent_login_requests()
+    public async Task Configuration_manager_and_jwks_are_shared_across_scopes()
     {
-        using var recorder = new ProviderHandler();
-        using var services = CreateProvider(recorder);
-        await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ =>
+        using var handler = new ProviderHandler();
+        using var services = CreateProvider(handler);
+        var manager = services.GetRequiredService<IConfigurationManager<OpenIdConnectConfiguration>>();
+
+        var configurations = await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ =>
         {
             using var scope = services.CreateScope();
-            await scope.ServiceProvider.GetRequiredService<IOidcWorkbenchService>().FetchDiscoveryAsync(CancellationToken.None);
+            Assert.Same(
+                manager,
+                scope.ServiceProvider.GetRequiredService<IConfigurationManager<OpenIdConnectConfiguration>>());
+            return await scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+                .FetchConfigurationAsync(CancellationToken.None);
         }));
-        Assert.Equal(1, recorder.DiscoveryRequests);
+
+        Assert.Equal(1, handler.DiscoveryRequests);
+        Assert.Equal(1, handler.JwksRequests);
+        Assert.All(configurations, configuration => Assert.Same(configurations[0], configuration));
     }
 
     [Theory]
     [InlineData("http://issuer.example.test/custom/revoke", "https://issuer.example.test")]
     [InlineData("https://issuer.example.test/custom/revoke", "https://other.example.test")]
     [InlineData("https://user:password@issuer.example.test/custom/revoke", "https://issuer.example.test")]
-    public async Task Invalid_provider_metadata_cannot_receive_token_credentials(string endpoint, string issuer)
+    [InlineData("https://issuer.example.test/custom/revoke#fragment", "https://issuer.example.test")]
+    public async Task Invalid_provider_metadata_cannot_receive_token_credentials(
+        string endpoint,
+        string issuer)
     {
-        using var recorder = new ProviderHandler { RevocationEndpoint = endpoint, Issuer = issuer };
-        using var services = CreateProvider(recorder);
+        using var handler = new ProviderHandler
+        {
+            RevocationEndpoint = endpoint,
+            Issuer = issuer
+        };
+        using var services = CreateProvider(handler);
         using var scope = services.CreateScope();
-        await Assert.ThrowsAnyAsync<Exception>(() => scope.ServiceProvider.GetRequiredService<IOidcWorkbenchService>()
-            .RevokeTokenAsync("private-token", "refresh_token", CancellationToken.None));
-        Assert.Empty(recorder.Revocations);
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+                .RevokeTokenAsync("private-token", "refresh_token", CancellationToken.None));
+
+        Assert.Empty(handler.Revocations);
     }
 
     [Fact]
-    public async Task Provider_failure_is_reported_to_the_logout_caller()
+    public async Task OAuth_error_code_is_preserved_without_exposing_response_or_secret()
     {
-        using var recorder = new ProviderHandler { RevocationStatus = HttpStatusCode.ServiceUnavailable };
-        using var services = CreateProvider(recorder);
+        const string secret = "secret+value";
+        const string description = "provider reflected secret+value";
+        using var handler = new ProviderHandler
+        {
+            RevocationStatus = HttpStatusCode.BadRequest,
+            RevocationError = "invalid_token",
+            RevocationErrorDescription = description
+        };
+        using var services = CreateProvider(handler);
         using var scope = services.CreateScope();
-        await Assert.ThrowsAsync<HttpRequestException>(() => scope.ServiceProvider.GetRequiredService<IOidcWorkbenchService>()
-            .RevokeTokenAsync("refresh", "refresh_token", CancellationToken.None));
+
+        var exception = await Assert.ThrowsAsync<NexusAuthProtocolException>(() =>
+            scope.ServiceProvider.GetRequiredService<INexusAuthClient>()
+                .RevokeTokenAsync("refresh", "refresh_token", CancellationToken.None));
+
+        Assert.Equal("invalid_token", exception.Error);
+        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(description, exception.ToString(), StringComparison.Ordinal);
     }
 
     private static ServiceProvider CreateProvider(ProviderHandler handler)
@@ -72,37 +110,73 @@ public sealed class WorkbenchOidcBackchannelTests
             options.Authority = "https://issuer.example.test";
             options.ClientId = "workbench";
             options.ClientSecret = "secret+value";
-            options.RedirectUri = "https://dashboard.example.test/signin-oidc";
-            options.PostLogoutRedirectUri = "https://dashboard.example.test/";
-            options.Scope = "openid profile";
-        }).UseInMemory();
-        services.AddHttpClient(OidcWorkbenchService.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => handler);
-        return services.BuildServiceProvider();
+        });
+        services.AddHttpClient(NexusAuthClient.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        return services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateScopes = true,
+            ValidateOnBuild = true
+        });
     }
 
     private sealed class ProviderHandler : HttpMessageHandler
     {
         public int DiscoveryRequests;
-        public string Issuer = "https://issuer.example.test";
-        public string RevocationEndpoint = "https://issuer.example.test/custom/revoke";
-        public HttpStatusCode RevocationStatus = HttpStatusCode.OK;
+        public int JwksRequests;
+        public string Issuer { get; init; } = "https://issuer.example.test";
+        public string RevocationEndpoint { get; init; } =
+            "https://issuer.example.test/custom/revoke";
+        public HttpStatusCode RevocationStatus { get; init; } = HttpStatusCode.OK;
+        public string? RevocationError { get; init; }
+        public string? RevocationErrorDescription { get; init; }
         public List<(string Url, string Body, string? Authorization)> Revocations { get; } = [];
 
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken ct)
         {
             if (request.RequestUri!.AbsolutePath.EndsWith("openid-configuration", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref DiscoveryRequests);
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                return JsonResponse(JsonSerializer.Serialize(new
                 {
-                    Content = new StringContent(JsonSerializer.Serialize(new
-                    {
-                        issuer = Issuer, revocation_endpoint = RevocationEndpoint,
-                    }), Encoding.UTF8, "application/json"),
-                };
+                    issuer = Issuer,
+                    jwks_uri = "https://issuer.example.test/.well-known/jwks.json",
+                    revocation_endpoint = RevocationEndpoint
+                }));
             }
-            Revocations.Add((request.RequestUri.ToString(), await request.Content!.ReadAsStringAsync(ct), request.Headers.Authorization?.ToString()));
-            return new HttpResponseMessage(RevocationStatus) { Content = new StringContent(string.Empty) };
+
+            if (request.RequestUri.AbsolutePath.EndsWith("jwks.json", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref JwksRequests);
+                return JsonResponse("""{"keys":[]}""");
+            }
+
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(ct);
+            Revocations.Add((
+                request.RequestUri.ToString(),
+                body,
+                request.Headers.Authorization?.ToString()));
+            return RevocationStatus == HttpStatusCode.OK
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                : JsonResponse(JsonSerializer.Serialize(new
+                {
+                    error = RevocationError,
+                    error_description = RevocationErrorDescription
+                }), RevocationStatus);
+        }
+
+        private static HttpResponseMessage JsonResponse(
+            string body,
+            HttpStatusCode statusCode = HttpStatusCode.OK)
+        {
+            return new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
         }
     }
 }

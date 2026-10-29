@@ -1,33 +1,18 @@
 using System.Security.Claims;
-using NexusAuth.Extension;
 
 namespace NexusAuth.Workbench.Api;
 
 internal static class WorkbenchPrincipalFactory
 {
-    public static ClaimsPrincipal Create(ValidatedIdToken idToken)
+    public static ClaimsPrincipal Create(ClaimsPrincipal validatedPrincipal)
     {
-        ArgumentNullException.ThrowIfNull(idToken);
-        var name = idToken.Name ?? idToken.PreferredUsername ?? idToken.Subject;
-
-        var identity = new ClaimsIdentity(
-            [
-                new Claim(ClaimTypes.NameIdentifier, idToken.Subject),
-                new Claim(ClaimTypes.Name, name),
-            ],
-            WorkbenchAuthenticationDefaults.CookieScheme);
-
-        return new ClaimsPrincipal(identity);
-    }
-
-    public static ClaimsPrincipal? CompactLegacyPrincipal(ClaimsPrincipal? principal)
-    {
-        if (principal?.FindFirst("access_token") is null
-            && principal?.FindFirstValue(ClaimTypes.NameIdentifier)?.StartsWith("eyJ", StringComparison.Ordinal) != true)
-        {
-            return null;
-        }
-
-        return null;
+        var subject = validatedPrincipal.FindFirstValue("sub");
+        if (string.IsNullOrWhiteSpace(subject))
+            throw new InvalidOperationException("The ID token does not contain a subject.");
+        var name = validatedPrincipal.FindFirstValue("name")
+            ?? validatedPrincipal.FindFirstValue("preferred_username") ?? subject;
+        return new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, subject), new Claim(ClaimTypes.Name, name)],
+            WorkbenchAuthenticationDefaults.CookieScheme));
     }
 }

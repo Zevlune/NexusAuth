@@ -1,12 +1,21 @@
+using System.Collections.Concurrent;
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
 using NexusAuth.Workbench.Api;
 using Xunit;
@@ -15,29 +24,63 @@ namespace NexusAuth.Workbench.Api.IntegrationTests;
 
 public sealed class WorkbenchLoginLifecycleTests
 {
+    private const string Authority = "https://issuer.example.test";
+    private const string Audience = "nexusauth.workbench.api";
+    private const string ClientId = "workbench";
+    private const string RedirectUri = "https://dashboard.example.test/signin-oidc";
+    private const string PostLogoutRedirectUri = "https://dashboard.example.test/";
+    private const string WorkbenchBindingCookiePrefix = "__Host-NexusAuth.Workbench.Oidc.";
+    private const string CorrelationCookiePrefix = ".AspNetCore.Correlation.";
+    private const string NonceCookiePrefix = ".AspNetCore.OpenIdConnect.Nonce.";
+
+    [Fact]
+    public async Task Begin_login_returns_bound_native_cookies_and_pkce_s256()
+    {
+        using var harness = new Harness();
+        var login = await harness.BeginLogin();
+        var query = QueryHelpers.ParseQuery(login.AuthorizeUrl.Query);
+
+        Assert.Equal(3, login.SetCookieHeaders.Count);
+        Assert.Contains("max-age=600", login.BindingCookieHeader, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("S256", query["code_challenge_method"].ToString());
+        Assert.False(string.IsNullOrWhiteSpace(query["code_challenge"]));
+        Assert.Equal(login.Nonce, query["nonce"].ToString());
+        Assert.Equal(RedirectUri, query["redirect_uri"].ToString());
+
+        using var callback = await harness.Callback(login);
+        AssertCallbackSucceeded(callback);
+
+        var exchange = Assert.Single(harness.Provider.Exchanges);
+        var expectedChallenge = WebEncoders.Base64UrlEncode(
+            SHA256.HashData(Encoding.UTF8.GetBytes(exchange.CodeVerifier)));
+        Assert.Equal(query["code_challenge"].ToString(), expectedChallenge);
+        Assert.Equal(RedirectUri, exchange.RedirectUri);
+    }
+
     [Fact]
     public async Task Callback_requires_the_initiating_browser_and_cannot_be_replayed()
     {
         using var harness = new Harness();
         var login = await harness.BeginLogin();
-        Assert.Contains("httponly", login.Header.ToLowerInvariant());
-        Assert.Contains("samesite=lax", login.Header.ToLowerInvariant());
-        Assert.Contains("secure", login.Header.ToLowerInvariant());
-        Assert.Contains("max-age=600", login.Header.ToLowerInvariant());
-        Assert.DoesNotContain("verifier", login.Header);
 
         using var noCookie = await harness.Callback(login.State);
-        Assert.Contains("invalid_callback", noCookie.Headers.Location!.ToString());
-        using var wrongCookie = await harness.Callback(login.State, login.Cookie.Split('=')[0] + "=" + new string('0', 64));
-        Assert.Contains("invalid_callback", wrongCookie.Headers.Location!.ToString());
-        Assert.Equal(0, harness.Provider.Exchanges);
+        AssertCallbackRejected(noCookie, "invalid_callback");
+        Assert.Equal(0, harness.Provider.ExchangeCount);
 
-        using var legitimate = await harness.Callback(login.State, login.Cookie);
-        Assert.Equal("https://dashboard.example.test/auth/callback", legitimate.Headers.Location!.ToString());
-        Assert.Contains(legitimate.Headers.GetValues("Set-Cookie"), value => value.Contains(".NexusAuth.Workbench="));
-        using var replay = await harness.Callback(login.State, login.Cookie);
-        Assert.Contains("invalid_callback", replay.Headers.Location!.ToString());
-        Assert.Equal(1, harness.Provider.Exchanges);
+        var wrongBinding = new Dictionary<string, string>(login.Cookies, StringComparer.Ordinal);
+        var bindingCookieName = Assert.Single(
+            wrongBinding.Keys,
+            name => name.StartsWith(WorkbenchBindingCookiePrefix, StringComparison.Ordinal));
+        wrongBinding[bindingCookieName] = new string('0', 64);
+        using var wrongCookie = await harness.Callback(login.State, wrongBinding);
+        AssertCallbackRejected(wrongCookie, "invalid_callback");
+        Assert.Equal(0, harness.Provider.ExchangeCount);
+
+        using var legitimate = await harness.Callback(login);
+        AssertCallbackSucceeded(legitimate);
+        using var replay = await harness.Callback(login);
+        AssertCallbackRejected(replay, "invalid_callback");
+        Assert.Equal(1, harness.Provider.ExchangeCount);
     }
 
     [Fact]
@@ -45,13 +88,18 @@ public sealed class WorkbenchLoginLifecycleTests
     {
         using var harness = new Harness();
         var login = await harness.BeginLogin();
-        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => harness.Callback(login.State, login.Cookie)));
+        var responses = await Task.WhenAll(
+            Enumerable.Range(0, 8).Select(_ => harness.Callback(login)));
         try
         {
-            Assert.Single(responses, response => response.Headers.Location!.AbsolutePath == "/auth/callback");
-            Assert.Equal(1, harness.Provider.Exchanges);
+            Assert.Single(responses, IsSuccessfulCallback);
+            Assert.Equal(1, harness.Provider.ExchangeCount);
         }
-        finally { foreach (var response in responses) response.Dispose(); }
+        finally
+        {
+            foreach (var response in responses)
+                response.Dispose();
+        }
     }
 
     [Fact]
@@ -59,13 +107,21 @@ public sealed class WorkbenchLoginLifecycleTests
     {
         using var harness = new Harness();
         var login = await harness.BeginLogin();
+
         using var invalid = await harness.Callback(login.State, error: "access_denied");
-        Assert.Contains("invalid_callback", invalid.Headers.Location!.ToString());
-        using var rejected = await harness.Callback(login.State, login.Cookie, error: "access_denied");
+        AssertCallbackRejected(invalid, "invalid_callback");
+
+        using var rejected = await harness.Callback(login, error: "access_denied");
+        Assert.Equal(HttpStatusCode.Redirect, rejected.StatusCode);
         Assert.Equal("/oauth/error", rejected.Headers.Location!.AbsolutePath);
-        using var replay = await harness.Callback(login.State, login.Cookie);
-        Assert.Contains("invalid_callback", replay.Headers.Location!.ToString());
-        Assert.Equal(0, harness.Provider.Exchanges);
+        Assert.Equal(
+            "access_denied",
+            QueryHelpers.ParseQuery(rejected.Headers.Location.Query)["error"].ToString());
+        AssertNoSessionCookie(rejected);
+
+        using var replay = await harness.Callback(login);
+        AssertCallbackRejected(replay, "invalid_callback");
+        Assert.Equal(0, harness.Provider.ExchangeCount);
     }
 
     [Fact]
@@ -75,12 +131,14 @@ public sealed class WorkbenchLoginLifecycleTests
         harness.Provider.FailDiscovery = true;
         using var failed = await harness.Client.GetAsync("/api/auth/login");
         Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+        Assert.Equal(1, harness.Provider.Discoveries);
+
         harness.Provider.FailDiscovery = false;
         _ = await harness.BeginLogin();
-        var calls = harness.Provider.Discoveries;
+        var discoveries = harness.Provider.Discoveries;
         using var full = await harness.Client.GetAsync("/api/auth/login");
         Assert.Equal(HttpStatusCode.TooManyRequests, full.StatusCode);
-        Assert.Equal(calls, harness.Provider.Discoveries);
+        Assert.Equal(discoveries, harness.Provider.Discoveries);
     }
 
     [Fact]
@@ -92,38 +150,125 @@ public sealed class WorkbenchLoginLifecycleTests
             using var response = await harness.Client.GetAsync("/api/auth/login");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
+
         using var rejected = await harness.Client.GetAsync("/api/auth/login");
         Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
         Assert.Equal(20, harness.Provider.Discoveries);
     }
 
     [Theory]
+    [InlineData("nonce")]
+    [InlineData("issuer")]
+    [InlineData("signature")]
+    [InlineData("expired")]
+    [InlineData("unsigned")]
+    [InlineData("audience")]
+    [InlineData("missing_nonce")]
+    [InlineData("missing_subject")]
+    public async Task Invalid_id_tokens_cannot_create_a_session_cookie(string failure)
+    {
+        using var harness = new Harness();
+        var login = await harness.BeginLogin();
+        harness.Provider.IdTokenFailure = failure;
+
+        using var response = await harness.Callback(login);
+
+        AssertCallbackRejected(response, "token_exchange_failed");
+        AssertNoSessionCookie(response);
+        Assert.Equal(1, harness.Provider.ExchangeCount);
+    }
+
+    [Fact]
+    public async Task Tampered_state_is_rejected_without_consuming_the_legitimate_flow()
+    {
+        using var harness = new Harness();
+        var login = await harness.BeginLogin();
+        var tamperedState = login.State[..^1] + (login.State[^1] == 'A' ? 'B' : 'A');
+
+        using var tampered = await harness.Callback(tamperedState, login.Cookies);
+        AssertCallbackRejected(tampered, "invalid_callback");
+        AssertNoSessionCookie(tampered);
+        Assert.Equal(0, harness.Provider.ExchangeCount);
+
+        using var legitimate = await harness.Callback(login);
+        AssertCallbackSucceeded(legitimate);
+        Assert.Equal(1, harness.Provider.ExchangeCount);
+    }
+
+    [Fact]
+    public async Task Missing_native_correlation_cookie_is_rejected_after_binding_is_consumed()
+    {
+        using var harness = new Harness();
+        var login = await harness.BeginLogin();
+        var withoutCorrelation = login.CookiesWithout(CorrelationCookiePrefix);
+
+        using var missing = await harness.Callback(login.State, withoutCorrelation);
+        AssertCallbackRejected(missing, "invalid_callback");
+        AssertNoSessionCookie(missing);
+        Assert.Equal(0, harness.Provider.ExchangeCount);
+
+        using var replay = await harness.Callback(login);
+        AssertCallbackRejected(replay, "invalid_callback");
+        Assert.Equal(0, harness.Provider.ExchangeCount);
+    }
+
+    [Fact]
+    public async Task Missing_native_nonce_cookie_is_rejected_after_code_exchange()
+    {
+        using var harness = new Harness();
+        var login = await harness.BeginLogin();
+        var withoutNonce = login.CookiesWithout(NonceCookiePrefix);
+
+        using var missing = await harness.Callback(login.State, withoutNonce);
+        AssertCallbackRejected(missing, "token_exchange_failed");
+        AssertNoSessionCookie(missing);
+        Assert.Equal(1, harness.Provider.ExchangeCount);
+
+        using var replay = await harness.Callback(login);
+        AssertCallbackRejected(replay, "invalid_callback");
+        Assert.Equal(1, harness.Provider.ExchangeCount);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]
-    public async Task Logout_revokes_both_tokens_and_always_removes_the_local_cookie(bool failRevocation, bool localOnly)
+    public async Task Logout_revokes_both_tokens_and_always_removes_the_local_cookie(
+        bool failRevocation,
+        bool localOnly)
     {
-        using var harness = new Harness();
-        harness.Provider.SignOutProvider = !localOnly;
+        using var harness = new Harness(signOutProvider: !localOnly);
         var login = await harness.BeginLogin();
-        using var signedIn = await harness.Callback(login.State, login.Cookie);
-        var sessionCookie = signedIn.Headers.GetValues("Set-Cookie")
-            .Single(value => value.StartsWith(".NexusAuth.Workbench=", StringComparison.Ordinal)).Split(';')[0];
+        using var signedIn = await harness.Callback(login);
+        AssertCallbackSucceeded(signedIn);
+        var sessionCookie = SessionCookie(signedIn);
+
         harness.Provider.FailRevocation = failRevocation;
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout");
         request.Headers.Add("Cookie", sessionCookie);
         using var loggedOut = await harness.Client.SendAsync(request);
+
         Assert.Equal(HttpStatusCode.OK, loggedOut.StatusCode);
-        Assert.Equal(new[] { "refresh_token:refresh", "access_token:access" }, harness.Provider.Revocations);
-        Assert.Contains(loggedOut.Headers.GetValues("Set-Cookie"), value => value.StartsWith(".NexusAuth.Workbench=;", StringComparison.Ordinal));
+        Assert.Equal(
+            new[] { "refresh_token:refresh", "access_token:access" },
+            harness.Provider.Revocations);
+        Assert.Contains(
+            loggedOut.Headers.GetValues("Set-Cookie"),
+            value => value.StartsWith(".NexusAuth.Workbench=;", StringComparison.Ordinal));
         using var body = JsonDocument.Parse(await loggedOut.Content.ReadAsStringAsync());
         var url = body.RootElement.GetProperty("logoutUrl").GetString();
-        if (localOnly) Assert.Equal(string.Empty, url);
+        if (localOnly)
+        {
+            Assert.Equal(string.Empty, url);
+        }
         else
         {
             var endpoint = new Uri(url!);
             Assert.Equal("/custom/logout", endpoint.AbsolutePath);
-            Assert.Equal("retained", QueryHelpers.ParseQuery(endpoint.Query)["existing"]);
+            Assert.Equal("retained", QueryHelpers.ParseQuery(endpoint.Query)["existing"].ToString());
+            Assert.Equal(
+                PostLogoutRedirectUri,
+                QueryHelpers.ParseQuery(endpoint.Query)["post_logout_redirect_uri"].ToString());
         }
     }
 
@@ -132,15 +277,20 @@ public sealed class WorkbenchLoginLifecycleTests
     {
         using var harness = new Harness();
         var login = await harness.BeginLogin();
-        using var signedIn = await harness.Callback(login.State, login.Cookie);
-        var cookie = signedIn.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith(".NexusAuth.Workbench=", StringComparison.Ordinal)).Split(';')[0];
+        using var signedIn = await harness.Callback(login);
+        AssertCallbackSucceeded(signedIn);
+        var cookie = SessionCookie(signedIn);
         harness.Provider.FailDiscovery = true;
         harness.Provider.FailRevocation = true;
+
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout");
         request.Headers.Add("Cookie", cookie);
         using var response = await harness.Client.SendAsync(request);
+
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Contains(response.Headers.GetValues("Set-Cookie"), value => value.StartsWith(".NexusAuth.Workbench=;", StringComparison.Ordinal));
+        Assert.Contains(
+            response.Headers.GetValues("Set-Cookie"),
+            value => value.StartsWith(".NexusAuth.Workbench=;", StringComparison.Ordinal));
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(string.Empty, body.RootElement.GetProperty("logoutUrl").GetString());
     }
@@ -151,123 +301,377 @@ public sealed class WorkbenchLoginLifecycleTests
         var clock = new TestClock();
         var services = new ServiceCollection();
         services.AddSingleton<TimeProvider>(clock);
-        services.AddNexusAuth(_ => { }).UseInMemory(options => options.Capacity = 1);
+        services.AddWorkbenchFlowState().UseInMemory(options => options.Capacity = 1);
         using var provider = services.BuildServiceProvider();
         var store = provider.GetRequiredService<IFlowStateStore>();
-        await store.AddAsync("state", new FlowState("verifier", "nonce", "binding"));
+
+        await store.AddAsync("state", new FlowState("binding"));
         Assert.Null(await store.TryTakeAsync("state", "wrong"));
-        await Assert.ThrowsAsync<FlowStateCapacityExceededException>(() => store.AddAsync("other", new FlowState("v", "n", "b")));
+        await Assert.ThrowsAsync<FlowStateCapacityExceededException>(
+            () => store.AddAsync("other", new FlowState("b")));
+
         clock.Advance(TimeSpan.FromMinutes(10));
         Assert.Null(await store.TryTakeAsync("state", "binding"));
-        await store.AddAsync("other", new FlowState("v", "n", "b"));
+        await store.AddAsync("other", new FlowState("b"));
         Assert.NotNull(await store.TryTakeAsync("other", "b"));
         Assert.Null(await store.TryTakeAsync("other", "b"));
+    }
+
+    private static void AssertCallbackSucceeded(HttpResponseMessage response)
+    {
+        Assert.True(IsSuccessfulCallback(response), response.Headers.Location?.ToString());
+        AssertSessionCookie(response);
+    }
+
+    private static bool IsSuccessfulCallback(HttpResponseMessage response) =>
+        response.StatusCode == HttpStatusCode.Redirect
+        && response.Headers.Location?.ToString() == PostLogoutRedirectUri.TrimEnd('/') + "/auth/callback";
+
+    private static void AssertCallbackRejected(HttpResponseMessage response, string expectedError)
+    {
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.NotNull(response.Headers.Location);
+        Assert.Equal("/login", response.Headers.Location.AbsolutePath);
+        Assert.Equal(
+            expectedError,
+            QueryHelpers.ParseQuery(response.Headers.Location.Query)["error"].ToString());
+    }
+
+    private static void AssertSessionCookie(HttpResponseMessage response) =>
+        _ = SessionCookie(response);
+
+    private static string SessionCookie(HttpResponseMessage response)
+    {
+        var header = Assert.Single(
+            response.Headers.GetValues("Set-Cookie"),
+            value => value.StartsWith(".NexusAuth.Workbench=", StringComparison.Ordinal)
+                && CookieValue(value).Length > 0);
+        return header.Split(';', 2)[0];
+    }
+
+    private static void AssertNoSessionCookie(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("Set-Cookie", out var headers))
+            return;
+
+        Assert.DoesNotContain(
+            headers,
+            value => value.StartsWith(".NexusAuth.Workbench=", StringComparison.Ordinal)
+                && CookieValue(value).Length > 0);
+    }
+
+    private static string CookieValue(string setCookieHeader)
+    {
+        var valueStart = setCookieHeader.IndexOf('=') + 1;
+        var valueEnd = setCookieHeader.IndexOf(';', valueStart);
+        return valueEnd < 0
+            ? setCookieHeader[valueStart..]
+            : setCookieHeader[valueStart..valueEnd];
+    }
+
+    private sealed record LoginFlow(
+        Uri AuthorizeUrl,
+        string State,
+        string Nonce,
+        IReadOnlyDictionary<string, string> Cookies,
+        IReadOnlyList<string> SetCookieHeaders,
+        string BindingCookieHeader)
+    {
+        public Dictionary<string, string> CookiesWithout(string cookiePrefix) =>
+            Cookies
+                .Where(item => !item.Key.StartsWith(cookiePrefix, StringComparison.Ordinal))
+                .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
     }
 
     private sealed class TestClock : TimeProvider
     {
         private DateTimeOffset now = DateTimeOffset.UtcNow;
+
         public override DateTimeOffset GetUtcNow() => now;
+
         public void Advance(TimeSpan value) => now += value;
     }
 
     private sealed class Harness : IDisposable
     {
         private readonly WebApplicationFactory<WorkbenchApiModule> factory;
-        public ProviderStub Provider { get; } = new();
+        private readonly RSA trustedRsa;
+        private readonly RSA untrustedRsa;
+
+        public ProviderStub Provider { get; }
         public HttpClient Client { get; }
 
-        public Harness(int capacity = 10_000)
+        public Harness(int capacity = 10_000, bool signOutProvider = true)
         {
+            trustedRsa = RSA.Create(2048);
+            untrustedRsa = RSA.Create(2048);
+            var trustedKey = new RsaSecurityKey(trustedRsa) { KeyId = "trusted-test-key" };
+            var untrustedKey = new RsaSecurityKey(untrustedRsa) { KeyId = "trusted-test-key" };
+            var configuration = new OpenIdConnectConfiguration
+            {
+                Issuer = Authority,
+                AuthorizationEndpoint = Authority + "/authorize",
+                TokenEndpoint = Authority + "/token",
+                EndSessionEndpoint = Authority + "/custom/logout?existing=retained",
+            };
+            configuration.SigningKeys.Add(trustedKey);
+            var metadata = new TestMetadataManager(configuration);
+            Provider = new ProviderStub(metadata, trustedKey, untrustedKey);
+
             factory = new WebApplicationFactory<WorkbenchApiModule>().WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Testing")
-                    .UseSetting("Auth:Authority", "https://issuer.example.test")
-                    .UseSetting("Auth:ClientId", "workbench")
+                    .UseSetting("Auth:Authority", Authority)
+                    .UseSetting("Auth:Audience", Audience)
+                    .UseSetting("Auth:ClientId", ClientId)
                     .UseSetting("Auth:ClientSecret", "test-only-secret")
-                    .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
-                    .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/");
+                    .UseSetting("Auth:RedirectUri", RedirectUri)
+                    .UseSetting("Auth:PostLogoutRedirectUri", PostLogoutRedirectUri)
+                    .UseSetting("Auth:Scope", "openid profile offline_access")
+                    .UseSetting("Auth:SignOutProvider", signOutProvider.ToString());
                 builder.ConfigureServices(services =>
                 {
-                    services.RemoveAll<IOidcWorkbenchService>();
-                    services.AddSingleton<IOidcWorkbenchService>(Provider);
+                    services.RemoveAll<IConfigurationManager<OpenIdConnectConfiguration>>();
+                    services.AddSingleton<IConfigurationManager<OpenIdConnectConfiguration>>(metadata);
+                    services.RemoveAll<INexusAuthClient>();
+                    services.AddSingleton<INexusAuthClient>(Provider);
                     services.Configure<WorkbenchFlowStateOptions>(options => options.Capacity = capacity);
-                    services.PostConfigure<CookieAuthenticationOptions>(WorkbenchAuthenticationDefaults.CookieScheme, options =>
-                    {
-                        options.EventsType = null;
-                        options.Events = new CookieAuthenticationEvents();
-                    });
+                    RemoveDiscoveryWarmup(services);
+                    services.PostConfigure<CookieAuthenticationOptions>(
+                        WorkbenchAuthenticationDefaults.CookieScheme,
+                        options =>
+                        {
+                            options.EventsType = null;
+                            options.Events = new CookieAuthenticationEvents();
+                        });
                 });
             });
             Client = factory.CreateClient(new WebApplicationFactoryClientOptions
             {
-                BaseAddress = new Uri("https://dashboard.example.test"), AllowAutoRedirect = false, HandleCookies = false,
+                BaseAddress = new Uri("https://dashboard.example.test"),
+                AllowAutoRedirect = false,
+                HandleCookies = false,
             });
         }
 
-        public async Task<(string State, string Cookie, string Header)> BeginLogin()
+        public async Task<LoginFlow> BeginLogin()
         {
             using var response = await Client.GetAsync("/api/auth/login");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var url = new Uri(body.RootElement.GetProperty("authorizeUrl").GetString()!);
-            var header = Assert.Single(response.Headers.GetValues("Set-Cookie"));
-            return (QueryHelpers.ParseQuery(url.Query)["state"].ToString(), header.Split(';')[0], header);
+            var query = QueryHelpers.ParseQuery(url.Query);
+            var state = query["state"].ToString();
+            var nonce = query["nonce"].ToString();
+            Assert.False(string.IsNullOrWhiteSpace(state));
+            Assert.False(string.IsNullOrWhiteSpace(nonce));
+
+            var setCookieHeaders = response.Headers.GetValues("Set-Cookie").ToArray();
+            var cookies = setCookieHeaders.ToDictionary(
+                header => header[..header.IndexOf('=')],
+                header => header[(header.IndexOf('=') + 1)..header.IndexOf(';')]);
+            var bindingCookieHeader = Assert.Single(
+                setCookieHeaders,
+                header => header.StartsWith(WorkbenchBindingCookiePrefix, StringComparison.Ordinal));
+            Assert.Single(cookies.Keys, name => name.StartsWith(CorrelationCookiePrefix, StringComparison.Ordinal));
+            Assert.Single(cookies.Keys, name => name.StartsWith(NonceCookiePrefix, StringComparison.Ordinal));
+
+            Provider.RegisterLogin(state, nonce);
+            return new LoginFlow(url, state, nonce, cookies, setCookieHeaders, bindingCookieHeader);
         }
 
-        public Task<HttpResponseMessage> Callback(string state, string? cookie = null, string? error = null)
+        public Task<HttpResponseMessage> Callback(LoginFlow login, string? error = null) =>
+            Callback(login.State, login.Cookies, error);
+
+        public async Task<HttpResponseMessage> Callback(
+            string state,
+            IReadOnlyDictionary<string, string>? cookies = null,
+            string? error = null)
         {
-            var url = QueryHelpers.AddQueryString("/signin-oidc", new Dictionary<string, string?>
+            var query = new Dictionary<string, string?>
             {
-                ["state"] = state, ["code"] = error is null ? "code" : null, ["error"] = error,
-            });
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            if (cookie is not null) request.Headers.Add("Cookie", cookie);
-            return Client.SendAsync(request);
+                ["state"] = state,
+                ["code"] = error is null ? Provider.CodeFor(state) : null,
+                ["error"] = error,
+            };
+            var url = QueryHelpers.AddQueryString("/signin-oidc", query);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (cookies is { Count: > 0 })
+            {
+                request.Headers.Add(
+                    "Cookie",
+                    string.Join("; ", cookies.Select(item => $"{item.Key}={item.Value}")));
+            }
+
+            return await Client.SendAsync(request);
         }
 
-        public void Dispose() { Client.Dispose(); factory.Dispose(); }
+        public void Dispose()
+        {
+            Client.Dispose();
+            factory.Dispose();
+            trustedRsa.Dispose();
+            untrustedRsa.Dispose();
+        }
+
+        private static void RemoveDiscoveryWarmup(IServiceCollection services)
+        {
+            var descriptors = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType?.FullName
+                        == "NexusAuth.Workbench.Api.WorkbenchDiscoveryWarmupService")
+                .ToArray();
+            foreach (var descriptor in descriptors)
+                services.Remove(descriptor);
+        }
     }
 
-    private sealed class ProviderStub : IOidcWorkbenchService
+    private sealed class ProviderStub(
+        TestMetadataManager metadata,
+        SecurityKey trustedKey,
+        SecurityKey untrustedKey) : INexusAuthClient
     {
-        public string Authority => "https://issuer.example.test";
-        public string ClientId => "workbench";
-        public string RedirectUri => "https://dashboard.example.test/signin-oidc";
-        public string PostLogoutRedirectUri => "https://dashboard.example.test/";
-        public string Scope => "openid profile offline_access";
-        public bool SignOutProvider { get; set; } = true;
-        public IFlowStateStore FlowStateStore => throw new NotSupportedException();
-        public int Exchanges;
-        public int Discoveries;
-        public bool FailDiscovery;
-        public bool FailRevocation;
-        public List<string> Revocations { get; } = [];
-        public string GenerateCodeVerifier() => "verifier";
-        public (string codeChallenge, string codeVerifier) GeneratePkce() => ("challenge", "verifier");
-        public Task<DiscoveryDocument> FetchDiscoveryAsync(CancellationToken ct)
+        private readonly ConcurrentDictionary<string, string> nonces = new(StringComparer.Ordinal);
+        private readonly object exchangeGate = new();
+        private readonly object revocationGate = new();
+        private readonly List<ExchangeCall> exchanges = [];
+        private int exchangeCount;
+
+        public bool FailDiscovery
         {
-            Interlocked.Increment(ref Discoveries);
-            if (FailDiscovery) throw new HttpRequestException("Provider unavailable");
-            return Task.FromResult(new DiscoveryDocument
+            get => metadata.Fail;
+            set => metadata.Fail = value;
+        }
+
+        public bool FailRevocation { get; set; }
+        public string? IdTokenFailure { get; set; }
+        public int Discoveries => metadata.Calls;
+        public int ExchangeCount => Volatile.Read(ref exchangeCount);
+        public IReadOnlyList<ExchangeCall> Exchanges
+        {
+            get
             {
-                Issuer = Authority, AuthorizationEndpoint = Authority + "/authorize", EndSessionEndpoint = Authority + "/custom/logout?existing=retained",
-            });
+                lock (exchangeGate)
+                    return exchanges.ToArray();
+            }
         }
-        public Task<WorkbenchTokenResult> ExchangeCodeAsync(string code, string codeVerifier, CancellationToken ct)
+
+        public List<string> Revocations { get; } = [];
+
+        public void RegisterLogin(string state, string nonce) => nonces[state] = nonce;
+
+        public string CodeFor(string state) => "code:" + state;
+
+        public Task<OpenIdConnectConfiguration> FetchConfigurationAsync(CancellationToken ct) =>
+            metadata.GetConfigurationAsync(ct);
+
+        public Task<NexusAuthTokenResult> ExchangeCodeAsync(
+            string code,
+            string codeVerifier,
+            string redirectUri,
+            CancellationToken ct)
         {
-            Interlocked.Increment(ref Exchanges);
-            return Task.FromResult(new WorkbenchTokenResult("access", "refresh", "id", 120));
+            ct.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref exchangeCount);
+            lock (exchangeGate)
+                exchanges.Add(new ExchangeCall(code, codeVerifier, redirectUri));
+
+            var state = code["code:".Length..];
+            if (!nonces.TryGetValue(state, out var nonce))
+                throw new InvalidOperationException("No nonce is registered for this login.");
+
+            var idToken = CreateIdToken(nonce);
+            return Task.FromResult(new NexusAuthTokenResult(
+                "access",
+                "refresh",
+                idToken,
+                120));
         }
-        public Task<ValidatedIdToken> ValidateIdTokenAsync(DiscoveryDocument discovery, string idToken, string expectedNonce, CancellationToken ct) =>
-            Task.FromResult(new ValidatedIdToken(Guid.NewGuid().ToString(), "Alice", "alice"));
-        public Task<WorkbenchTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct) => throw new NotSupportedException();
-        public Task<AccessTokenIntrospectionResult> IntrospectAccessTokenAsync(string accessToken, CancellationToken ct) => throw new NotSupportedException();
-        public Task RevokeTokenAsync(string token, string tokenTypeHint, CancellationToken ct)
+
+        public Task<NexusAuthTokenResult> RefreshTokensAsync(
+            string refreshToken,
+            CancellationToken ct) => throw new NotSupportedException();
+
+        public Task<AccessTokenIntrospectionResult> IntrospectAccessTokenAsync(
+            string accessToken,
+            CancellationToken ct) => throw new NotSupportedException();
+
+        public Task RevokeTokenAsync(
+            string token,
+            string tokenTypeHint,
+            CancellationToken ct)
         {
-            Revocations.Add(tokenTypeHint + ":" + token);
-            if (FailRevocation) throw new HttpRequestException("Provider unavailable");
+            lock (revocationGate)
+                Revocations.Add(tokenTypeHint + ":" + token);
+            if (FailRevocation)
+                throw new HttpRequestException("Provider unavailable");
             return Task.CompletedTask;
         }
+
+        private string CreateIdToken(string nonce)
+        {
+            var now = DateTime.UtcNow;
+            var claims = new List<Claim>
+            {
+                new(JwtRegisteredClaimNames.Iat,
+                    new DateTimeOffset(now).ToUnixTimeSeconds().ToString(),
+                    ClaimValueTypes.Integer64),
+                new("name", "Alice"),
+            };
+            if (IdTokenFailure != "missing_subject")
+                claims.Add(new Claim(JwtRegisteredClaimNames.Sub, "alice"));
+            if (IdTokenFailure != "missing_nonce")
+            {
+                claims.Add(new Claim(
+                    JwtRegisteredClaimNames.Nonce,
+                    IdTokenFailure == "nonce" ? nonce + "-wrong" : nonce));
+            }
+
+            SigningCredentials? credentials = IdTokenFailure switch
+            {
+                "unsigned" => null,
+                "signature" => new SigningCredentials(untrustedKey, SecurityAlgorithms.RsaSha256),
+                _ => new SigningCredentials(trustedKey, SecurityAlgorithms.RsaSha256),
+            };
+            var token = new JwtSecurityToken(
+                IdTokenFailure == "issuer" ? "https://wrong-issuer.example.test" : Authority,
+                IdTokenFailure == "audience" ? "different-audience" : ClientId,
+                claims,
+                IdTokenFailure == "expired" ? now.AddMinutes(-10) : now.AddMinutes(-1),
+                IdTokenFailure == "expired" ? now.AddMinutes(-5) : now.AddMinutes(5),
+                credentials);
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
     }
+
+    private sealed class TestMetadataManager(OpenIdConnectConfiguration configuration)
+        : IConfigurationManager<OpenIdConnectConfiguration>
+    {
+        private int calls;
+        private volatile bool fail;
+
+        public bool Fail
+        {
+            get => fail;
+            set => fail = value;
+        }
+
+        public int Calls => Volatile.Read(ref calls);
+
+        public Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken cancel)
+        {
+            cancel.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref calls);
+            return Fail
+                ? Task.FromException<OpenIdConnectConfiguration>(
+                    new HttpRequestException("Provider unavailable"))
+                : Task.FromResult(configuration);
+        }
+
+        public void RequestRefresh()
+        {
+        }
+    }
+
+    private sealed record ExchangeCall(string Code, string CodeVerifier, string RedirectUri);
 }

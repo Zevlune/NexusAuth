@@ -35,7 +35,7 @@ public sealed class WorkbenchGatewayModeTests
 
         Assert.Equal(WorkbenchAuthenticationDefaults.BearerScheme, Assert.Single(schemes).Name);
         using var scope = factory.Services.CreateScope();
-        Assert.Null(scope.ServiceProvider.GetService<IOidcWorkbenchService>());
+        Assert.Null(scope.ServiceProvider.GetService<INexusAuthClient>());
         Assert.Null(scope.ServiceProvider.GetService<IFlowStateStore>());
         Assert.Null(scope.ServiceProvider.GetService<IWorkbenchCookieAuthenticationEvents>());
     }
@@ -53,7 +53,7 @@ public sealed class WorkbenchGatewayModeTests
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(WorkbenchAuthenticationDefaults.CookieScheme).EventsType);
         using var scope = factory.Services.CreateScope();
-        Assert.NotNull(scope.ServiceProvider.GetService<IOidcWorkbenchService>());
+        Assert.NotNull(scope.ServiceProvider.GetService<INexusAuthClient>());
         Assert.NotNull(scope.ServiceProvider.GetService<IFlowStateStore>());
         Assert.NotNull(scope.ServiceProvider.GetService<IWorkbenchCookieAuthenticationEvents>());
     }
@@ -75,9 +75,11 @@ public sealed class WorkbenchGatewayModeTests
         Assert.Null(options.BackchannelHttpHandler);
         if (!gatewayEnabled)
         {
-            var oidc = factory.Services.GetRequiredService<IOptions<WorkbenchAuthOptions>>().Value;
+            var oidc = factory.Services.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
             Assert.Equal(Authority, oidc.Authority);
-            Assert.Equal("openid profile nexusauth.workbench.api", oidc.Scope);
+            var interactive = factory.Services.GetRequiredService<IOptionsMonitor<Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectOptions>>()
+                .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
+            Assert.Equal("openid profile nexusauth.workbench.api", string.Join(" ", interactive.Scope));
         }
     }
 

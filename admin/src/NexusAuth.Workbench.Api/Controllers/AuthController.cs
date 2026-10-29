@@ -1,6 +1,4 @@
-using System.Security.Claims;
 using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -8,59 +6,39 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using NexusAuth.Extension;
-using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api.Authorization;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AuthController : ControllerBase
+public class AuthController(
+    IFlowStateStore flows,
+    INexusAuthClient client,
+    WorkbenchAuthenticationSettings settings,
+    IOptions<WorkbenchFlowStateOptions> flowOptions,
+    IOptionsMonitor<CookieAuthenticationOptions> cookieOptions,
+    ILogger<AuthController> logger) : ControllerBase
 {
-    private readonly IFlowStateStore _flowStore;
-    private readonly IOidcWorkbenchService _oidcService;
-    private readonly WorkbenchFlowStateOptions _flowOptions;
-    private readonly IOptionsMonitor<CookieAuthenticationOptions> _cookieOptions;
-    private readonly ILogger<AuthController> _logger;
-
-    public AuthController(IFlowStateStore flowStore, IOidcWorkbenchService oidcService,
-        IOptions<WorkbenchFlowStateOptions> flowOptions,
-        IOptionsMonitor<CookieAuthenticationOptions> cookieOptions, ILogger<AuthController> logger)
-    {
-        _flowStore = flowStore;
-        _oidcService = oidcService;
-        _flowOptions = flowOptions.Value;
-        _cookieOptions = cookieOptions;
-        _logger = logger;
-    }
-
     [HttpGet("/api/auth/config")]
     [AllowAnonymous]
-    public IActionResult Config()
+    public IActionResult Config() => Ok(new
     {
-        return Ok(new
-        {
-            authority = _oidcService.Authority,
-            clientId = _oidcService.ClientId,
-            redirectUri = _oidcService.RedirectUri,
-        });
-    }
+        authority = settings.Authority,
+        clientId = settings.ClientId,
+        redirectUri = settings.RedirectUri,
+    });
 
     [HttpGet("/api/auth/login")]
     [AllowAnonymous]
     [EnableRateLimiting("workbench-login")]
     public async Task<IActionResult> Login(CancellationToken ct)
     {
-        var state = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        var correlation = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        string codeChallenge;
-        string codeVerifier;
-        (codeChallenge, codeVerifier) = _oidcService.GeneratePkce();
-
+        var flow = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var binding = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         try
         {
-            await _flowStore.AddAsync(state, new FlowState(codeVerifier, nonce, HashBinding(correlation)), ct);
+            await flows.AddAsync(flow, new FlowState(WorkbenchLoginFlow.Hash(binding)), ct);
         }
         catch (FlowStateCapacityExceededException)
         {
@@ -68,127 +46,42 @@ public class AuthController : ControllerBase
             return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "too_many_login_requests" });
         }
 
-        DiscoveryDocument discovery;
-        try { discovery = await _oidcService.FetchDiscoveryAsync(ct); }
-        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        var cookie = WorkbenchLoginFlow.CookieOptions(HttpContext, cookieOptions, flowOptions.Value.Lifetime);
+        Response.Cookies.Append(WorkbenchLoginFlow.CookieName(flow, cookie.Secure), binding, cookie);
+        var properties = new AuthenticationProperties
         {
-            await _flowStore.RemoveAsync(state, CancellationToken.None);
-            _logger.LogWarning("Provider discovery failed during login. FailureType={FailureType}", exception.GetType().Name);
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "provider_unavailable" });
-        }
-        Response.Cookies.Append(CorrelationCookieName(state), correlation, CorrelationCookieOptions());
-
-        var authorizeUrl = discovery.AuthorizationEndpoint +
-            $"?response_type={OAuthResponseTypes.Code}" +
-            $"&client_id={Uri.EscapeDataString(_oidcService.ClientId)}" +
-            $"&redirect_uri={Uri.EscapeDataString(_oidcService.RedirectUri)}" +
-            $"&scope={Uri.EscapeDataString(_oidcService.Scope)}" +
-            $"&state={Uri.EscapeDataString(state)}" +
-            $"&nonce={Uri.EscapeDataString(nonce)}" +
-            $"&code_challenge={Uri.EscapeDataString(codeChallenge)}" +
-            $"&code_challenge_method={PkceMethods.S256}";
-
-        return Ok(new { authorizeUrl });
-    }
-
-    [HttpGet("/signin-oidc")]
-    [AllowAnonymous]
-    public async Task<IActionResult> SignInOidc(CancellationToken ct)
-    {
-        var code = Request.Query["code"].ToString();
-        var state = Request.Query["state"].ToString();
-        var error = Request.Query["error"].ToString();
-
-        var frontendBase = _oidcService.PostLogoutRedirectUri.TrimEnd('/');
-
-        if (state.Length != 64 || !state.All(Uri.IsHexDigit)
-            || !Request.Cookies.TryGetValue(CorrelationCookieName(state), out var correlation)
-            || correlation.Length != 64)
-            return Redirect($"{frontendBase}/login?error=invalid_callback");
-
-        var flow = await _flowStore.TryTakeAsync(state, HashBinding(correlation), ct);
-        if (flow == null)
-            return Redirect($"{frontendBase}/login?error=invalid_callback");
-
-        Response.Cookies.Delete(CorrelationCookieName(state), CorrelationCookieOptions());
-        if (!string.IsNullOrWhiteSpace(error))
-            return RedirectToProviderError(error, Request.Query["error_description"].ToString());
-        if (string.IsNullOrWhiteSpace(code))
-            return Redirect($"{frontendBase}/login?error=invalid_callback");
-
+            RedirectUri = settings.PostLogoutRedirectUri.TrimEnd('/') + "/auth/callback",
+            IsPersistent = true,
+            AllowRefresh = true,
+        };
+        properties.Items[WorkbenchLoginFlow.PropertyKey] = flow;
         try
         {
-            var tokenResult = await _oidcService.ExchangeCodeAsync(code, flow.CodeVerifier, ct);
-            var idToken = tokenResult.IdToken
-                ?? throw new InvalidOperationException("The authorization response did not contain an ID token.");
-            var discovery = await _oidcService.FetchDiscoveryAsync(ct);
-            var validatedIdToken = await _oidcService.ValidateIdTokenAsync(discovery, idToken, flow.Nonce, ct);
-            var principal = WorkbenchPrincipalFactory.Create(validatedIdToken);
-            var now = DateTimeOffset.UtcNow;
-            var expiresAt = now.AddSeconds(tokenResult.ExpiresIn);
-            var properties = new AuthenticationProperties
-            {
-                IsPersistent = true,
-                AllowRefresh = true,
-                IssuedUtc = now,
-                // The Workbench session lifetime is independent from the short-lived access token.
-                ExpiresUtc = now.AddHours(24),
-            };
-            properties.StoreTokens(
-            [
-                new AuthenticationToken { Name = "access_token", Value = tokenResult.AccessToken },
-                new AuthenticationToken { Name = "refresh_token", Value = tokenResult.RefreshToken },
-                new AuthenticationToken { Name = "id_token", Value = idToken },
-                new AuthenticationToken { Name = "expires_at", Value = expiresAt.ToString("O") },
-            ]);
-
-            await HttpContext.SignInAsync(WorkbenchAuthenticationDefaults.CookieScheme, principal, properties);
-
-            return Redirect($"{frontendBase}/auth/callback");
+            await HttpContext.ChallengeAsync(WorkbenchAuthenticationDefaults.OpenIdConnectScheme, properties);
+            var authorizeUrl = Response.Headers.Location.ToString();
+            if (string.IsNullOrEmpty(authorizeUrl))
+                throw new InvalidOperationException("The provider did not supply an authorization URL.");
+            Response.Headers.Remove("Location");
+            Response.StatusCode = StatusCodes.Status200OK;
+            return Ok(new { authorizeUrl });
         }
-        catch
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            return Redirect($"{frontendBase}/login?error=token_exchange_failed");
+            await flows.RemoveAsync(flow, CancellationToken.None);
+            Response.Headers.Remove("Set-Cookie");
+            Response.Headers.Remove("Location");
+            logger.LogWarning("Provider discovery failed during login. FailureType={FailureType}", exception.GetType().Name);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "provider_unavailable" });
         }
     }
 
-    private string CorrelationCookieName(string state) =>
-        $"{(UseSecureCookies ? "__Host-" : ".")}NexusAuth.Workbench.Oidc.{state}";
-
-    private bool UseSecureCookies => Request.IsHttps || _cookieOptions.Get(WorkbenchAuthenticationDefaults.CookieScheme)
-        .Cookie.SecurePolicy == CookieSecurePolicy.Always;
-
-    private CookieOptions CorrelationCookieOptions() => new()
-    {
-        HttpOnly = true,
-        SameSite = SameSiteMode.Lax,
-        Secure = UseSecureCookies,
-        Path = "/",
-        MaxAge = _flowOptions.Lifetime,
-        IsEssential = true,
-    };
-
-    private static string HashBinding(string correlation) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(correlation)));
-
-    private IActionResult RedirectToProviderError(string error, string? description)
-    {
-        var providerErrorUrl = $"{_oidcService.Authority.TrimEnd('/')}/oauth/error?error={Uri.EscapeDataString(error)}";
-        if (!string.IsNullOrWhiteSpace(description))
-            providerErrorUrl += $"&error_description={Uri.EscapeDataString(description)}";
-
-        return Redirect(providerErrorUrl);
-    }
+    // The standard OpenID Connect handler owns /signin-oidc and validates its state, PKCE and nonce.
 
     [HttpPost("/api/auth/logout")]
     [Authorize(Policy = WorkbenchAuthorizationPolicies.AuthenticatedUser)]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
         var logoutUrl = string.Empty;
-        var idToken = await HttpContext.GetTokenAsync(
-            WorkbenchAuthenticationDefaults.CookieScheme,
-            "id_token") ?? User.FindFirstValue("id_token");
-
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         try
@@ -196,32 +89,27 @@ public class AuthController : ControllerBase
             foreach (var tokenName in new[] { "refresh_token", "access_token" })
             {
                 var token = await HttpContext.GetTokenAsync(WorkbenchAuthenticationDefaults.CookieScheme, tokenName);
-                if (string.IsNullOrWhiteSpace(token)) continue;
-                try { await _oidcService.RevokeTokenAsync(token, tokenName, timeout.Token); }
+                if (string.IsNullOrEmpty(token)) continue;
+                try { await client.RevokeTokenAsync(token, tokenName, timeout.Token); }
                 catch (Exception exception)
                 {
-                    _logger.LogWarning("Provider token revocation failed during logout. TokenType={TokenType} FailureType={FailureType}",
+                    logger.LogWarning("Provider token revocation failed during logout. TokenType={TokenType} FailureType={FailureType}",
                         tokenName, exception.GetType().Name);
                 }
             }
-            if (_oidcService.SignOutProvider && !string.IsNullOrWhiteSpace(idToken))
+            if (settings.SignOutProvider
+                && !string.IsNullOrEmpty(await HttpContext.GetTokenAsync(WorkbenchAuthenticationDefaults.CookieScheme, "id_token")))
             {
                 try
                 {
-                    var discovery = await _oidcService.FetchDiscoveryAsync(timeout.Token);
-                    if (!string.IsNullOrWhiteSpace(discovery.EndSessionEndpoint))
-                    {
-                        logoutUrl = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(discovery.EndSessionEndpoint,
-                            new Dictionary<string, string?>
-                            {
-                                ["id_token_hint"] = idToken,
-                                ["post_logout_redirect_uri"] = _oidcService.PostLogoutRedirectUri,
-                            });
-                    }
+                    await client.FetchConfigurationAsync(timeout.Token);
+                    await HttpContext.SignOutAsync(WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
+                        new AuthenticationProperties { RedirectUri = settings.PostLogoutRedirectUri });
+                    logoutUrl = Response.Headers.Location.ToString();
                 }
                 catch (Exception exception)
                 {
-                    _logger.LogWarning("Provider discovery failed during logout. FailureType={FailureType}", exception.GetType().Name);
+                    logger.LogWarning("Provider sign-out failed. FailureType={FailureType}", exception.GetType().Name);
                 }
             }
         }
@@ -229,7 +117,8 @@ public class AuthController : ControllerBase
         {
             await HttpContext.SignOutAsync(WorkbenchAuthenticationDefaults.CookieScheme);
         }
-
+        Response.Headers.Remove("Location");
+        Response.StatusCode = StatusCodes.Status200OK;
         return Ok(new { logoutUrl });
     }
 }

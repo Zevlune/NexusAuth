@@ -1,43 +1,41 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using NexusAuth.Extension;
+using NexusAuth.Workbench.Api;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
 
 public sealed class WorkbenchDependencyInjectionTests
 {
-    private const string Authority = "https://issuer.example.test";
-
     [Fact]
-    public async Task In_memory_store_is_shared_across_oidc_scopes_and_consumes_atomically()
+    public async Task In_memory_store_is_shared_across_scopes_and_consumes_atomically()
     {
-        var builder = CreateServices()
-            .AddNexusAuth(ConfigureValidOptions)
-            .UseInMemory();
-        using var provider = BuildProvider(builder.Services);
+        var services = CreateServices()
+            .AddWorkbenchFlowState()
+            .UseInMemory()
+            .Services;
+        using var provider = BuildProvider(services);
         using var firstScope = provider.CreateScope();
         using var secondScope = provider.CreateScope();
-        var firstOidc = firstScope.ServiceProvider.GetRequiredService<IOidcWorkbenchService>();
-        var secondOidc = secondScope.ServiceProvider.GetRequiredService<IOidcWorkbenchService>();
+        var first = firstScope.ServiceProvider.GetRequiredService<IFlowStateStore>();
+        var second = secondScope.ServiceProvider.GetRequiredService<IFlowStateStore>();
 
-        Assert.NotSame(firstOidc, secondOidc);
-        Assert.Same(firstOidc.FlowStateStore, secondOidc.FlowStateStore);
+        Assert.Same(first, second);
 
-        var flow = new FlowState("code-verifier", "nonce", "browser-binding");
-        await firstOidc.FlowStateStore.AddAsync("state", flow);
+        var flow = new FlowState("browser-binding");
+        await first.AddAsync("state", flow);
+        Assert.Null(await second.TryTakeAsync("state", "wrong-binding"));
 
-        Assert.Null(await secondOidc.FlowStateStore.TryTakeAsync("state", "wrong-binding"));
-
-        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var start = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         async Task<FlowState?> Consume(IFlowStateStore store)
         {
             await start.Task;
             return await store.TryTakeAsync("state", "browser-binding");
         }
 
-        var firstConsumption = Consume(firstOidc.FlowStateStore);
-        var secondConsumption = Consume(secondOidc.FlowStateStore);
+        var firstConsumption = Consume(first);
+        var secondConsumption = Consume(second);
         start.SetResult();
         var results = await Task.WhenAll(firstConsumption, secondConsumption);
 
@@ -47,79 +45,15 @@ public sealed class WorkbenchDependencyInjectionTests
     }
 
     [Fact]
-    public async Task Discovery_cache_is_shared_across_scopes_and_retries_after_failure()
-    {
-        var builder = CreateServices()
-            .AddNexusAuth(ConfigureValidOptions)
-            .UseInMemory();
-        using var provider = BuildProvider(builder.Services);
-        using var firstScope = provider.CreateScope();
-        using var secondScope = provider.CreateScope();
-        var firstCache = firstScope.ServiceProvider.GetRequiredService<IWorkbenchDiscoveryCache>();
-        var secondCache = secondScope.ServiceProvider.GetRequiredService<IWorkbenchDiscoveryCache>();
-
-        Assert.Same(firstCache, secondCache);
-
-        var document = new DiscoveryDocument { Issuer = Authority };
-        var loadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var loadCount = 0;
-
-        async Task<DiscoveryDocument> Load()
-        {
-            Interlocked.Increment(ref loadCount);
-            loadStarted.TrySetResult();
-            await releaseLoad.Task;
-            return document;
-        }
-
-        var firstLoad = firstCache.GetAsync(Authority, Load, CancellationToken.None);
-        await loadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var secondLoad = secondCache.GetAsync(Authority, Load, CancellationToken.None);
-        await Task.Yield();
-        releaseLoad.SetResult();
-        var documents = await Task.WhenAll(firstLoad, secondLoad);
-
-        Assert.Equal(1, Volatile.Read(ref loadCount));
-        Assert.Same(document, documents[0]);
-        Assert.Same(document, documents[1]);
-
-        const string retryAuthority = "https://retry.example.test";
-        var attemptCount = 0;
-        async Task<DiscoveryDocument> Fail()
-        {
-            Interlocked.Increment(ref attemptCount);
-            await Task.Yield();
-            throw new InvalidOperationException("transient discovery failure");
-        }
-
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => firstCache.GetAsync(retryAuthority, Fail, CancellationToken.None));
-
-        var recovered = new DiscoveryDocument { Issuer = retryAuthority };
-        var recoveredDocument = await secondCache.GetAsync(
-            retryAuthority,
-            () =>
-            {
-                Interlocked.Increment(ref attemptCount);
-                return Task.FromResult(recovered);
-            },
-            CancellationToken.None);
-
-        Assert.Equal(2, Volatile.Read(ref attemptCount));
-        Assert.Same(recovered, recoveredDocument);
-    }
-
-    [Fact]
-    public void Scoped_custom_store_uses_scoped_dependencies_and_is_disposed_with_scope()
+    public void Custom_store_defaults_to_scoped_and_is_disposed_with_its_scope()
     {
         var services = CreateServices();
         services.AddScoped<ScopedStoreDependency>();
         services.AddSingleton<StoreDisposalTracker>();
+
         var builder = services
-            .AddNexusAuth(ConfigureValidOptions)
-            .UseInMemory()
-            .UseFlowStateStore<ScopedFlowStateStore>(ServiceLifetime.Scoped);
+            .AddWorkbenchFlowState()
+            .UseFlowStateStore<ScopedFlowStateStore>();
 
         var mapping = Assert.Single(
             builder.Services,
@@ -132,47 +66,33 @@ public sealed class WorkbenchDependencyInjectionTests
         {
             var store = Assert.IsType<ScopedFlowStateStore>(
                 scope.ServiceProvider.GetRequiredService<IFlowStateStore>());
-            var dependency = scope.ServiceProvider.GetRequiredService<ScopedStoreDependency>();
+            var dependency =
+                scope.ServiceProvider.GetRequiredService<ScopedStoreDependency>();
             Assert.Same(dependency, store.Dependency);
         }
 
-        Assert.Equal(1, provider.GetRequiredService<StoreDisposalTracker>().DisposedCount);
+        Assert.Equal(
+            1,
+            provider.GetRequiredService<StoreDisposalTracker>().DisposedCount);
     }
 
     [Fact]
-    public void Store_registration_can_replace_custom_with_memory_and_has_no_concrete_cache_registration()
+    public void In_memory_registration_replaces_custom_store_and_configures_options()
     {
         var services = CreateServices();
         services.AddScoped<ScopedStoreDependency>();
         services.AddSingleton<StoreDisposalTracker>();
+
         var builder = services
-            .AddNexusAuth(ConfigureValidOptions)
-            .UseFlowStateStore<ScopedFlowStateStore>(ServiceLifetime.Scoped)
+            .AddWorkbenchFlowState()
+            .UseFlowStateStore<ScopedFlowStateStore>()
             .UseInMemory(options => options.Capacity = 17);
 
-        var flowStoreMapping = Assert.Single(
+        var mapping = Assert.Single(
             builder.Services,
             descriptor => descriptor.ServiceType == typeof(IFlowStateStore));
-        Assert.Equal(typeof(InMemoryFlowStateStore), flowStoreMapping.ImplementationType);
-        Assert.Equal(ServiceLifetime.Singleton, flowStoreMapping.Lifetime);
-
-        var oidcMapping = Assert.Single(
-            builder.Services,
-            descriptor => descriptor.ServiceType == typeof(IOidcWorkbenchService));
-        Assert.Equal(ServiceLifetime.Scoped, oidcMapping.Lifetime);
-        Assert.NotNull(oidcMapping.ImplementationType);
-        var cacheParameter = Assert.Single(
-            oidcMapping.ImplementationType.GetConstructors().Single().GetParameters(),
-            parameter => parameter.ParameterType == typeof(IWorkbenchDiscoveryCache));
-        Assert.False(cacheParameter.HasDefaultValue);
-
-        var cacheMapping = Assert.Single(
-            builder.Services,
-            descriptor => descriptor.ServiceType == typeof(IWorkbenchDiscoveryCache));
-        Assert.Equal(ServiceLifetime.Singleton, cacheMapping.Lifetime);
-        Assert.NotNull(cacheMapping.ImplementationType);
-        Assert.DoesNotContain(builder.Services, descriptor =>
-            descriptor.ServiceType == cacheMapping.ImplementationType);
+        Assert.Equal(typeof(InMemoryFlowStateStore), mapping.ImplementationType);
+        Assert.Equal(ServiceLifetime.Singleton, mapping.Lifetime);
 
         using var provider = BuildProvider(builder.Services);
         using var firstScope = provider.CreateScope();
@@ -180,64 +100,72 @@ public sealed class WorkbenchDependencyInjectionTests
         Assert.Same(
             firstScope.ServiceProvider.GetRequiredService<IFlowStateStore>(),
             secondScope.ServiceProvider.GetRequiredService<IFlowStateStore>());
-        Assert.Same(
-            firstScope.ServiceProvider.GetRequiredService<IWorkbenchDiscoveryCache>(),
-            secondScope.ServiceProvider.GetRequiredService<IWorkbenchDiscoveryCache>());
+        Assert.Equal(
+            17,
+            provider.GetRequiredService<IOptions<WorkbenchFlowStateOptions>>()
+                .Value.Capacity);
     }
 
     [Fact]
-    public void Validate_on_build_reports_missing_flow_store_when_no_store_is_selected()
+    public async Task In_memory_capacity_is_released_after_flow_expiry()
     {
-        var builder = CreateServices().AddNexusAuth(ConfigureValidOptions);
-
-        var exception = Assert.Throws<AggregateException>(
-            () => builder.Services.BuildServiceProvider(CreateProviderOptions()));
-
-        Assert.Contains("IFlowStateStore", exception.ToString(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Invalid_auth_options_fail_startup_validation_with_options_validation_exception()
-    {
-        var builder = CreateServices()
-            .AddNexusAuth(options =>
+        var clock = new ManualTimeProvider();
+        var services = CreateServices();
+        services.AddSingleton<TimeProvider>(clock);
+        services
+            .AddWorkbenchFlowState()
+            .UseInMemory(options =>
             {
-                options.Authority = Authority;
-                options.ClientId = string.Empty;
-                options.RedirectUri = string.Empty;
-                options.PostLogoutRedirectUri = string.Empty;
-                options.Scope = string.Empty;
-            })
-            .UseInMemory();
+                options.Capacity = 1;
+                options.Lifetime = TimeSpan.FromMinutes(5);
+            });
 
-        Assert.Contains(builder.Services, descriptor =>
-            descriptor.ServiceType == typeof(IValidateOptions<WorkbenchAuthOptions>));
+        using var provider = BuildProvider(services);
+        var store = provider.GetRequiredService<IFlowStateStore>();
 
-        using var provider = BuildProvider(builder.Services);
-        var startupValidator = provider.GetRequiredService<IStartupValidator>();
+        await store.AddAsync("expired", new FlowState("old-binding"));
+        await Assert.ThrowsAsync<FlowStateCapacityExceededException>(
+            () => store.AddAsync("full", new FlowState("new-binding")));
 
-        var exception = Assert.Throws<OptionsValidationException>(() => startupValidator.Validate());
+        clock.Advance(TimeSpan.FromMinutes(6));
 
-        Assert.Equal(typeof(WorkbenchAuthOptions), exception.OptionsType);
-        Assert.Contains(exception.Failures, failure =>
-            failure.Contains(nameof(WorkbenchAuthOptions.ClientId), StringComparison.Ordinal));
+        Assert.Null(await store.TryTakeAsync("expired", "old-binding"));
+        await store.AddAsync("replacement", new FlowState("new-binding"));
+        Assert.Equal(
+            new FlowState("new-binding"),
+            await store.TryTakeAsync("replacement", "new-binding"));
     }
 
     [Fact]
-    public void In_memory_store_uses_preregistered_time_provider_and_container_disposes_timer()
+    public void Add_workbench_flow_state_registers_clock_and_options_once()
     {
-        var clock = new TrackingTimeProvider();
-        var builder = CreateServices();
-        builder.AddSingleton<TimeProvider>(clock);
-        builder
-            .AddNexusAuth(ConfigureValidOptions)
+        var clock = new ManualTimeProvider();
+        var services = CreateServices();
+        services.AddSingleton<TimeProvider>(clock);
+
+        var builder = services
+            .AddWorkbenchFlowState()
             .UseInMemory();
 
         Assert.Single(
-            builder,
+            builder.Services,
             descriptor => descriptor.ServiceType == typeof(TimeProvider));
 
-        var provider = BuildProvider(builder);
+        using var provider = BuildProvider(builder.Services);
+        Assert.Same(clock, provider.GetRequiredService<TimeProvider>());
+        Assert.NotNull(
+            provider.GetRequiredService<IOptions<WorkbenchFlowStateOptions>>());
+    }
+
+    [Fact]
+    public void Container_disposes_the_in_memory_cleanup_timer()
+    {
+        var clock = new ManualTimeProvider();
+        var services = CreateServices();
+        services.AddSingleton<TimeProvider>(clock);
+        services.AddWorkbenchFlowState().UseInMemory();
+
+        var provider = BuildProvider(services);
         Assert.IsType<InMemoryFlowStateStore>(
             provider.GetRequiredService<IFlowStateStore>());
         var timer = Assert.Single(clock.Timers);
@@ -250,23 +178,12 @@ public sealed class WorkbenchDependencyInjectionTests
 
     private static IServiceCollection CreateServices() => new ServiceCollection();
 
-    private static void ConfigureValidOptions(WorkbenchAuthOptions options)
-    {
-        options.Authority = Authority;
-        options.ClientId = "workbench";
-        options.RedirectUri = "https://dashboard.example.test/signin-oidc";
-        options.PostLogoutRedirectUri = "https://dashboard.example.test/";
-        options.Scope = "openid profile";
-    }
-
     private static ServiceProvider BuildProvider(IServiceCollection services) =>
-        services.BuildServiceProvider(CreateProviderOptions());
-
-    private static ServiceProviderOptions CreateProviderOptions() => new()
-    {
-        ValidateScopes = true,
-        ValidateOnBuild = true,
-    };
+        services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateScopes = true,
+            ValidateOnBuild = true,
+        });
 
     private sealed class ScopedStoreDependency
     {
@@ -287,7 +204,10 @@ public sealed class WorkbenchDependencyInjectionTests
     {
         public ScopedStoreDependency Dependency { get; } = dependency;
 
-        public Task AddAsync(string state, FlowState flowState, CancellationToken ct = default) =>
+        public Task AddAsync(
+            string state,
+            FlowState flowState,
+            CancellationToken ct = default) =>
             Task.CompletedTask;
 
         public Task<FlowState?> TryTakeAsync(
@@ -296,18 +216,22 @@ public sealed class WorkbenchDependencyInjectionTests
             CancellationToken ct = default) =>
             Task.FromResult<FlowState?>(null);
 
-        public Task<FlowState?> GetAsync(string state, CancellationToken ct = default) =>
-            Task.FromResult<FlowState?>(null);
-
-        public Task RemoveAsync(string state, CancellationToken ct = default) =>
+        public Task RemoveAsync(
+            string state,
+            CancellationToken ct = default) =>
             Task.CompletedTask;
 
         public void Dispose() => disposalTracker.RecordDisposal();
     }
 
-    private sealed class TrackingTimeProvider : TimeProvider
+    private sealed class ManualTimeProvider : TimeProvider
     {
+        private DateTimeOffset utcNow =
+            new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
         public List<TrackingTimer> Timers { get; } = [];
+
+        public override DateTimeOffset GetUtcNow() => utcNow;
 
         public override ITimer CreateTimer(
             TimerCallback callback,
@@ -319,6 +243,8 @@ public sealed class WorkbenchDependencyInjectionTests
             Timers.Add(timer);
             return timer;
         }
+
+        public void Advance(TimeSpan duration) => utcNow += duration;
     }
 
     private sealed class TrackingTimer : ITimer

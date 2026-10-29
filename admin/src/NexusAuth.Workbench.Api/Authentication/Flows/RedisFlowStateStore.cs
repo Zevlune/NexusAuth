@@ -1,27 +1,19 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
-namespace NexusAuth.Extension.Redis;
+namespace NexusAuth.Workbench.Api;
 
 /// <summary>
-/// Stores pending OIDC flow state in Redis with a cross-instance shared capacity and atomic one-time
+/// Stores browser-bound OIDC flow evidence in Redis with shared capacity and atomic one-time
 /// consumption.
 /// </summary>
-/// <remarks>
-/// Every instance that uses the same Redis database and <see cref="RedisFlowStateOptions.KeyPrefix"/>
-/// shares one capacity pool and sees the same pending flows. Use a distinct prefix for each isolated
-/// application or tenant. A configured multiplexer is borrowed from DI and is never disposed here.
-/// </remarks>
 public sealed class RedisFlowStateStore : IFlowStateStore
 {
     private const int Success = 0;
     private const int DuplicateState = 1;
     private const int CapacityExceeded = 2;
-
-    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     private const string LuaPrelude = """
         local function current_time_ms()
@@ -33,7 +25,6 @@ public sealed class RedisFlowStateStore : IFlowStateStore
         local function remove_expired(records_key, expiries_key, now_ms)
             local expired = redis.call('ZRANGEBYSCORE', expiries_key, '-inf', now_ms)
             if #expired > 0 then
-                -- Keep each HDEL below the Lua unpack stack limit when all 100,000 slots expire.
                 for first = 1, #expired, 500 do
                     local batch = {}
                     local last = math.min(first + 499, #expired)
@@ -45,7 +36,6 @@ public sealed class RedisFlowStateStore : IFlowStateStore
                 redis.call('ZREMRANGEBYSCORE', expiries_key, '-inf', now_ms)
             end
 
-            -- Both keys always share a TTL. If one key expires first, discard the unindexed residue.
             if redis.call('ZCARD', expiries_key) == 0 then
                 redis.call('DEL', records_key, expiries_key)
             end
@@ -94,36 +84,14 @@ public sealed class RedisFlowStateStore : IFlowStateStore
         return 0
         """;
 
-    private const string GetScript = LuaPrelude + """
-
-        local now_ms = current_time_ms()
-        remove_expired(KEYS[1], KEYS[2], now_ms)
-
-        local value = redis.call('HGET', KEYS[1], ARGV[1])
-        if not value then
-            return nil
-        end
-
-        local indexed_expiry = redis.call('ZSCORE', KEYS[2], ARGV[1])
-        if not indexed_expiry or tonumber(indexed_expiry) <= now_ms then
-            redis.call('HDEL', KEYS[1], ARGV[1])
-            redis.call('ZREM', KEYS[2], ARGV[1])
-            refresh_key_ttl(KEYS[1], KEYS[2], now_ms)
-            return nil
-        end
-
-        refresh_key_ttl(KEYS[1], KEYS[2], now_ms)
-        return value
-        """;
-
     private const string TryTakeScript = LuaPrelude + """
 
         local now_ms = current_time_ms()
         remove_expired(KEYS[1], KEYS[2], now_ms)
 
-        local value = redis.call('HGET', KEYS[1], ARGV[1])
-        if not value then
-            return nil
+        local binding_hash = redis.call('HGET', KEYS[1], ARGV[1])
+        if not binding_hash or binding_hash ~= ARGV[2] then
+            return 0
         end
 
         local indexed_expiry = redis.call('ZSCORE', KEYS[2], ARGV[1])
@@ -131,18 +99,13 @@ public sealed class RedisFlowStateStore : IFlowStateStore
             redis.call('HDEL', KEYS[1], ARGV[1])
             redis.call('ZREM', KEYS[2], ARGV[1])
             refresh_key_ttl(KEYS[1], KEYS[2], now_ms)
-            return nil
-        end
-
-        local record = cjson.decode(value)
-        if not record['bindingHash'] or record['bindingHash'] ~= ARGV[2] then
-            return nil
+            return 0
         end
 
         redis.call('HDEL', KEYS[1], ARGV[1])
         redis.call('ZREM', KEYS[2], ARGV[1])
         refresh_key_ttl(KEYS[1], KEYS[2], now_ms)
-        return value
+        return 1
         """;
 
     private const string RemoveScript = LuaPrelude + """
@@ -163,9 +126,6 @@ public sealed class RedisFlowStateStore : IFlowStateStore
     private readonly int capacity;
 
     /// <summary>Creates a scoped store over the registered Redis connection.</summary>
-    /// <param name="connection">The shared multiplexer. The store does not own or dispose it.</param>
-    /// <param name="redisOptions">The Redis key namespace and database settings.</param>
-    /// <param name="flowOptions">The shared lifetime and capacity limits.</param>
     public RedisFlowStateStore(
         IConnectionMultiplexer connection,
         IOptions<RedisFlowStateOptions> redisOptions,
@@ -180,34 +140,43 @@ public sealed class RedisFlowStateStore : IFlowStateStore
         redisSettings.Validate();
 
         if (flowSettings.Capacity is < 1 or > 100_000)
-            throw new ArgumentOutOfRangeException(nameof(flowOptions), "Flow-state capacity is invalid.");
-        if (flowSettings.Lifetime <= TimeSpan.Zero || flowSettings.Lifetime > TimeSpan.FromHours(1))
-            throw new ArgumentOutOfRangeException(nameof(flowOptions), "Flow-state lifetime is invalid.");
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(flowOptions),
+                "Flow-state capacity is invalid.");
+        }
+
+        if (flowSettings.Lifetime <= TimeSpan.Zero
+            || flowSettings.Lifetime > TimeSpan.FromHours(1))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(flowOptions),
+                "Flow-state lifetime is invalid.");
+        }
 
         database = connection.GetDatabase(redisSettings.Database);
         recordsKey = redisSettings.RecordsKey;
         expiriesKey = redisSettings.ExpiriesKey;
         capacity = flowSettings.Capacity;
-        lifetimeMilliseconds = Math.Max(1, (long)Math.Ceiling(flowSettings.Lifetime.TotalMilliseconds));
+        lifetimeMilliseconds = Math.Max(
+            1,
+            (long)Math.Ceiling(flowSettings.Lifetime.TotalMilliseconds));
     }
 
     /// <inheritdoc />
-    public async Task AddAsync(string state, FlowState flowState, CancellationToken ct = default)
+    public async Task AddAsync(
+        string state,
+        FlowState flowState,
+        CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrEmpty(state);
         ArgumentNullException.ThrowIfNull(flowState);
+        ArgumentException.ThrowIfNullOrEmpty(flowState.BrowserBinding);
 
-        var record = new StoredFlowState(
-            new FlowStatePayload(
-                flowState.CodeVerifier,
-                flowState.Nonce,
-                flowState.BrowserBinding),
-            HashBinding(flowState.BrowserBinding));
-        var json = JsonSerializer.Serialize(record, SerializerOptions);
         var result = await EvaluateAsync(
             AddScript,
-            [state, json, lifetimeMilliseconds, capacity],
+            [state, HashBinding(flowState.BrowserBinding), lifetimeMilliseconds, capacity],
             ct).ConfigureAwait(false);
 
         switch ((long)result)
@@ -219,7 +188,8 @@ public sealed class RedisFlowStateStore : IFlowStateStore
             case CapacityExceeded:
                 throw new FlowStateCapacityExceededException();
             default:
-                throw new InvalidOperationException("Redis flow-state add script returned an unknown result.");
+                throw new InvalidOperationException(
+                    "Redis flow-state add script returned an unknown result.");
         }
     }
 
@@ -237,28 +207,7 @@ public sealed class RedisFlowStateStore : IFlowStateStore
             TryTakeScript,
             [state, HashBinding(browserBinding)],
             ct).ConfigureAwait(false);
-        return result.IsNull ? null : DeserializeFlowState(result.ToString());
-    }
-
-    /// <inheritdoc />
-    public async Task<FlowState?> GetAsync(string state, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-        ArgumentException.ThrowIfNullOrEmpty(state);
-
-        var result = await EvaluateAsync(GetScript, [state], ct).ConfigureAwait(false);
-        if (result.IsNull)
-            return null;
-
-        try
-        {
-            return DeserializeFlowState(result.ToString());
-        }
-        catch (JsonException)
-        {
-            await RemoveAsync(state, ct).ConfigureAwait(false);
-            return null;
-        }
+        return (long)result == 1 ? new FlowState(browserBinding) : null;
     }
 
     /// <inheritdoc />
@@ -278,25 +227,7 @@ public sealed class RedisFlowStateStore : IFlowStateStore
             .ScriptEvaluateAsync(script, [recordsKey, expiriesKey], values)
             .WaitAsync(ct);
 
-    private static FlowState DeserializeFlowState(string? json)
-    {
-        var record = JsonSerializer.Deserialize<StoredFlowState>(json ?? string.Empty, SerializerOptions)
-            ?? throw new JsonException("The stored Redis flow state is empty.");
-        return new FlowState(
-            record.Payload.CodeVerifier,
-            record.Payload.Nonce,
-            record.Payload.BrowserBinding);
-    }
-
-    private static string? HashBinding(string? browserBinding) =>
-        browserBinding is null
-            ? null
-            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(browserBinding)));
-
-    private sealed record StoredFlowState(FlowStatePayload Payload, string? BindingHash);
-
-    private sealed record FlowStatePayload(
-        string CodeVerifier,
-        string Nonce,
-        string? BrowserBinding);
+    private static string HashBinding(string browserBinding) =>
+        Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(browserBinding)));
 }

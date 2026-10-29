@@ -4,9 +4,12 @@ using Luck.Framework.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using NexusAuth.Application.Services.Email;
 using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Extension;
@@ -46,6 +49,7 @@ public class WorkbenchApiModule : LuckAppModule
         {
             ConfigureOidcClient(services, settings);
             ConfigureCookieAuthentication(authentication);
+            ConfigureOpenIdConnect(authentication, settings);
         }
 
         ConfigureBearerAuthentication(authentication, settings);
@@ -58,12 +62,80 @@ public class WorkbenchApiModule : LuckAppModule
             options.Authority = settings.Authority;
             options.ClientId = settings.ClientId;
             options.ClientSecret = settings.ClientSecret;
-            options.RedirectUri = settings.RedirectUri;
-            options.PostLogoutRedirectUri = settings.PostLogoutRedirectUri;
-            options.Scope = settings.Scope;
-            options.SignOutProvider = settings.SignOutProvider;
             options.RequireHttpsMetadata = settings.RequireHttpsMetadata;
-        }).UseInMemory();
+        });
+        services.AddSingleton(settings);
+        var flow = services.AddWorkbenchFlowState();
+        var configuration = services.GetConfiguration();
+        services.AddOptions<WorkbenchFlowStateOptions>()
+            .Bind(configuration.GetSection("Auth:FlowState"))
+            .Validate(options => options.Capacity is >= 1 and <= 100_000
+                && options.Lifetime > TimeSpan.Zero && options.Lifetime <= TimeSpan.FromHours(1),
+                "Auth:FlowState capacity must be 1..100000 and lifetime must be positive and at most one hour.")
+            .ValidateOnStart();
+        switch (configuration["Auth:FlowState:Provider"] ?? "InMemory")
+        {
+            case "InMemory": flow.UseInMemory(); break;
+            case "Redis":
+                flow.UseRedis(options => configuration.GetSection("Auth:FlowState:Redis").Bind(options));
+                services.AddOptions<RedisFlowStateOptions>()
+                    .Validate(options => !string.IsNullOrWhiteSpace(options.KeyPrefix)
+                        && options.KeyPrefix.IndexOfAny(['{', '}']) < 0 && options.Database >= -1,
+                        "Auth:FlowState:Redis key prefix or database is invalid.")
+                    .ValidateOnStart();
+                break;
+            default: throw new InvalidOperationException("Auth:FlowState:Provider must be InMemory or Redis.");
+        }
+        services.AddScoped<WorkbenchOpenIdConnectEvents>();
+        services.AddSingleton<IWorkbenchTokenRefreshCoordinator, WorkbenchTokenRefreshCoordinator>();
+        services.AddHostedService<WorkbenchDiscoveryWarmupService>();
+    }
+
+    private static void ConfigureOpenIdConnect(AuthenticationBuilder authentication, WorkbenchAuthenticationSettings settings)
+    {
+        authentication.AddOpenIdConnect(WorkbenchAuthenticationDefaults.OpenIdConnectScheme, options =>
+        {
+            options.SignInScheme = WorkbenchAuthenticationDefaults.CookieScheme;
+            options.SignOutScheme = WorkbenchAuthenticationDefaults.CookieScheme;
+            options.Authority = settings.Authority;
+            options.ClientId = settings.ClientId;
+            options.ClientSecret = settings.ClientSecret;
+            options.RequireHttpsMetadata = settings.RequireHttpsMetadata;
+            options.CallbackPath = new Uri(settings.RedirectUri).AbsolutePath;
+            options.ResponseType = OpenIdConnectResponseType.Code;
+            options.ResponseMode = OpenIdConnectResponseMode.Query;
+            options.UsePkce = true;
+            options.SaveTokens = true;
+            options.MapInboundClaims = false;
+            options.UseTokenLifetime = false;
+            options.DisableTelemetry = true;
+            options.PushedAuthorizationBehavior = PushedAuthorizationBehavior.Disable;
+            options.Scope.Clear();
+            foreach (var scope in settings.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                options.Scope.Add(scope);
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true, ValidIssuer = settings.Authority,
+                ValidateAudience = true, ValidAudience = settings.ClientId,
+                ValidateIssuerSigningKey = true, RequireSignedTokens = true,
+                ValidateLifetime = true, RequireExpirationTime = true,
+                ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
+                ClockSkew = TimeSpan.FromSeconds(30), NameClaimType = "name", RoleClaimType = "role",
+            };
+            options.EventsType = typeof(WorkbenchOpenIdConnectEvents);
+            // Query callbacks work with Lax cookies and do not require cross-site POST cookies.
+            options.CorrelationCookie.SameSite = SameSiteMode.Lax;
+            options.NonceCookie.SameSite = SameSiteMode.Lax;
+        });
+        authentication.Services.AddOptions<OpenIdConnectOptions>(WorkbenchAuthenticationDefaults.OpenIdConnectScheme)
+            .Configure<IConfigurationManager<OpenIdConnectConfiguration>, IOptions<WorkbenchSecurityOptions>, IOptions<WorkbenchFlowStateOptions>>(
+                (options, metadata, security, flow) =>
+                {
+                    options.ConfigurationManager = metadata;
+                    options.CorrelationCookie.SecurePolicy = WorkbenchSecurityOptions.ResolveCookieSecurePolicy(security.Value);
+                    options.NonceCookie.SecurePolicy = options.CorrelationCookie.SecurePolicy;
+                    options.RemoteAuthenticationTimeout = flow.Value.Lifetime;
+                });
     }
 
     private static void ConfigureCookieAuthentication(AuthenticationBuilder authentication)
@@ -116,7 +188,7 @@ public class WorkbenchApiModule : LuckAppModule
         });
     }
 
-    private static async Task ValidateBearerTokenAsync(TokenValidatedContext context, IReadOnlySet<string> allowedClientIds)
+    private static async Task ValidateBearerTokenAsync(Microsoft.AspNetCore.Authentication.JwtBearer.TokenValidatedContext context, IReadOnlySet<string> allowedClientIds)
     {
         if (!string.Equals(context.Principal?.FindFirst("token_use")?.Value, "access_token", StringComparison.Ordinal))
         {

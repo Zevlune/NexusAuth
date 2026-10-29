@@ -5,4 +5,5 @@ public static class WorkbenchAuthenticationDefaults
     public const string Scheme = "Workbench";
     public const string CookieScheme = "Workbench.Cookie";
     public const string BearerScheme = "Workbench.Bearer";
+    public const string OpenIdConnectScheme = "Workbench.OpenIdConnect";
 }

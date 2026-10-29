@@ -1,8 +1,6 @@
-using NexusAuth.Extension;
-
 namespace NexusAuth.Workbench.Api;
 
-internal sealed record WorkbenchAuthenticationSettings(
+public sealed record WorkbenchAuthenticationSettings(
     string Authority,
     string Audience,
     string ClientId,

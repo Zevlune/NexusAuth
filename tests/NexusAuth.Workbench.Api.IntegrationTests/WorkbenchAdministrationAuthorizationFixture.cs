@@ -129,16 +129,10 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                     method.Name == nameof(IUserManagementService.GetPagedAsync)
                         ? new PagedResult<ManagedUserDto>([], 0, 1, 10)
                         : null));
-                Replace(services, RecordingDispatchProxy.Create<IOidcWorkbenchService>((method, args) =>
+                Replace(services, RecordingDispatchProxy.Create<INexusAuthClient>((method, args) =>
                     method.Name switch
                     {
-                        "get_Authority" => Authority,
-                        "get_ClientId" => ClientId,
-                        "get_RedirectUri" => "https://dashboard.example.test/signin-oidc",
-                        "get_PostLogoutRedirectUri" => "https://dashboard.example.test/",
-                        "get_Scope" => WorkbenchScope,
-                        "get_SignOutProvider" => false,
-                        nameof(IOidcWorkbenchService.IntrospectAccessTokenAsync) =>
+                        nameof(INexusAuthClient.IntrospectAccessTokenAsync) =>
                             new AccessTokenIntrospectionResult(
                                 true,
                                 ((string)args![0]!)["cookie-access:".Length..],

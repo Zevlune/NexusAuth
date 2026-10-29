@@ -33,7 +33,7 @@ Workbench 由以下项目和进程组成：
 | --- | --- | --- | --- |
 | Workbench API | `admin/src/NexusAuth.Workbench.Api` | OIDC BFF（登录、回调、Cookie、刷新、登出）+ 管理 API + Swagger | `admin-api` |
 | Dashboard | `admin/src/NexusAuth.Workbench.Dashboard` | React 管理界面，只通过 BFF 的 `/api` 同源访问 | `dashboard` |
-| 接入扩展 | `admin/src/NexusAuth.Extension` | Workbench 的 OIDC、PKCE、刷新、introspection 客户端实现（`AddNexusAuth`） | 随 API 编译 |
+| 接入扩展 | `admin/src/NexusAuth.Extension` | 通用 OIDC 薄协议客户端；不提供 Cookie、登录端点或前端流程 | 随 API 编译 |
 
 Workbench 还依赖两个外部组件：
 
@@ -79,7 +79,7 @@ Workbench 和 Host 指向同一个库和 schema。数据库必须先初始化：
 Workbench 的默认模式（BFF 模式）需要 Host 提供 OIDC 登录。请先按 [NexusAuth.Host 使用手册](NexusAuth.Host使用手册.md) 把 Host 启动起来，至少满足：
 
 - Host 通过 OIDC Discovery（`<Authority>/.well-known/openid-configuration`）暴露授权、令牌、JWKS 和 introspection 端点。
-- Host 的 `Jwt:Issuer` 与 Workbench 配置的 `Auth:Authority` 完全一致；同一个 Authority 用于浏览器授权跳转、Discovery、令牌、JWKS、introspection 和 JWT issuer 校验。
+- Host 的 OIDC issuer 与 Workbench 配置的 `Auth:Authority` 完全一致；同一个 Authority 用于浏览器授权跳转、Discovery、令牌、JWKS、introspection 和 ID Token issuer 校验。
 - 浏览器和 Workbench API 进程都能直接访问该 Authority。容器内的 `localhost` 指向容器自身；跨网段或跨容器时应使用同一个可达域名或 IP，并通过网络 DNS 或入口路由访问 Provider。
 
 Host 默认关闭 SMTP，因此没有邮件配置也能启动。需要邮件功能时，在 Host appsettings 中设置 `Smtp:Enabled=true` 并提供完整配置；启用后 `ValidateOnStart` 会在必需项缺失时阻止启动：
@@ -232,6 +232,9 @@ npm --prefix admin/src/NexusAuth.Workbench.Dashboard run dev
 | `Auth:PostLogoutRedirectUri` | `http://localhost:5273/` | 登出后回到的前端地址 |
 | `Auth:Scope` | `openid profile offline_access nexusauth.workbench.api` | 申请的 scope |
 | `Auth:SignOutProvider` | `true` | 登出时是否继续跳 Provider 全局登出 |
+| `Auth:FlowState:Provider` | `InMemory` | 登录流程存储；多实例使用 `Redis` |
+| `Auth:FlowState:Lifetime` | `00:10:00` | 待完成登录流程的最长有效期 |
+| `Auth:FlowState:Capacity` | `10000` | 当前实例或共享存储允许的最大待完成流程数 |
 | `Security:CookieSecurePolicy` | `Always` | 生产 Cookie 必须带 Secure；Development 覆盖为 `SameAsRequest` |
 | `Security:ForwardedHeadersEnabled` | `false` | 默认不信任任何转发头 |
 | `Security:ForwardLimit` | `1` | 启用转发头时最多处理的代理跳数，允许 1 到 10 |
@@ -258,6 +261,12 @@ Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便
 | `NEXUSAUTH_WORKBENCH_AUTH_SCOPE` | `Auth:Scope` | 非网关模式必填 |
 | `NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA` | `Auth:RequireHttpsMetadata` | 否 |
 | `NEXUSAUTH_WORKBENCH_AUTH_SIGN_OUT_PROVIDER` | `Auth:SignOutProvider` | 否 |
+| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_PROVIDER` | `Auth:FlowState:Provider` | 否（默认 `InMemory`） |
+| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_CAPACITY` | `Auth:FlowState:Capacity` | 否 |
+| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_LIFETIME` | `Auth:FlowState:Lifetime` | 否 |
+| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_REDIS_CONFIGURATION` | `Auth:FlowState:Redis:Configuration` | Redis 模式必填 |
+| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_REDIS_KEY_PREFIX` | `Auth:FlowState:Redis:KeyPrefix` | 否 |
+| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_REDIS_DATABASE` | `Auth:FlowState:Redis:Database` | 否 |
 | `NEXUSAUTH_WORKBENCH_SECURITY_COOKIE_SECURE_POLICY` | `Security:CookieSecurePolicy` | 否 |
 | `NEXUSAUTH_WORKBENCH_SECURITY_FORWARDED_HEADERS_ENABLED` | `Security:ForwardedHeadersEnabled` | 否 |
 | `NEXUSAUTH_WORKBENCH_SECURITY_FORWARD_LIMIT` | `Security:ForwardLimit` | 否 |
@@ -273,9 +282,9 @@ Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便
 
 `NEXUSAUTH_SMTP_*` 系列（`NEXUSAUTH_SMTP_ENABLED`、`HOST`、`PORT`、`SECURITY`、`USERNAME`、`PASSWORD`、`FROM_ADDRESS`、`FROM_NAME`、`VERIFICATION_CODE_COOLDOWN_SECONDS`、`VERIFICATION_CODE_LIFETIME_MINUTES`）由 Workbench API 一并读取并映射到 `Smtp:*`，与 Host 共享同样的校验规则。
 
-`NEXUSAUTH_LUCK_LOGGING_*` 覆盖 `LuckLogging:*` 日志配置。单下划线变量及其配置键的完整映射以 `admin/src/NexusAuth.Workbench.Api/WorkbenchConfigurationExtensions.cs` 为准。未列入单下划线映射的键可以用标准 .NET 双下划线形式（例如 `Auth__AllowedBearerClientIds__0`），或者由编排直接注入配置键。
+`NEXUSAUTH_LUCK_LOGGING_*` 覆盖 `LuckLogging:*` 日志配置。单下划线变量及其配置键的完整映射以 `admin/src/NexusAuth.Workbench.Api/WorkbenchConfigurationExtensions.cs` 为准。未列入单下划线映射的键可以用标准 .NET 双下划线形式（例如 `Auth__AllowedBearerClientIds__0` 或 `Auth__FlowState__Provider=Redis`），或者由编排直接注入配置键。
 
-启动时 `WorkbenchAuthenticationSettings` 会集中校验：`Authority` 必须是非空绝对 HTTP(S) 基础 URI，且不含用户信息、查询或片段；`RequireHttpsMetadata=true` 时必须是 HTTPS。非网关模式下 `RedirectUri`、`PostLogoutRedirectUri`、`Scope` 必须有值。任何一项不满足都会抛出异常并阻止启动。
+启动时会集中校验：`Authority` 必须是非空绝对 HTTP(S) 基础 URI，且不含用户信息、查询或片段；`RequireHttpsMetadata=true` 时必须是 HTTPS。非网关模式下 `RedirectUri`、`PostLogoutRedirectUri`、`Scope` 必须有值。任何一项不满足都会抛出异常并阻止启动。
 
 `Auth:ClientId` 和 `Auth:ClientSecret` 的配置首尾空白在启动校验、Bootstrap 和协议调用中统一去除；内部空格与其他字符保持原样。发送 Basic 认证时，ID 与密钥分别做表单编码后再拼接和 Base64 编码。
 
@@ -285,11 +294,11 @@ Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便
 
 | 键 | 面向谁 | 作用 |
 | --- | --- | --- |
-| `Auth:Authority` | 浏览器 + Workbench 进程 | Provider 的唯一基础地址。用于 Discovery、JWT 的 `ValidIssuer` 和 `MetadataAddress`；授权、令牌、JWKS、introspection 使用该发现文档声明的原始端点 |
+| `Auth:Authority` | 浏览器 + Workbench 进程 | Provider 的唯一基础地址。用于 Discovery、OIDC handler 和 JWT Bearer 的 issuer、签名、audience 校验；授权、令牌、JWKS、introspection 使用该发现文档声明的原始端点 |
 
 要点：
 
-- `Auth:Authority` 必须与 Host 的 `Jwt:Issuer` 和 Discovery 返回的 issuer 完全一致。任何 scheme、host、port 或路径差异都会导致登录或 Bearer 校验失败。
+- `Auth:Authority` 必须与 Host 配置和 Discovery 返回的 issuer 完全一致。任何 scheme、host、port 或路径差异都会导致登录或 Bearer 校验失败。
 - 浏览器和 Workbench API 进程必须都能直接访问这一地址。容器里的 `localhost` 指容器自身；跨容器部署应给浏览器和各工作负载使用同一个可解析域名或 IP，并配置网络 DNS 或入口路由到 Provider。
 - 不要用 `sso:8080` 等容器服务名替代 `Auth:Authority`，也不要再引入内网地址、HTTP 地址改写或其他仅服务端可达的地址映射。
 - `Auth:Authority` 必须是绝对 HTTP(S) 基础 URI，不能带用户信息、查询串或片段。
@@ -314,17 +323,19 @@ Swagger 未显式配置时仅在 `Development` 环境注册；其他环境默认
 ### 6.1 认证流程
 
 1. Dashboard 启动时请求 `GET /api/auth/me`（`AllowAnonymous`）。已登录返回 `isAuthenticated=true` 和最小用户信息；未登录返回 `401` 与 `isAuthenticated=false`，前端判定未登录后显示登录页。
-2. 用户点击登录，前端请求 `GET /api/auth/login`。API 生成随机 `state`、`nonce`、S256 PKCE 和浏览器关联值；服务端流程状态只保存浏览器关联值的 SHA-256 绑定，浏览器另收到一个带随机 state 名称的 HttpOnly 关联 Cookie。
-3. 登录流程默认 10 分钟过期，进程内最多保留 10,000 个。`GET /api/auth/login` 按客户端 IP 使用每分钟 20 次的固定窗口限流；容量或频率超限返回 `429`。
-4. Discovery 文档按 Authority 跨请求缓存 5 分钟，并合并并发获取。所有 `/api` 与 `/signin-oidc` 响应使用 `no-store`，不会被浏览器或代理当作可缓存结果。
-5. 浏览器跳转到 Host 的 `/connect/authorize`。verifier、浏览器关联值和客户端密钥都不会进入 `authorizeUrl`。
-6. Host 回调 Workbench API 的 `GET /signin-oidc`。API 先校验 state 格式和关联 Cookie，再以绑定值比较并原子取出流程；同一 state 只能成功消费一次，错误浏览器即使得到 state 也不能消耗该流程。
-7. API 用授权码 + verifier 以 `client_secret_basic` 在服务端换取令牌，按 JWKS 校验 ID Token 的签名、issuer、audience、时效和 nonce。校验通过后写入 `.NexusAuth.Workbench` HttpOnly Cookie，并跳转前端 `/auth/callback`。
-8. 之后的管理请求不带 `Authorization` 时走 Cookie；带 `Authorization: Bearer` 时由 policy scheme 转交 JWT Bearer 校验。
+2. 用户点击登录，前端请求 `GET /api/auth/login` 并取得 JSON `authorizeUrl`。微软 `AddOpenIdConnect` handler 负责 state、nonce、PKCE、回调处理以及 ID Token 的签名、issuer、audience、时效和 nonce 校验。
+3. Workbench 流程状态默认 10 分钟过期、最多 10,000 个；登录发起端点按客户端 IP 限流。容量或频率超限返回 `429`。
+4. 启动后台服务预热 Discovery。预热失败只记录日志并按有限延迟重试，不阻塞应用启动；运行时元数据与 JWKS 由标准配置管理器刷新。
+5. Host 回调 `GET /signin-oidc`。OIDC handler 完成标准校验后，API 写入 `.NexusAuth.Workbench` HttpOnly Cookie，并跳转前端 `/auth/callback`。
+6. 之后的管理请求使用 Cookie。未登录返回 `401`，已登录但没有管理访问权限返回 `403`。
+7. Cookie 验证在 access token 接近过期时使用 `INexusAuthClient` 刷新，并复检 token 状态；失败则拒绝并清除 Cookie。
+8. `POST /api/auth/logout` 尽力撤销 refresh token 和 access token，返回前端所需的 JSON `logoutUrl`，并始终清除本地 Cookie。
 
-Workbench API 显式选择的 `UseInMemory()` 使用单进程存储。多实例部署必须把同一浏览器的登录发起和回调粘性路由到同一实例，或替换为跨实例共享、支持绑定校验和原子一次消费的 `IFlowStateStore`。所有实例还必须共享 ASP.NET Core Data Protection key ring。
+管理请求不带 `Authorization` 时使用 Cookie；带 `Authorization: Bearer` 时由 policy scheme 转交 Workbench 自身的 JWT Bearer handler。网关模式下默认认证方案直接使用该 Bearer handler。
 
-认证端点与鉴权（源码见 `admin/src/NexusAuth.Workbench.Api/Controllers/AuthController.cs`）：
+默认 `UseInMemory()` 只适用于单实例或带粘性路由的部署。多实例应使用 Redis 流程存储，并共享 ASP.NET Core Data Protection key ring。
+
+认证端点与鉴权：
 
 | 端点 | 鉴权 | 说明 |
 | --- | --- | --- |
@@ -341,81 +352,57 @@ Workbench API 启动时由 `WorkbenchClientCredentialHostedService` 幂等地登
 - 依赖项（缺任意一项即启动失败）：`Auth:ClientId`、`Auth:ClientSecret`、`Auth:Audience`、`Bootstrap:ResourceName`、`Bootstrap:ResourceDisplayName`、`Bootstrap:ClientName`；非网关模式还需要 `Auth:RedirectUri`、`Auth:PostLogoutRedirectUri`。
 - 注册或更新 API resource：名称取 `Bootstrap:ResourceName`，`audience` 取 `Auth:Audience`，显示名与描述取 `Bootstrap:ResourceDisplayName` / `ResourceDescription`。
 - 注册或更新 OAuth 客户端：`client_id` 取 `Auth:ClientId`，名称取 `Bootstrap:ClientName`，描述取 `ClientDescription`。
-- 客户端能力：非网关模式下 grant 为 `authorization_code` + `refresh_token`，`require_pkce=true`，token 端点认证为 `client_secret_basic`，scope 为静态的 `openid profile offline_access` 加上 `Auth:Audience`，回调取 `Auth:RedirectUri`、登出回调取 `Auth:PostLogoutRedirectUri`。
+- 客户端能力：非网关模式下 grant 为 `authorization_code` + `refresh_token`，`require_pkce=true`，token 端点认证固定为 `client_secret_basic`，scope 为静态的 `openid profile offline_access` 加上 `Auth:Audience`，回调取 `Auth:RedirectUri`、登出回调取 `Auth:PostLogoutRedirectUri`。
 - 关联关系：把该客户端与该 resource 关联，使签发的 access token 带正确 `aud`。
 - 密钥同步：如果数据库里的客户端密钥与 `Auth:ClientSecret` 不一致，会用配置值替换共享密钥哈希并标注来源，因此改密钥只需改配置再重启，不用手工改库。
 
 注意：`openid`、`profile`、`offline_access` 是客户端静态 scope，不会被当作 API resource。Bootstrap 只登记 Workbench 自己的资源，其他应用和资源请在 Dashboard 里登记。
 
-### 6.3 扩展复用（AddNexusAuth）
+### 6.3 NexusAuth.Extension 薄客户端
 
-`admin/src/NexusAuth.Extension` 是可选复用项。其他 .NET 应用引用该扩展后调用 `AddNexusAuth(options => { ... })`，并选择流程存储，即可获得：
-
-- OIDC Discovery 文档获取；
-- PKCE 生成（`GeneratePkce`）；
-- 授权码兑换（`ExchangeCodeAsync`）与刷新（`RefreshTokensAsync`）；
-- 令牌撤销（`RevokeTokenAsync`）；
-- ID Token 校验（`ValidateIdTokenAsync`）；
-- access token introspection（`IntrospectAccessTokenAsync`）；
-- 流程状态原子消费（`IFlowStateStore.TryTakeAsync`，同时校验浏览器绑定并确保一次成功取出后删除）；
-- Discovery 使用 `Auth:Authority`；令牌、JWKS 和 introspection 使用该发现文档声明的原始端点，不执行地址改写。
-
-`AddNexusAuth` 返回 `NexusAuthBuilder`，不再隐式选择存储；已有接入需要在注册末尾增加 `.UseInMemory()`，或选择 Redis / 自定义实现。后续普通 DI 注册可通过原来的 `services` 或 `builder.Services` 继续。它只提供协议能力，**不会**自动添加登录端点、回调路由、Cookie 或前端页面。这些需要接入方自行实现，可参考 `AuthController` 与 `WorkbenchApiModule`。如果只想要离线 JWT 校验，另用 `AddNexusAuthJwtBearer`；它只做签名、issuer、audience、有效期和 `token_use=access_token` 校验，不查询吊销状态。
-
-接入项目显式选择内存存储：
+`admin/src/NexusAuth.Extension` 只提供通用 OIDC HTTP 协议适配，不提供 Workbench、Cookie、前端路由或流程存储。接入说明见 [Extension README](../admin/src/NexusAuth.Extension/README.md)。
 
 ```csharp
-using NexusAuth.Extension;
-
 services.AddNexusAuth(options =>
 {
     options.Authority = "https://identity.example.com";
-    options.ClientId = "workbench";
+    options.ClientId = "my-api";
     options.ClientSecret = configuration["Auth:ClientSecret"];
-    options.RedirectUri = "https://app.example.com/signin-oidc";
-    options.PostLogoutRedirectUri = "https://app.example.com/";
-    options.Scope = "openid profile offline_access";
-}).UseInMemory(options =>
-{
-    options.Lifetime = TimeSpan.FromMinutes(10);
-    options.Capacity = 10_000;
+    options.RequireHttpsMetadata = true;
+    options.ClientAuthenticationMethod = ClientAuthenticationMethod.ClientSecretBasic;
 });
 ```
 
-多实例应用可额外引用 `admin/src/NexusAuth.Extension.Redis/NexusAuth.Extension.Redis.csproj`，改用 Redis（从 Auth 配置节读取同一套 OIDC 配置）：
+`AddNexusAuth` 返回 `IServiceCollection`。独立 SDK 的 `NexusAuthClientOptions` 只包含 `Authority`、`ClientId`、`ClientSecret`、`RequireHttpsMetadata` 和 `ClientAuthenticationMethod`；认证方式支持 `ClientSecretBasic`（默认）、`ClientSecretPost` 和 `None`。这些认证方式选项不改变 Workbench 自身固定使用的 Basic 客户端配置。Scoped `INexusAuthClient` 提供授权码兑换、刷新、introspection、撤销和 Discovery 获取。元数据与 JWKS 由单例 `IConfigurationManager<OpenIdConnectConfiguration>` 管理。
+
+Workbench 的登录流程存储位于 `admin/src/NexusAuth.Workbench.Api/Authentication/Flows`，通过以下方式选择：
 
 ```csharp
-using NexusAuth.Extension.Redis;
+services.AddWorkbenchFlowState().UseInMemory();
+// 或
+services.AddWorkbenchFlowState().UseRedis();
+```
 
-services.AddNexusAuth(options => configuration.GetSection("Auth").Bind(options))
-.UseRedis(options =>
+```json
 {
-    options.Configuration = configuration.GetConnectionString("Redis");
-    options.KeyPrefix = "my-app:workbench:flows";
-});
+  "Auth": {
+    "FlowState": {
+      "Provider": "InMemory",
+      "Lifetime": "00:10:00",
+      "Capacity": 10000,
+      "Redis": {
+        "Configuration": "127.0.0.1:6379",
+        "KeyPrefix": "NexusAuth:workbench:flow",
+        "Database": 0
+      }
+    }
+  }
+}
 ```
 
-同一应用的所有实例应使用相同 Redis 数据库、KeyPrefix、Lifetime 和 Capacity，不同应用应使用不同 KeyPrefix。Redis 提供程序通过同一 hash slot 内的 Lua 脚本完成到期清理、容量检查和浏览器绑定校验后的原子消费；这些语义不应被普通的先读取再删除替代。Redis 不保存已完成登录的会话，仍需共享 Data Protection key ring。
+`Auth:FlowState:Provider` 默认 `InMemory`，多实例部署应改为 `Redis`。Redis 实现继续保证浏览器绑定、原子一次消费和跨实例共享容量；所有实例使用相同的 Lifetime、Capacity、Redis 数据库和 KeyPrefix。
 
-如果应用已经通过接口注册 `IConnectionMultiplexer`，可以用无参 `.UseRedis()` 复用连接；需要设置前缀时仍可使用配置重载。提供程序不会覆盖已有的连接注册。连接由应用的 DI 容器管理，存储服务不释放它。
-
-自定义数据库或其他存储可实现 `IFlowStateStore`，然后调用 `.UseFlowStateStore<MyFlowStateStore>()`。默认注册为 Scoped，可直接依赖 Scoped 数据库会话；实现必须让不同请求访问同一份状态，并保证 `TryTakeAsync` 在校验到期时间和浏览器绑定后原子删除。重复选择提供程序时，以最后一次 `Use*` 为准，容器中只保留一条 `IFlowStateStore` 注册。
-
-| 服务 | 生命周期 | 原因 |
-| --- | --- | --- |
-| `IOidcWorkbenchService` | Scoped | 每个请求使用独立协议客户端服务 |
-| Redis / 默认自定义 `IFlowStateStore` | Scoped | 请求内使用存储服务，共享状态保存在外部存储 |
-| 内存 `IFlowStateStore` | Singleton，通过接口注册 | 登录发起与回调跨请求共享同一字典 |
-| `IWorkbenchDiscoveryCache` | Singleton，通过接口注册 | 跨请求缓存发现文档并合并并发加载 |
-| Redis `IConnectionMultiplexer` | Singleton，通过接口注册 | 跨请求共享连接，由容器统一释放 |
-
-业务代码只注入接口，不需要手动创建或释放这些服务。内存清理定时器和缓存同步资源仍由实现负责持有，容器销毁单例时调用其 `Dispose`。Workbench OIDC 配置通过标准 Options 管道在应用启动时校验。
-
-Redis 回归测试默认跳过；可针对独立测试 Redis 执行：
-
-```bash
-NEXUSAUTH_TEST_REDIS=127.0.0.1:16389 dotnet test tests/NexusAuth.Workbench.Api.IntegrationTests/NexusAuth.Workbench.Api.IntegrationTests.csproj --filter FullyQualifiedName~RedisFlowStateStoreTests
-```
+Redis 流程存储现在随 Workbench API 维护，不再使用独立的 `NexusAuth.Extension.Redis` 项目。
 
 ### 6.4 API 结果与错误边界
 
@@ -575,7 +562,7 @@ Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `
 - 没有 `[Authorize]` 或 `[AllowAnonymous]` 的端点使用 `FallbackPolicy`；
 - 只有裸 `[Authorize]` 的端点使用 `DefaultPolicy`。
 
-该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 401；已登录但未通过访问评估的请求返回 403。Swagger 也受该策略保护；BFF 模式的匿名浏览器请求会跳转登录，Bearer 请求需要具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 404。
+该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 `401`；已登录但未通过访问评估的请求返回 `403`。Swagger 也受该策略保护；BFF 模式的匿名浏览器请求会跳转登录，Bearer 请求需要具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 `404`。
 
 访问权限规则直接位于 `WorkbenchAccessAuthorizationHandler` 中。它继承框架原生的 `AuthorizationHandler<WorkbenchAccessRequirement>`，并通过 scoped 的 `IAuthorizationHandler` 注册参与 ASP.NET Core 授权；其直接依赖 `IUserRepository`，按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
 
@@ -642,7 +629,7 @@ Bearer 在 BFF 和网关模式下都校验 issuer、audience、有效期及 `tok
 
 ## 11. 网关模式边界
 
-设置 `NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED=true`（配置键 `Gateway:Enabled`）后，Workbench API 切换到网关模式：
+默认 BFF 模式由微软 OpenID Connect handler 和 Cookie 提供直连登录；设置 `NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED=true`（配置键 `Gateway:Enabled`）后，Workbench API 切换到网关模式：
 
 - 不再注册 Cookie 与本地登录方案，默认认证方案变为 `Workbench.Bearer`，只接受网关转发的 `Authorization: Bearer <access_token>`。
 - `AuthController` 会从控制器特性里移除，因此 `/api/auth/config`、`/api/auth/login`、`/signin-oidc`、`/api/auth/logout` 不再发布；通过默认授权的请求返回 404，匿名请求会先被 fallback 拦截并返回 401（实现见 `admin/src/NexusAuth.Workbench.Api/GatewayControllerFeatureProvider.cs`）。
@@ -682,7 +669,7 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 - Provider 登记的 `redirect_uri`、`post_logout_redirect_uri` 与 API 配置逐字符一致，且使用 HTTPS。
 - `Auth:Authority` 使用浏览器和 Workbench API 进程都能直接访问的 HTTPS 地址，并与 Provider issuer 和 token 的 `iss` 完全一致；通过 DNS 或入口路由保证该地址在两端可达。
 - `Auth:Audience` 与 Workbench API resource 的 audience 一致。
-- 多副本共享 Data Protection key ring；默认内存 flow 必须使用粘性路由，或通过 `UseRedis(...)` / `UseFlowStateStore<T>()` 选择共享且原子一次消费的存储。数据库使用持久卷并备份。
+- 多副本共享 Data Protection key ring；默认内存 flow 必须使用粘性路由，或将 `Auth:FlowState:Provider` 设为 `Redis` 并使用共享的 Redis 配置。数据库使用持久卷并备份。
 - `/api` 与 `/signin-oidc` 在应用侧强制 `no-store`，反向代理也应为这两个路径禁用响应缓存。
 - 不提交或在镜像里固化真实 `ClientSecret`；不使用仓库内置的开发密钥；生产不执行 `demo/seed.sql`。
 
@@ -697,7 +684,7 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 | 本地 HTTP 登录后 Cookie 未保存 | 误用了基础 `Always` 而不是 Development/本地覆盖的 `SameAsRequest` | 源码使用 Development 配置，Compose 同时加载 `docker-compose.local.yml` |
 | 本地 Dashboard 请求失败，命中内网地址 | Vite 代理仍是 `192.168.31.200:9100` | 把 `vite.config.ts` 的 `/api`、`/signin-oidc` 目标改成实际 API |
 | API 报无法访问 Provider Discovery | 容器内把 `localhost` 当成 Host，或网络 DNS/入口路由不可达 | 使用浏览器和 Workbench API 都能直达的同一 Authority；容器内不要用 `localhost` 或容器服务名替代 |
-| 多实例下回调偶尔提示 `invalid_callback` | 登录流程保存在默认进程内存储，回调落到了其他实例 | 使用粘性路由，或注册共享且原子一次消费的 `IFlowStateStore` |
+| 多实例下回调偶尔失败 | 登录流程保存在默认进程内存储，回调落到了其他实例 | 使用粘性路由，或将 `Auth:FlowState:Provider` 设为 `Redis` |
 | Bearer 调用返回 401 | audience/issuer/client_id 不匹配、token 过期或不是 access_token | 核对 audience、issuer、`token_use` 与客户端允许列表 |
 | 管理接口返回 403 | 当前访问授权 handler 未通过 | 默认授权 handler 下用启用状态的系统账号登录；替换授权 handler 时核对其判定（见第 10 节） |
 | 多实例下用户随机被登出 | Data Protection key ring 未共享 | 共享并持久化 key ring |
