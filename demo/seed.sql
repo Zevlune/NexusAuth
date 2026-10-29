@@ -1,16 +1,59 @@
 -- ============================================================
 -- NexusAuth demo seed data (single source of truth)
--- 说明：
--- 1) 该脚本是所有 demo 客户端的唯一种子数据来源。
--- 2) Demo.Bff / Demo.Web 保持为 private_key_jwt。
--- 3) 另外提供一套 Demo.Bff.ClientSecret / Demo.Web.ClientSecret 用于 client_secret_basic 演示。
--- 3) client_secret_* 使用 oauth_client_secrets；private_key_jwt 的公钥保存在 oauth_clients.jwks。
--- 4) 测试账号密码：alice / Pass@123, bob / Pass@123, admin / Pass@123
+--
+-- WARNING: ISOLATED DEMO DATABASES ONLY
+-- This file contains public demo credentials and JWKS values that match
+-- private keys committed under demo/src/*/keys/. The shared client secret
+-- is public too. Anyone with repository access can impersonate these demo
+-- clients. Run this file only against an isolated, disposable demo database
+-- that contains no production, staging, shared, or personal accounts.
+--
+-- This script refuses to run unless BOTH variables are supplied:
+--   NEXUSAUTH_ALLOW_DEMO_SEED=1
+--   NEXUSAUTH_DEMO_DATABASE=<isolated-demo-database>
+--
+-- Existing users, clients, secrets, API resources, and mappings are preserved.
+-- New demo users are ordinary active users; this script never grants the
+-- system-account flag.
+--
+-- Example:
+--   psql -v ON_ERROR_STOP=1 \
+--     -v NEXUSAUTH_ALLOW_DEMO_SEED=1 \
+--     -v NEXUSAUTH_DEMO_DATABASE=nexusauth_demo \
+--     -f demo/seed.sql
 -- ============================================================
 
-\connect nexusauth
+\set ON_ERROR_STOP on
+
+\if :{?NEXUSAUTH_ALLOW_DEMO_SEED}
+\else
+    \set NEXUSAUTH_ALLOW_DEMO_SEED 0
+\endif
+
+\if :{?NEXUSAUTH_DEMO_DATABASE}
+\else
+    \set NEXUSAUTH_DEMO_DATABASE ''
+\endif
+
+SELECT CASE
+    WHEN :'NEXUSAUTH_ALLOW_DEMO_SEED' = '1'
+     AND :'NEXUSAUTH_DEMO_DATABASE' <> ''
+    THEN 1
+    ELSE 0
+END AS nexusauth_demo_seed_allowed
+\gset
+
+\if :nexusauth_demo_seed_allowed
+\else
+    \echo 'REFUSED: set NEXUSAUTH_ALLOW_DEMO_SEED=1 and NEXUSAUTH_DEMO_DATABASE to an isolated demo database.'
+    \quit
+\endif
+
+\connect :"NEXUSAUTH_DEMO_DATABASE"
 
 SET search_path TO nexusauth;
+
+BEGIN;
 
 -- ============================================================
 -- API resources with audience mapping
@@ -23,11 +66,7 @@ VALUES
     ('10000000-0000-0000-0000-000000000001', 'demo_api', 'Demo API', 'demo-bff-api', 'API scope for web BFF business endpoints', true, NOW()),
     ('10000000-0000-0000-0000-000000000002', 'profile_api', 'Profile API', 'demo-bff-api', 'Profile-related API scope for web BFF', true, NOW()),
     ('10000000-0000-0000-0000-000000000003', 'mobile_api', 'Mobile API', 'demo-mobile-api', 'API scope for mobile bearer endpoints', true, NOW())
-ON CONFLICT (name) DO UPDATE SET
-    display_name = EXCLUDED.display_name,
-    audience = EXCLUDED.audience,
-    description = EXCLUDED.description,
-    is_active = EXCLUDED.is_active;
+ON CONFLICT DO NOTHING;
 
 -- ============================================================
 -- OAuth demo clients
@@ -130,18 +169,7 @@ VALUES
     true,
     NOW()
 )
-ON CONFLICT (client_id) DO UPDATE SET
-    token_endpoint_auth_method = EXCLUDED.token_endpoint_auth_method,
-    jwks = EXCLUDED.jwks,
-    jwks_uri = EXCLUDED.jwks_uri,
-    client_name = EXCLUDED.client_name,
-    description = EXCLUDED.description,
-    redirect_uris = EXCLUDED.redirect_uris,
-    post_logout_redirect_uris = EXCLUDED.post_logout_redirect_uris,
-    allowed_scopes = EXCLUDED.allowed_scopes,
-    allowed_grant_types = EXCLUDED.allowed_grant_types,
-    require_pkce = EXCLUDED.require_pkce,
-    is_active = EXCLUDED.is_active;
+ON CONFLICT DO NOTHING;
 
 INSERT INTO oauth_client_secrets (id, client_id, type, value, plain_value, description, is_active, created_at)
 VALUES
@@ -165,16 +193,11 @@ VALUES
     true,
     NOW()
 )
-ON CONFLICT (id) DO UPDATE SET
-    type = EXCLUDED.type,
-    value = EXCLUDED.value,
-    plain_value = EXCLUDED.plain_value,
-    description = EXCLUDED.description,
-    is_active = EXCLUDED.is_active;
+ON CONFLICT DO NOTHING;
 
 -- ============================================================
 -- Demo users
--- 密码均为：Pass@123
+-- Public demo password: Pass@123. Existing rows are never modified.
 -- ============================================================
 INSERT INTO users (id, username, password_hash, email, phone_number, nickname, gender, ethnicity, is_active, created_at, updated_at)
 VALUES
@@ -217,17 +240,7 @@ VALUES
     NOW(),
     NOW()
 )
-ON CONFLICT (username) DO UPDATE SET
-    password_hash = EXCLUDED.password_hash,
-    email = EXCLUDED.email,
-    phone_number = EXCLUDED.phone_number,
-    nickname = EXCLUDED.nickname,
-    gender = EXCLUDED.gender,
-    ethnicity = EXCLUDED.ethnicity,
-    is_active = EXCLUDED.is_active,
-    updated_at = NOW();
-
-UPDATE users SET is_system_account = true WHERE username = 'admin';
+ON CONFLICT DO NOTHING;
 
 -- ============================================================
 -- Optional mapping table seed (no foreign keys required)
@@ -242,3 +255,5 @@ VALUES
     ('20000000-0000-0000-0000-000000000102', '10000000-0000-0000-0000-000000000001'),
     ('20000000-0000-0000-0000-000000000103', '10000000-0000-0000-0000-000000000001')
 ON CONFLICT (client_id, api_resource_id) DO NOTHING;
+
+COMMIT;

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Users;
+using NexusAuth.Workbench.Api.Models.Requests;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
@@ -48,5 +49,3 @@ public sealed class UsersController(IUserManagementService userManagementService
         catch (InvalidOperationException exception) { return Conflict(new { message = exception.Message }); }
     }
 }
-
-public sealed record UpdateManagedUserStatusRequest(bool IsActive);

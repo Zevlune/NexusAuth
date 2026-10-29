@@ -1,25 +1,21 @@
+using NexusAuth.Workbench.Api.Options;
 using Luck.AutoDependencyInjection;
 using Luck.AspNetCore.Extensions;
 using Luck.Logging.Serilog;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using NexusAuth.Persistence;
 using NexusAuth.Workbench.Api;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Configuration.AddWorkbenchEnvironmentVariables();
-
 
 try
 {
     builder.AddLuckSerilog();
-    builder.Services.AddApiResult();
+    // 管理接口使用 WorkbenchApiResult；保留 ApiController 默认的请求体/模型校验。
 
     builder.Services.AddControllers()
-        .ConfigureApplicationPartManager(manager =>
-        {
-            if (builder.Configuration.IsWorkbenchGatewayEnabled())
-                manager.FeatureProviders.Add(new GatewayControllerFeatureProvider());
-        })
         .AddJsonOptions(options =>
         {
             options.JsonSerializerOptions.Converters.Add(new SystemTextJsonConvert.DateTimeConverter());
@@ -28,8 +24,22 @@ try
             options.JsonSerializerOptions.Converters.Add(new SystemTextJsonConvert.DateTimeOffsetNullConverter());
         });
     builder.Services.AddApplication<WorkbenchApiModule>();
-    if (builder.Configuration.IsWorkbenchGatewayEnabled())
-        builder.Services.RemoveAll<IWorkbenchCookieAuthenticationEvents>();
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddPolicy("workbench-login", httpContext =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    AutoReplenishment = true,
+                    PermitLimit = 20,
+                    QueueLimit = 0,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    Window = TimeSpan.FromMinutes(1),
+                }));
+    });
+
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(c =>
     {
@@ -37,11 +47,32 @@ try
     });
 
     var app = builder.Build();
+    var swaggerEnabled = app.Services.GetRequiredService<IOptions<WorkbenchSwaggerOptions>>().Value.Enabled
+        ?? app.Environment.IsDevelopment();
 
+    var security = app.Services.GetRequiredService<IOptions<WorkbenchSecurityOptions>>().Value;
+    if (security.ForwardedHeadersEnabled)
+        app.UseForwardedHeaders();
+    app.UseRouting();
+    app.Use(static (context, next) =>
+    {
+        if (context.Request.Path.StartsWithSegments("/api")
+            || context.Request.Path.StartsWithSegments("/signin-oidc"))
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.Pragma = "no-cache";
+        }
+
+        return next(context);
+    });
     app.InitializeApplication();
     app.UseLuckRequestLogContext();
-    app.UseSwagger();
-    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "NexusAuth Workbench API v1"));
+    app.UseRateLimiter();
+    if (swaggerEnabled)
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "NexusAuth Workbench API v1"));
+    }
 
     app.MapControllers();
 

@@ -1,12 +1,16 @@
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Protocols;
@@ -24,12 +28,10 @@ namespace NexusAuth.Workbench.Api.IntegrationTests;
 
 public sealed class WorkbenchTokenRevocationTests
 {
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Administrator_revocation_rejects_existing_bearer_and_allows_new_login(bool gateway)
+    [Fact]
+    public async Task Administrator_revocation_rejects_existing_cookie_and_allows_new_login()
     {
-        using var harness = new Harness(gateway);
+        using var harness = new Harness();
         using var administrator = harness.Client(harness.Admin);
         using var target = harness.Client(harness.Target);
         Assert.Equal(HttpStatusCode.OK, (await target.GetAsync("/api/auth/me")).StatusCode);
@@ -51,9 +53,9 @@ public sealed class WorkbenchTokenRevocationTests
     [InlineData("disabled")]
     [InlineData("deleted")]
     [InlineData("blacklisted")]
-    public async Task Existing_bearer_is_rejected_when_persisted_state_changes(string state)
+    public async Task Existing_cookie_is_rejected_when_persisted_state_changes(string state)
     {
-        using var harness = new Harness(true);
+        using var harness = new Harness();
         using var target = harness.Client(harness.Target, jti: "target-token");
         Assert.Equal(HttpStatusCode.OK, (await target.GetAsync("/api/auth/me")).StatusCode);
 
@@ -65,9 +67,9 @@ public sealed class WorkbenchTokenRevocationTests
     }
 
     [Fact]
-    public async Task Delete_endpoint_invalidates_existing_bearer_and_prevents_new_login()
+    public async Task Delete_endpoint_invalidates_existing_cookie_and_prevents_new_login()
     {
-        using var harness = new Harness(true);
+        using var harness = new Harness();
         using var administrator = harness.Client(harness.Admin);
         using var target = harness.Client(harness.Target);
 
@@ -80,9 +82,9 @@ public sealed class WorkbenchTokenRevocationTests
     }
 
     [Fact]
-    public async Task Reenabling_user_does_not_restore_their_previous_bearer()
+    public async Task Reenabling_user_does_not_restore_their_previous_cookie()
     {
-        using var harness = new Harness(true);
+        using var harness = new Harness();
         using var administrator = harness.Client(harness.Admin);
         using var target = harness.Client(harness.Target);
         using var disable = new StringContent("{\"isActive\":false}", System.Text.Encoding.UTF8, "application/json");
@@ -111,7 +113,7 @@ public sealed class WorkbenchTokenRevocationTests
         public User Admin { get; } = User.Create("admin", "test-password", "Admin");
         public User Target { get; } = User.Create("target", "test-password", "Target");
 
-        public Harness(bool gateway)
+        public Harness()
         {
             Admin.MarkAsSystemAccount();
             Users.Add(Admin.Id, Admin);
@@ -120,7 +122,6 @@ public sealed class WorkbenchTokenRevocationTests
             factory = new WebApplicationFactory<WorkbenchApiModule>().WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Testing")
-                    .UseSetting("Gateway:Enabled", gateway.ToString())
                     .UseSetting("Auth:Authority", Issuer)
                     .UseSetting("Auth:Audience", Audience)
                     .UseSetting("Auth:ClientId", ClientId)
@@ -154,13 +155,14 @@ public sealed class WorkbenchTokenRevocationTests
                         if (method.Name == nameof(ISsoSessionService.RevokeAllForUserAsync)) SessionRevocations.Add((Guid)args![0]!);
                         return null;
                     }));
-                    services.PostConfigure<JwtBearerOptions>(WorkbenchAuthenticationDefaults.BearerScheme, options =>
-                    {
-                        var configuration = new OpenIdConnectConfiguration { Issuer = Issuer };
-                        configuration.SigningKeys.Add(signingKey);
-                        options.Configuration = configuration;
-                        options.ConfigurationManager = new StaticConfigurationManager<OpenIdConnectConfiguration>(configuration);
-                    });
+                    services.RemoveAll<IWorkbenchTokenClient>();
+                    services.AddScoped<IWorkbenchTokenClient>(provider =>
+                        new IntrospectionClient(token => IntrospectAsync(token,
+                            provider.GetRequiredService<IUserTokenValidator>())));
+                    services.PostConfigure<OpenIdConnectOptions>(WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
+                        options => options.ConfigurationManager = new StaticConfigurationManager<OpenIdConnectConfiguration>(
+                            new OpenIdConnectConfiguration { Issuer = Issuer }));
+
                 });
             });
         }
@@ -178,11 +180,47 @@ public sealed class WorkbenchTokenRevocationTests
             };
             var token = new JwtSecurityToken(Issuer, Audience, claims, now.AddSeconds(-1), now.AddMinutes(5),
                 new SigningCredentials(signingKey, SecurityAlgorithms.RsaSha256));
-            var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(token));
+            var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+            {
+                AllowAutoRedirect = false, HandleCookies = false, BaseAddress = new Uri("https://dashboard.example.test"),
+            });
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(
+                [new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()), new Claim(ClaimTypes.Name, user.Nickname)],
+                WorkbenchAuthenticationDefaults.CookieScheme));
+            var properties = new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddHours(1) };
+            properties.StoreTokens([
+                new AuthenticationToken { Name = "access_token", Value = new JwtSecurityTokenHandler().WriteToken(token) },
+                new AuthenticationToken { Name = "refresh_token", Value = "test-refresh" },
+                new AuthenticationToken { Name = "id_token", Value = "test-id" },
+                new AuthenticationToken { Name = "expires_at", Value = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O") },
+            ]);
+            var options = factory.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+                .Get(WorkbenchAuthenticationDefaults.CookieScheme);
+            var ticket = new AuthenticationTicket(principal, properties, WorkbenchAuthenticationDefaults.CookieScheme);
+            client.DefaultRequestHeaders.Add("Cookie", options.Cookie.Name + "=" + options.TicketDataFormat.Protect(ticket));
             return client;
         }
 
+        private async Task<WorkbenchIntrospectionResult> IntrospectAsync(string token, IUserTokenValidator validator)
+        {
+            var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+            var principal = handler.ValidateToken(token, new TokenValidationParameters
+            {
+                ValidIssuer = Issuer, ValidAudience = Audience, IssuerSigningKey = signingKey,
+                ValidateLifetime = true, ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
+            }, out _);
+            return new WorkbenchIntrospectionResult(await validator.IsActiveAsync(principal),
+                principal.FindFirst("sub")!.Value, ClientId);
+        }
+
         public void Dispose() { factory.Dispose(); rsa.Dispose(); }
+    }
+
+    private sealed class IntrospectionClient(Func<string, Task<WorkbenchIntrospectionResult>> introspect)
+        : IWorkbenchTokenClient
+    {
+        public Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(string token, CancellationToken ct) => introspect(token);
+        public Task<WorkbenchTokenResult> RefreshTokensAsync(string token, CancellationToken ct) => throw new NotSupportedException();
+        public Task RevokeTokenAsync(string token, string hint, CancellationToken ct) => throw new NotSupportedException();
     }
 }

@@ -1,12 +1,13 @@
-using Luck.AspNetCore.ApiResults;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Services.OpenApi;
+using NexusAuth.Workbench.Api.Filters;
+using NexusAuth.Workbench.Api.Models.Requests;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
 /// <summary>Administrative lifecycle management for Host Open API bearer credentials.</summary>
 [ApiController]
-[ApiResultWrap]
+[WorkbenchApiResult]
 [Route("api/open-api-credentials")]
 public sealed class OpenApiCredentialsController(IOpenApiCredentialService credentialService) : ControllerBase
 {
@@ -28,6 +29,3 @@ public sealed class OpenApiCredentialsController(IOpenApiCredentialService crede
     public async Task<IActionResult> Revoke(Guid id, CancellationToken ct = default) =>
         await credentialService.RevokeAsync(id, ct) ? NoContent() : NotFound();
 }
-
-public sealed record CreateOpenApiCredentialRequest(string Name, string TargetType, DateTimeOffset? ExpiresAt);
-public sealed record UpdateOpenApiCredentialRequest(string Name, DateTimeOffset? ExpiresAt, bool IsActive);

@@ -1,7 +1,18 @@
+using System.Net;
+using System.Text;
+using Microsoft.AspNetCore.Mvc;
+using NexusAuth.Workbench.Api.Bootstrap;
+using NexusAuth.Workbench.Api.Options;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using NexusAuth.Application.Services.OpenApi;
+using NexusAuth.Application.Services.Scim;
 using NexusAuth.Application.Users;
 using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Workbench.Api;
@@ -16,7 +27,9 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
     public WorkbenchApiCompositionTests(WebApplicationFactory<WorkbenchApiModule> factory)
     {
         this.factory = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Testing")
-            .UseSetting("Auth:ClientSecret", "test-only-client-secret"));
+            .UseSetting("Auth:Authority", "https://issuer.example.test")
+            .UseSetting("Auth:ClientSecret", "test-only-client-secret")
+            .UseSetting("Swagger:Enabled", "true"));
     }
 
     [Fact]
@@ -26,6 +39,75 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
 
         Assert.Single(hostedServices.OfType<WorkbenchClientCredentialHostedService>());
         Assert.DoesNotContain(hostedServices, service => service.GetType().Name == "GatewayClientCredentialHostedService");
+    }
+
+    [Fact]
+    public void Real_host_keeps_framework_model_state_validation_enabled()
+    {
+        var options = factory.Services.GetRequiredService<IOptions<ApiBehaviorOptions>>().Value;
+
+        Assert.False(options.SuppressModelStateInvalidFilter);
+    }
+
+    [Fact]
+    public async Task Invalid_json_is_rejected_before_workbench_business_services_run()
+    {
+        var serviceCalls = new List<string>();
+        using var configured = new WorkbenchAdministrationAuthorizationFixture(
+            "nexusauth.workbench",
+            services =>
+            {
+                services.RemoveAll<IOpenApiCredentialService>();
+                services.AddSingleton(RecordingDispatchProxy.Create<IOpenApiCredentialService>((method, _) =>
+                {
+                    serviceCalls.Add($"OpenApi:{method.Name}");
+                    return null;
+                }));
+
+                services.RemoveAll<IScimCredentialService>();
+                services.AddSingleton(RecordingDispatchProxy.Create<IScimCredentialService>((method, _) =>
+                {
+                    serviceCalls.Add($"Scim:{method.Name}");
+                    return null;
+                }));
+
+                services.RemoveAll<IPasskeyManagementService>();
+                services.AddSingleton(RecordingDispatchProxy.Create<IPasskeyManagementService>((method, _) =>
+                {
+                    serviceCalls.Add($"Passkey:{method.Name}");
+                    return null;
+                }));
+            });
+        using var administrator = configured.CreateBearerClient(
+            WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+
+        var passkeyRevokePath = $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}"
+            + $"/passkeys/{Guid.NewGuid()}/revoke";
+        var requests = new[]
+        {
+            ("/api/open-api-credentials", ""),
+            ("/api/open-api-credentials", "null"),
+            ("/api/open-api-credentials", "{}"),
+            ("/api/open-api-credentials", "{"),
+            ("/api/scim-credentials", ""),
+            ("/api/scim-credentials", "null"),
+            ("/api/scim-credentials", "{}"),
+            ("/api/scim-credentials", "{"),
+            (passkeyRevokePath, ""),
+            (passkeyRevokePath, "null"),
+            (passkeyRevokePath, "{}"),
+            (passkeyRevokePath, "{"),
+        };
+
+        foreach (var (path, json) in requests)
+        {
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await administrator.PostAsync(path, content);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        Assert.Empty(serviceCalls);
     }
 
     [Fact]
@@ -40,6 +122,38 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
         using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
         using var response = await administrator.GetAsync("/swagger/v1/swagger.json");
         response.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Swagger_is_not_exposed_by_default_in_production()
+    {
+        using var production = new WebApplicationFactory<WorkbenchApiModule>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Production")
+                    .UseSetting("Auth:Authority", "https://issuer.example.test")
+                    .UseSetting("Auth:ClientSecret", "test-only-client-secret");
+                builder.ConfigureServices(services =>
+                {
+                    var bootstrap = services.SingleOrDefault(descriptor =>
+                        descriptor.ImplementationType == typeof(WorkbenchClientCredentialHostedService));
+                    if (bootstrap is not null)
+                        services.Remove(bootstrap);
+                    services.PostConfigure<AuthorizationOptions>(
+                        options => options.FallbackPolicy = null);
+                });
+            });
+        Assert.Equal("Production", production.Services.GetRequiredService<IWebHostEnvironment>().EnvironmentName);
+        Assert.Null(production.Services.GetRequiredService<IOptions<WorkbenchSwaggerOptions>>().Value.Enabled);
+        using var client = production.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        });
+
+        using var document = await client.GetAsync("/swagger/v1/swagger.json");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, document.StatusCode);
+        using var ui = await client.GetAsync("/swagger/index.html");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, ui.StatusCode);
     }
 
     [Fact]

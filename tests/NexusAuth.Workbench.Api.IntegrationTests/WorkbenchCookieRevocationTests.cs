@@ -1,10 +1,16 @@
+using FrameworkOptions = Microsoft.Extensions.Options.Options;
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Authentication.Events;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Workbench.Api.Options;
 using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using NexusAuth.Extension;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -72,12 +78,26 @@ public sealed class WorkbenchCookieRevocationTests
         Assert.Equal(1, harness.SignOutCount);
     }
 
+    [Fact]
+    public async Task Refresh_without_new_refresh_or_id_token_preserves_the_existing_tokens()
+    {
+        using var harness = new Harness { OmitOptionalTokens = true };
+        var context = harness.Context(TimeSpan.FromSeconds(10));
+        var previousRefresh = context.Properties.GetTokenValue("refresh_token");
+        await harness.Events.ValidatePrincipal(context);
+        Assert.True(context.ShouldRenew);
+        Assert.Equal("new-access", context.Properties.GetTokenValue("access_token"));
+        Assert.Equal(previousRefresh, context.Properties.GetTokenValue("refresh_token"));
+        Assert.Equal("old-id", context.Properties.GetTokenValue("id_token"));
+    }
+
     private sealed class Harness : IDisposable
     {
         private readonly string subject = Guid.NewGuid().ToString();
         private readonly string refreshToken = Guid.NewGuid().ToString();
         private readonly ServiceProvider services;
         public bool Active { get; set; } = true;
+        public bool OmitOptionalTokens { get; init; }
         public string? Failure { get; init; }
         public int SignOutCount { get; private set; }
         public int RefreshCount { get; private set; }
@@ -85,32 +105,50 @@ public sealed class WorkbenchCookieRevocationTests
 
         public Harness()
         {
-            var oidc = RecordingDispatchProxy.Create<IOidcWorkbenchService>((method, _) => method.Name switch
+            var oidc = RecordingDispatchProxy.Create<IWorkbenchTokenClient>((method, _) => method.Name switch
             {
                 "get_ClientId" => "workbench-client",
-                nameof(IOidcWorkbenchService.RefreshTokensAsync) => Refresh(),
-                nameof(IOidcWorkbenchService.IntrospectAccessTokenAsync) => Introspect(),
+                nameof(IWorkbenchTokenClient.RefreshTokensAsync) => Refresh(),
+                nameof(IWorkbenchTokenClient.IntrospectAccessTokenAsync) => Introspect(),
                 _ => throw new NotSupportedException(method.Name),
             });
-            Events = new WorkbenchCookieAuthenticationEvents(oidc);
             var authentication = RecordingDispatchProxy.Create<IAuthenticationService>((method, _) =>
             {
                 if (method.Name == nameof(IAuthenticationService.SignOutAsync)) SignOutCount++;
                 return null;
             });
-            services = new ServiceCollection().AddSingleton(authentication).BuildServiceProvider();
+            services = new ServiceCollection()
+                .AddSingleton(authentication)
+                .AddSingleton(oidc)
+                .AddSingleton<IWorkbenchTokenRefreshCoordinator, WorkbenchTokenRefreshCoordinator>()
+                .BuildServiceProvider();
+            Events = new WorkbenchCookieAuthenticationEvents(oidc,
+                FrameworkOptions.Create(new WorkbenchAuthenticationOptions
+                {
+                    Authority = "https://issuer.test",
+                    Audience = "workbench.api",
+                    ClientId = "workbench-client",
+                    ClientSecret = "secret",
+                    RedirectUri = "https://app.test/signin-oidc",
+                    PostLogoutRedirectUri = "https://app.test/",
+                    Scope = "openid offline_access",
+                    SignOutProvider = true,
+                    RequireHttpsMetadata = true
+                }),
+                services.GetRequiredService<IWorkbenchTokenRefreshCoordinator>());
         }
 
         private WorkbenchTokenResult Refresh()
         {
             RefreshCount++;
-            return new WorkbenchTokenResult("new-access", "new-refresh", "new-id", 300);
+            return new WorkbenchTokenResult("new-access", OmitOptionalTokens ? null : "new-refresh",
+                OmitOptionalTokens ? null : "new-id", 300);
         }
 
-        private AccessTokenIntrospectionResult Introspect()
+        private WorkbenchIntrospectionResult Introspect()
         {
             if (Failure == "exception") throw new HttpRequestException("Provider unavailable.");
-            return new AccessTokenIntrospectionResult(Active,
+            return new WorkbenchIntrospectionResult(Active,
                 Failure == "subject" ? "different-user" : subject,
                 Failure == "client" ? "different-client" : "workbench-client");
         }

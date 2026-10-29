@@ -11,11 +11,11 @@ export default defineConfig({
     port: 5273,
     proxy: {
       '/api': {
-        target: 'http://192.168.31.200:9100',
+        target: 'http://localhost:5051',
         changeOrigin: true,
       },
       '/signin-oidc': {
-        target: 'http://192.168.31.200:9100',
+        target: 'http://localhost:5051',
         changeOrigin: true,
       },
     },

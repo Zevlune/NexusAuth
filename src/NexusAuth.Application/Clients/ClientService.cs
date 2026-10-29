@@ -39,7 +39,7 @@ public class ClientService(
     {
         var existing = await clientRepository.FindByClientIdAsync(clientId, ct);
         if (existing is not null)
-            throw new InvalidOperationException($"ClientId '{clientId}' is already registered.");
+            throw new WorkbenchBusinessConflictException($"ClientId '{clientId}' is already registered.");
 
         var client = OAuthClient.Create(
             clientId,
@@ -341,7 +341,7 @@ public class ClientService(
 
     public async Task<ClientDto> UpdateAsync(Guid id, UpdateClientRequest request, CancellationToken ct = default)
     {
-        var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new InvalidOperationException($"Client with id {id} not found.");
+        var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new KeyNotFoundException($"Client with id {id} not found.");
         var apiResourceIds = request.ApiResourceIds is null
             ? null
             : NormalizeApiResourceIds(request.ApiResourceIds);
@@ -410,7 +410,7 @@ public class ClientService(
 
     public async Task<ClientMutationResultDto> GenerateCredentialAsync(Guid id, GenerateClientCredentialRequest request, CancellationToken ct = default)
     {
-        var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new InvalidOperationException($"Client with id {id} not found.");
+        var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new KeyNotFoundException($"Client with id {id} not found.");
         var tokenEndpointAuthMethod = ResolveCredentialAuthMethod(client, request.TokenEndpointAuthMethod);
         EnsureSharedSecretCapacity(client, tokenEndpointAuthMethod);
         var generatedCredential = GenerateCredential(client.Id, tokenEndpointAuthMethod, request.AutoGenerateJwks, request.Description);
@@ -425,7 +425,7 @@ public class ClientService(
         }
 
         client = await clientRepository.GetByIdAsync(id, ct)
-            ?? throw new InvalidOperationException($"Client with id {id} not found.");
+            ?? throw new KeyNotFoundException($"Client with id {id} not found.");
 
         return new ClientMutationResultDto(
             await MapClientAsync(client, ct),
@@ -434,12 +434,12 @@ public class ClientService(
 
     public async Task<ClientMutationResultDto> ResetCredentialAsync(Guid id, GenerateClientCredentialRequest request, CancellationToken ct = default)
     {
-        var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new InvalidOperationException($"Client with id {id} not found.");
+        var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new KeyNotFoundException($"Client with id {id} not found.");
         var tokenEndpointAuthMethod = ResolveCredentialAuthMethod(client, request.TokenEndpointAuthMethod);
         EnsureCredentialGenerationSupported(tokenEndpointAuthMethod);
 
         if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal))
-            throw new InvalidOperationException("private_key_jwt does not use shared secret reset. Update the registered JWKS instead.");
+            throw new WorkbenchBusinessConflictException("private_key_jwt does not use shared secret reset. Update the registered JWKS instead.");
 
         foreach (var secret in client.ClientSecrets.Where(secret => secret.IsActive && string.Equals(secret.Type, OAuthClientSecret.TypeSharedSecret, StringComparison.Ordinal)))
         {
@@ -459,7 +459,7 @@ public class ClientService(
             [client.ClientId, "ClientRefreshTokensRevoked"]);
 
         client = await clientRepository.GetByIdAsync(id, ct)
-            ?? throw new InvalidOperationException($"Client with id {id} not found.");
+            ?? throw new KeyNotFoundException($"Client with id {id} not found.");
 
         return new ClientMutationResultDto(
             await MapClientAsync(client, ct),
@@ -470,7 +470,7 @@ public class ClientService(
     {
         var client = await clientRepository.GetByIdAsync(id, ct);
         if (client is null)
-            return;
+            throw new KeyNotFoundException($"Client with id {id} not found.");
 
         // 中文注释：refresh token / 授权码 / 设备码都按 client_id 字符串关联且没有外键，
         // 删除客户端前先让这些授权失效，避免以相同 client_id 重建客户端时旧授权复活。
@@ -527,7 +527,7 @@ public class ClientService(
             secret.IsActive && string.Equals(secret.Type, OAuthClientSecret.TypeSharedSecret, StringComparison.Ordinal));
         if (activeSharedSecrets >= MaxActiveSharedSecrets)
         {
-            throw new InvalidOperationException(
+            throw new WorkbenchBusinessConflictException(
                 $"A client can have at most {MaxActiveSharedSecrets} active shared secrets. Reset the client credential to replace them.");
         }
     }
@@ -539,7 +539,7 @@ public class ClientService(
         if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal))
         {
             if (autoGenerateJwks is false)
-                throw new InvalidOperationException("private_key_jwt credential generation only supports automatic JWKS generation.");
+                throw new ArgumentException("private_key_jwt credential generation only supports automatic JWKS generation.");
 
             var keyId = Guid.NewGuid().ToString("N");
             using var rsa = RSA.Create(2048);
@@ -591,13 +591,13 @@ public class ClientService(
             return new GeneratedCredential(secret, dto);
         }
 
-        throw new InvalidOperationException($"Unsupported token_endpoint_auth_method '{tokenEndpointAuthMethod}'.");
+        throw new ArgumentException($"Unsupported token_endpoint_auth_method '{tokenEndpointAuthMethod}'.");
     }
 
     private static void EnsureCredentialGenerationSupported(string tokenEndpointAuthMethod)
     {
         if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.None, StringComparison.Ordinal))
-            throw new InvalidOperationException("token_endpoint_auth_method 'none' does not use client credentials.");
+            throw new ArgumentException("token_endpoint_auth_method 'none' does not use client credentials.");
     }
 
     private static string GenerateSecretValue()
@@ -635,7 +635,7 @@ public class ClientService(
             : requestedMethod.Trim();
 
         if (!client.AllowsTokenEndpointAuthMethod(method))
-            throw new InvalidOperationException($"Client does not allow token_endpoint_auth_method '{method}'.");
+            throw new WorkbenchBusinessConflictException($"Client does not allow token_endpoint_auth_method '{method}'.");
 
         return method;
     }
@@ -664,7 +664,7 @@ public class ClientService(
         var foundResourceIds = resources.Select(resource => resource.Id).ToHashSet();
         var missingResourceIds = apiResourceIds.Where(apiResourceId => !foundResourceIds.Contains(apiResourceId)).ToList();
         if (missingResourceIds.Count > 0)
-            throw new InvalidOperationException($"Api resource with id {missingResourceIds[0]} not found.");
+            throw new KeyNotFoundException($"Api resource with id {missingResourceIds[0]} not found.");
 
         allowedScopes.AddRange(resources.Select(resource => resource.Audience));
 
@@ -731,3 +731,5 @@ public class ClientService(
         GeneratedClientCredentialDto Dto,
         string? Jwks = null);
 }
+
+public sealed class WorkbenchBusinessConflictException(string message) : InvalidOperationException(message);

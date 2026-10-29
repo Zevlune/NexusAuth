@@ -59,9 +59,8 @@ public sealed class UserRequestValidationTests
         foreach (var password in new[] { "", new string('p', 73) })
             yield return ["POST", UserPath + "/reset-password", JsonSerializer.Serialize(new { newPassword = password }), HttpStatusCode.BadRequest];
 
-        // The Passkey controller wraps successful responses as an API result with status 200.
-        yield return ["POST", RevokePasskeyPath, """{"reason":"Lost device"}""", HttpStatusCode.OK];
-        yield return ["POST", RevokePasskeyPath, JsonSerializer.Serialize(new { reason = new string('r', 500) }), HttpStatusCode.OK];
+        yield return ["POST", RevokePasskeyPath, """{"reason":"Lost device"}""", HttpStatusCode.NoContent];
+        yield return ["POST", RevokePasskeyPath, JsonSerializer.Serialize(new { reason = new string('r', 500) }), HttpStatusCode.NoContent];
         foreach (var reason in new string?[] { null, "", "   ", new string('r', 501) })
             yield return ["POST", RevokePasskeyPath, JsonSerializer.Serialize(new { reason }), HttpStatusCode.BadRequest];
     }

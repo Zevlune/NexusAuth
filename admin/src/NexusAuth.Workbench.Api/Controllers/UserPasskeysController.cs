@@ -1,14 +1,14 @@
-using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
-using Luck.AspNetCore.ApiResults;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Workbench.Api.Filters;
+using NexusAuth.Workbench.Api.Models.Requests;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
 [ApiController]
-[ApiResultWrap]
+[WorkbenchApiResult]
 [Route("api/users/{id:guid}/passkeys")]
 public sealed class UserPasskeysController(IPasskeyManagementService passkeys, IUserRepository users) : ControllerBase
 {
@@ -38,5 +38,3 @@ public sealed class UserPasskeysController(IPasskeyManagementService passkeys, I
         ? id : Guid.Empty;
 
 }
-
-public sealed record RevokePasskeyRequest([Required, StringLength(500)] string Reason);

@@ -140,7 +140,7 @@ public sealed class ClientServiceHardeningTests
             await harness.Service.GenerateCredentialAsync(client.Id, new GenerateClientCredentialRequest());
 
         Assert.Equal(ClientService.MaxActiveSharedSecrets, client.ClientSecrets.Count(secret => secret.IsActive));
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<WorkbenchBusinessConflictException>(() =>
             harness.Service.GenerateCredentialAsync(client.Id, new GenerateClientCredentialRequest()));
         Assert.Contains("at most 3 active shared secrets", exception.Message);
         Assert.Equal(ClientService.MaxActiveSharedSecrets, client.ClientSecrets.Count);

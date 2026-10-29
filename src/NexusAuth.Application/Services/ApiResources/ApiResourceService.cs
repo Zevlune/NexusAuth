@@ -66,7 +66,7 @@ public class ApiResourceService(
     public async Task<ApiResourceDto> UpdateAsync(Guid id, UpdateApiResourceRequest request, CancellationToken ct = default)
     {
         var resource = await apiResourceRepository.FindByIdAsync(id, ct)
-            ?? throw new InvalidOperationException($"Api resource with id {id} not found.");
+            ?? throw new KeyNotFoundException($"Api resource with id {id} not found.");
 
         resource.Update(
             request.DisplayName,
@@ -81,7 +81,7 @@ public class ApiResourceService(
     public async Task<ApiResourceDto> UpdateStatusAsync(Guid id, bool isActive, CancellationToken ct = default)
     {
         var resource = await apiResourceRepository.FindByIdAsync(id, ct)
-            ?? throw new InvalidOperationException($"Api resource with id {id} not found.");
+            ?? throw new KeyNotFoundException($"Api resource with id {id} not found.");
 
         resource.Update(isActive: isActive);
         await apiResourceRepository.UpdateAsync(resource, ct);
@@ -92,7 +92,7 @@ public class ApiResourceService(
     {
         var resource = await apiResourceRepository.FindByIdAsync(id, ct);
         if (resource is null)
-            return;
+            throw new KeyNotFoundException($"Api resource with id {id} not found.");
 
         await clientApiResourceRepository.RemoveByApiResourceIdAsync(id, ct);
         await apiResourceRepository.DeleteAsync(resource, ct);

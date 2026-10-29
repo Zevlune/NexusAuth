@@ -1,3 +1,4 @@
+using FrameworkOptions = Microsoft.Extensions.Options.Options;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -510,7 +511,7 @@ public sealed class UserTokenValidatorTests
                 userRepository,
                 apiResources,
                 clientService,
-                Options.Create(new JwtOptions
+                FrameworkOptions.Create(new JwtOptions
                 {
                     Issuer = Issuer,
                     DefaultAudience = "unused.default",

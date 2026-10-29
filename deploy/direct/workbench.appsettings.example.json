@@ -1,0 +1,21 @@
+{
+  "ConnectionStrings": {
+    "Default": "Host=db;Port=5432;Database=nexusauth;Username=nexusauth;Password=REPLACE_WITH_DATABASE_PASSWORD;Search Path=nexusauth"
+  },
+  "Auth": {
+    "Authority": "https://sso.example.com",
+    "ClientSecret": "",
+    "RedirectUri": "https://workbench.example.com/signin-oidc",
+    "PostLogoutRedirectUri": "https://workbench.example.com/",
+    "RequireHttpsMetadata": true
+  },
+  "Security": {
+    "CookieSecurePolicy": "Always",
+    "ForwardedHeadersEnabled": false,
+    "KnownProxies": "",
+    "KnownNetworks": ""
+  },
+  "Swagger": {
+    "Enabled": false
+  }
+}

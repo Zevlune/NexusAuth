@@ -71,12 +71,10 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         Assert.Contains(options.DefaultPolicy.Requirements, requirement => requirement is WorkbenchAccessRequirement);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Default_and_fallback_protect_new_endpoints_without_a_named_policy(bool gatewayEnabled)
+    [Fact]
+    public async Task Default_and_fallback_protect_new_endpoints_without_a_named_policy()
     {
-        using var configured = new WorkbenchAdministrationAuthorizationFixture("nexusauth.workbench", gatewayEnabled);
+        using var configured = new WorkbenchAdministrationAuthorizationFixture("nexusauth.workbench");
         using var anonymous = configured.CreateAnonymousClient();
         using var ordinary = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
         using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
@@ -91,13 +89,11 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         Assert.Equal(HttpStatusCode.Forbidden, (await administrator.GetAsync("/__test/access/named")).StatusCode);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Hosts_can_replace_the_framework_handler_without_controller_changes(bool gatewayEnabled)
+    [Fact]
+    public async Task Hosts_can_replace_the_framework_handler_without_controller_changes()
     {
         using var configured = new WorkbenchAdministrationAuthorizationFixture(
-            "nexusauth.workbench", gatewayEnabled, services =>
+            "nexusauth.workbench", services =>
             {
                 // Keep the framework handlers (including RequireAuthenticatedUser) intact.
                 foreach (var descriptor in services.Where(descriptor =>
@@ -134,7 +130,9 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         Assert.Equal(HttpStatusCode.NoContent, (await ordinary.DeleteAsync(userPath)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await administrator.DeleteAsync(userPath)).StatusCode);
         var revokePath = userPath + $"/passkeys/{Guid.NewGuid()}/revoke";
-        Assert.Equal(HttpStatusCode.OK, (await ordinary.PostAsJsonAsync(revokePath, new { reason = "Lost device" })).StatusCode);
+        using var revokeResponse = await ordinary.PostAsJsonAsync(revokePath, new { reason = "Lost device" });
+        Assert.Equal(HttpStatusCode.NoContent, revokeResponse.StatusCode);
+        Assert.Equal(string.Empty, await revokeResponse.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.Forbidden, (await administrator.PostAsJsonAsync(revokePath, new { reason = "Lost device" })).StatusCode);
     }
 
@@ -185,14 +183,11 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
     }
 
     [Theory]
-    [InlineData("nexusauth.workbench", false)]
-    [InlineData("  nexusauth.workbench  ", false)]
-    [InlineData("nexusauth.workbench", true)]
-    public async Task Bearer_client_validation_uses_normalized_configuration_in_both_modes(
-        string configuredClientId,
-        bool gatewayEnabled)
+    [InlineData("nexusauth.workbench")]
+    [InlineData("  nexusauth.workbench  ")]
+    public async Task Bearer_client_validation_uses_normalized_configuration(string configuredClientId)
     {
-        using var configuredFixture = new WorkbenchAdministrationAuthorizationFixture(configuredClientId, gatewayEnabled);
+        using var configuredFixture = new WorkbenchAdministrationAuthorizationFixture(configuredClientId);
         using var allowed = configuredFixture.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
         using var additional = configuredFixture.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId, "additional-bearer-client");
         using var denied = configuredFixture.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId, "untrusted-client");

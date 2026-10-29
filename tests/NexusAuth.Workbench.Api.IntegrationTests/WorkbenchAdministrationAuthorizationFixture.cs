@@ -1,10 +1,12 @@
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,14 +47,16 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
     private readonly RsaSecurityKey signingKey;
     private readonly WebApplicationFactory<WorkbenchApiModule> factory;
     private readonly Dictionary<Guid, User> users;
+    private readonly HashSet<string> blacklistedJtis = new(StringComparer.Ordinal);
+    private readonly TestTokenClient tokenClient;
     private int userLookupCount;
 
-    public WorkbenchAdministrationAuthorizationFixture() : this(ClientId, false)
+    public WorkbenchAdministrationAuthorizationFixture() : this(ClientId)
     {
     }
 
     internal WorkbenchAdministrationAuthorizationFixture(
-        string configuredClientId, bool gatewayEnabled, Action<IServiceCollection>? configureAuthorization = null)
+        string configuredClientId, Action<IServiceCollection>? configureAuthorization = null)
     {
         var administrator = User.Create("administrator", "test-password", "Administrator");
         administrator.MarkAsSystemAccount();
@@ -71,18 +75,30 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
         };
 
         signingKey = new RsaSecurityKey(rsa) { KeyId = "authorization-test" };
+        var configuration = new OpenIdConnectConfiguration
+        {
+            Issuer = Authority,
+            AuthorizationEndpoint = Authority + "/authorize",
+            TokenEndpoint = Authority + "/token",
+            EndSessionEndpoint = Authority + "/logout",
+        };
+        configuration.SigningKeys.Add(signingKey);
+        var metadata = new StaticConfigurationManager<OpenIdConnectConfiguration>(configuration);
+        var normalizedClientId = configuredClientId.Trim();
+        tokenClient = new TestTokenClient(normalizedClientId);
+
         factory = new WebApplicationFactory<WorkbenchApiModule>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing")
                 .UseSetting("Auth:Authority", Authority)
                 .UseSetting("Auth:Audience", Audience)
                 .UseSetting("Auth:ClientId", configuredClientId)
-                .UseSetting("Gateway:Enabled", gatewayEnabled.ToString())
                 .UseSetting("Auth:ClientSecret", "test-only-secret")
                 .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
                 .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")
                 .UseSetting("Auth:Scope", WorkbenchScope)
-                .UseSetting("Auth:AllowedBearerClientIds:0", "additional-bearer-client");
+                .UseSetting("Auth:AllowedBearerClientIds:0", "additional-bearer-client")
+                .UseSetting("Swagger:Enabled", "true");
 
             builder.ConfigureServices(services =>
             {
@@ -94,7 +110,9 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                     Interlocked.Increment(ref userLookupCount);
                     return users.GetValueOrDefault((Guid)args![0]!);
                 }));
-                Replace(services, RecordingDispatchProxy.Create<ITokenBlacklistRepository>((_, _) => false));
+                Replace(services, RecordingDispatchProxy.Create<ITokenBlacklistRepository>((method, args) =>
+                    method.Name == nameof(ITokenBlacklistRepository.ExistsActiveAsync)
+                    && IsBlacklisted((string)args![0]!)));
                 Replace(services, RecordingDispatchProxy.Create<IApiResourceService>((method, _) =>
                     method.Name == nameof(IApiResourceService.GetAllAsync)
                         ? new List<ApiResourceDto>()
@@ -128,37 +146,20 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                     method.Name == nameof(IUserManagementService.GetPagedAsync)
                         ? new PagedResult<ManagedUserDto>([], 0, 1, 10)
                         : null));
-                Replace(services, RecordingDispatchProxy.Create<IOidcWorkbenchService>((method, args) =>
-                    method.Name switch
-                    {
-                        "get_Authority" => Authority,
-                        "get_ClientId" => ClientId,
-                        "get_RedirectUri" => "https://dashboard.example.test/signin-oidc",
-                        "get_PostLogoutRedirectUri" => "https://dashboard.example.test/",
-                        "get_Scope" => WorkbenchScope,
-                        "get_SignOutProvider" => false,
-                        nameof(IOidcWorkbenchService.IntrospectAccessTokenAsync) =>
-                            new AccessTokenIntrospectionResult(
-                                true,
-                                ((string)args![0]!)["cookie-access:".Length..],
-                                ClientId),
-                        _ => null,
-                    }));
+
+                services.RemoveAll<IWorkbenchTokenClient>();
+                services.AddScoped<IWorkbenchTokenClient>(_ => tokenClient);
+                services.PostConfigure<JwtBearerOptions>(
+                    WorkbenchAuthenticationDefaults.BearerScheme,
+                    options => options.ConfigurationManager = metadata);
+                services.PostConfigure<OpenIdConnectOptions>(
+                    WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
+                    options => options.ConfigurationManager = metadata);
 
                 services.AddControllers().AddApplicationPart(typeof(TestSessionController).Assembly);
                 services.AddAuthorization(options => options.AddPolicy("test-named", policy => policy
                     .RequireAuthenticatedUser().RequireClaim("sub", OrdinaryUserId.ToString())));
                 configureAuthorization?.Invoke(services);
-                services.PostConfigure<JwtBearerOptions>(
-                    WorkbenchAuthenticationDefaults.BearerScheme,
-                    options =>
-                    {
-                        var configuration = new OpenIdConnectConfiguration { Issuer = Authority };
-                        configuration.SigningKeys.Add(signingKey);
-                        options.Configuration = configuration;
-                        options.ConfigurationManager =
-                            new StaticConfigurationManager<OpenIdConnectConfiguration>(configuration);
-                    });
             });
         });
     }
@@ -166,36 +167,69 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
     public int UserLookupCount => Volatile.Read(ref userLookupCount);
 
     public HttpClient CreateAnonymousClient() =>
-        factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            BaseAddress = new Uri("https://localhost"),
+        });
 
     public HttpClient CreateBearerClient(Guid userId, string? clientId = ClientId)
+        => CreateClientWithBearerToken(CreateBearerToken(userId, clientId: clientId));
+
+    public HttpClient CreateClientWithBearerToken(string token)
     {
-        var now = DateTime.UtcNow;
+        var client = CreateAnonymousClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    public string CreateBearerToken(
+        Guid userId,
+        string? clientId = ClientId,
+        string? tokenUse = "access_token",
+        string? issuer = null,
+        string? audience = null,
+        DateTimeOffset? notBefore = null,
+        DateTimeOffset? expires = null,
+        SecurityKey? signingKeyOverride = null,
+        string? jti = null)
+    {
+        var issuedAt = DateTimeOffset.UtcNow;
         var claims = new List<Claim>
         {
             new("sub", userId.ToString()),
             new("name", users[userId].Nickname),
-            new("token_use", "access_token"),
-            new("iat", new DateTimeOffset(now).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
+            new("iat", issuedAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
+            new("jti", jti ?? Guid.NewGuid().ToString()),
         };
+        if (tokenUse is not null)
+            claims.Add(new Claim("token_use", tokenUse));
         if (clientId is not null)
             claims.Add(new Claim("client_id", clientId));
 
         var token = new JwtSecurityToken(
-            Authority,
-            Audience,
+            issuer ?? Authority,
+            audience ?? Audience,
             claims,
-            now.AddSeconds(-1),
-            now.AddMinutes(5),
-            new SigningCredentials(signingKey, SecurityAlgorithms.RsaSha256));
-        var client = CreateAnonymousClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
-            "Bearer",
-            new JwtSecurityTokenHandler().WriteToken(token));
-        return client;
+            (notBefore ?? issuedAt.AddSeconds(-1)).UtcDateTime,
+            (expires ?? issuedAt.AddMinutes(5)).UtcDateTime,
+            new SigningCredentials(
+                signingKeyOverride ?? signingKey,
+                SecurityAlgorithms.RsaSha256));
+        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
     public void ResetUserLookups() => Interlocked.Exchange(ref userLookupCount, 0);
+
+    public IReadOnlyList<(string Token, string TokenTypeHint)> RevokedTokens => tokenClient.RevokedTokens;
+
+    public void ResetTokenRevocations() => tokenClient.ResetRevocations();
+
+    public void BlacklistToken(string jti)
+    {
+        lock (blacklistedJtis)
+            blacklistedJtis.Add(jti);
+    }
 
     public void Dispose()
     {
@@ -209,4 +243,53 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
         services.AddSingleton(instance);
     }
 
+    private bool IsBlacklisted(string jti)
+    {
+        lock (blacklistedJtis)
+            return blacklistedJtis.Contains(jti);
+    }
+
+    private sealed class TestTokenClient(string clientId) : IWorkbenchTokenClient
+    {
+        private readonly List<(string Token, string TokenTypeHint)> revocations = [];
+        private readonly object sync = new();
+
+        public IReadOnlyList<(string Token, string TokenTypeHint)> RevokedTokens
+        {
+            get
+            {
+                lock (sync)
+                    return revocations.ToArray();
+            }
+        }
+
+        public void ResetRevocations()
+        {
+            lock (sync)
+                revocations.Clear();
+        }
+
+        public Task<WorkbenchTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(
+            string accessToken,
+            CancellationToken ct)
+        {
+            var subject = accessToken.StartsWith("cookie-access:", StringComparison.Ordinal)
+                ? accessToken["cookie-access:".Length..]
+                : null;
+            return Task.FromResult(new WorkbenchIntrospectionResult(
+                subject is not null,
+                subject,
+                subject is null ? null : clientId));
+        }
+
+        public Task RevokeTokenAsync(string token, string tokenTypeHint, CancellationToken ct)
+        {
+            lock (sync)
+                revocations.Add((token, tokenTypeHint));
+            return Task.CompletedTask;
+        }
+    }
 }

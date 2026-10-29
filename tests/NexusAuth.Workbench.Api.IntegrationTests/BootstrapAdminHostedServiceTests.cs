@@ -1,3 +1,4 @@
+using FrameworkOptions = Microsoft.Extensions.Options.Options;
 using System.Linq.Expressions;
 using Luck.DDD.Domain.Repositories;
 using Microsoft.Extensions.DependencyInjection;
@@ -155,7 +156,7 @@ public sealed class BootstrapAdminHostedServiceTests
     {
         return new BootstrapAdminHostedService(
             scopeFactory,
-            Options.Create(options),
+            FrameworkOptions.Create(options),
             NullLogger<BootstrapAdminHostedService>.Instance);
     }
 

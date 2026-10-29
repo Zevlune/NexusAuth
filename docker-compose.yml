@@ -52,21 +52,13 @@ services:
     environment:
       TZ: Asia/Shanghai
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
-      NEXUSAUTH_WORKBENCH_CONNECTION_STRINGS_DEFAULT: Host=db;Port=5432;Database=nexusauth;Username=${POSTGRES_USER:-nexusauth};Password=${POSTGRES_PASSWORD:-nexusauth_dev_password};Search Path=nexusauth
-      NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY: ${NEXUSAUTH_JWT_ISSUER:-http://localhost:5100}
-      NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED: ${NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED:-false}
-      NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET: ${WORKBENCH_CLIENT_SECRET:-c57cf0e110c54ad2ac5591b99801b852}
-      NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI: ${NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI:-http://localhost:5560/signin-oidc}
-      NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI: ${NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI:-http://localhost:5560/}
-      NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_NAME: ${NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_NAME:-nexusauth.workbench.api}
-      NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DISPLAY_NAME: ${NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DISPLAY_NAME:-NexusAuth Workbench API}
-      NEXUSAUTH_WORKBENCH_BOOTSTRAP_CLIENT_NAME: ${NEXUSAUTH_WORKBENCH_BOOTSTRAP_CLIENT_NAME:-NexusAuth Workbench}
     depends_on:
       db:
         condition: service_healthy
       sso:
         condition: service_healthy
     volumes:
+      - ${NEXUSAUTH_WORKBENCH_APPSETTINGS_FILE:-./docker/workbench.appsettings.json}:/app/appsettings.${ASPNETCORE_ENVIRONMENT:-Production}.json:ro
       - nexusauth-admin-keys:/root/.aspnet/DataProtection-Keys
       - ./logs/workbench:/app/logs
     healthcheck:

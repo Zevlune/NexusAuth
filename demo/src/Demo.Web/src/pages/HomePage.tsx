@@ -31,11 +31,11 @@ export function HomePage() {
       <section className="card-grid">
         <DataCard title="当前用户">{user ? JSON.stringify(user, null, 2) : '尚未登录'}</DataCard>
         <DataCard title="业务接口返回">{profilePayload}</DataCard>
-        <DataCard title="测试说明">1. 先运行 NexusAuth.Host
-2. 执行 demo/seed.sql
+        <DataCard title="测试说明">{`1. 先运行 NexusAuth.Host
+2. 执行 psql -v NEXUSAUTH_ALLOW_DEMO_SEED=1 -v NEXUSAUTH_DEMO_DATABASE=<隔离演示库> -f demo/seed.sql
 3. 启动 Demo.Bff
 4. 启动当前 React + TS 前端
-5. 使用测试账号 alice / Pass@123 登录</DataCard>
+5. 使用测试账号 alice / Pass@123 登录`}</DataCard>
       </section>
     </div>
   )
