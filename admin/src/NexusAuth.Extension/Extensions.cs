@@ -21,7 +21,9 @@ public static class OidcWorkbenchExtensions
         Action<WorkbenchAuthOptions> configure)
     {
         services.Configure(configure);
+        services.AddOptions<WorkbenchFlowStateOptions>();
         services.AddSingleton<ValidatedWorkbenchAuthOptions>();
+        services.AddSingleton<WorkbenchDiscoveryCache>();
 
         services.AddHttpClient(OidcWorkbenchService.HttpClientName);
         services.AddSingleton<IFlowStateStore, InMemoryFlowStateStore>();

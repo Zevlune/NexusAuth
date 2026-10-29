@@ -2,7 +2,10 @@ using Luck.AppModule;
 using Luck.AutoDependencyInjection;
 using Luck.Framework.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Application.Services.Email;
 using NexusAuth.Application.Services.Tokens;
@@ -25,6 +28,7 @@ public class WorkbenchApiModule : LuckAppModule
         var settings = WorkbenchAuthenticationSettings.FromConfiguration(configuration);
 
         services.AddNexusAuthEmail(configuration);
+        ConfigureSecurity(services, configuration);
         ConfigureAuthentication(services, settings);
         services.AddWorkbenchAuthorization();
         ConfigureBootstrap(services, configuration);
@@ -58,6 +62,7 @@ public class WorkbenchApiModule : LuckAppModule
             options.PostLogoutRedirectUri = settings.PostLogoutRedirectUri;
             options.Scope = settings.Scope;
             options.SignOutProvider = settings.SignOutProvider;
+            options.RequireHttpsMetadata = settings.RequireHttpsMetadata;
         });
     }
 
@@ -74,13 +79,16 @@ public class WorkbenchApiModule : LuckAppModule
         {
             options.Cookie.Name = ".NexusAuth.Workbench";
             options.Cookie.HttpOnly = true;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
             options.Cookie.SameSite = SameSiteMode.Lax;
             options.LoginPath = "/api/auth/login";
             options.SlidingExpiration = true;
             options.ExpireTimeSpan = TimeSpan.FromHours(24);
             options.EventsType = typeof(IWorkbenchCookieAuthenticationEvents);
         });
+        authentication.Services.AddOptions<CookieAuthenticationOptions>(WorkbenchAuthenticationDefaults.CookieScheme)
+            .Configure<IOptions<WorkbenchSecurityOptions>>((options, security) =>
+                options.Cookie.SecurePolicy = WorkbenchSecurityOptions.ResolveCookieSecurePolicy(security.Value));
     }
 
     private static void ConfigureBearerAuthentication(AuthenticationBuilder authentication, WorkbenchAuthenticationSettings settings)
@@ -134,10 +142,21 @@ public class WorkbenchApiModule : LuckAppModule
         services.AddHostedService<WorkbenchClientCredentialHostedService>();
     }
 
+    private static void ConfigureSecurity(IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<WorkbenchSecurityOptions>()
+            .Bind(configuration.GetSection(WorkbenchSecurityOptions.SectionName))
+            .Validate(
+                options => WorkbenchSecurityOptions.TryParseCookieSecurePolicy(options.CookieSecurePolicy, out _),
+                "Security:CookieSecurePolicy must be SameAsRequest or Always.")
+            .ValidateOnStart();
+        services.Configure<ForwardedHeadersOptions>(
+            options => WorkbenchSecurityOptions.ConfigureForwardedHeaders(options, configuration));
+    }
+
     public override void ApplicationInitialization(ApplicationContext context)
     {
         var app = context.GetApplicationBuilder();
-        app.UseRouting();
         app.UseAuthentication();
         app.UseAuthorization();
 

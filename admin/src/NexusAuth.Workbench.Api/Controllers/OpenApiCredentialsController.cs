@@ -1,12 +1,12 @@
-using Luck.AspNetCore.ApiResults;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Services.OpenApi;
+using NexusAuth.Workbench.Api.Filters;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
 /// <summary>Administrative lifecycle management for Host Open API bearer credentials.</summary>
 [ApiController]
-[ApiResultWrap]
+[WorkbenchApiResult]
 [Route("api/open-api-credentials")]
 public sealed class OpenApiCredentialsController(IOpenApiCredentialService credentialService) : ControllerBase
 {

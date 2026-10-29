@@ -1,5 +1,10 @@
 # Optional local preview data. Does not replace or clear existing volumes.
 services:
+  admin-api:
+    # Explicit opt-in for isolated local HTTP preview only.
+    environment:
+      NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA: "false"
+      NEXUSAUTH_WORKBENCH_SECURITY_COOKIE_SECURE_POLICY: SameAsRequest
   sso:
     volumes:
       - ./docker/host.local.appsettings.json:/app/appsettings.${NEXUSAUTH_SSO_ENVIRONMENT:-Development}.json:ro

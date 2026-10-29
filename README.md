@@ -18,7 +18,21 @@ Host 的应用配置从 `appsettings.json` 和 `appsettings.{环境}.json` 读�
 - **阅读协议细节**：查看 [OAuth/OIDC 协议设计](document/11-OAuth-OIDC协议设计.md)。
 - **接入 APISIX**：查看 [APISIX 网关对接手册](document/13-APISIX网关对接手册.md)，先核对网关模式与默认 BFF 模式的区别。
 
-启动时需要留意当前源码的两个默认值：Workbench 的默认 Authority 和 Dashboard 的 Vite 代理指向局域网地址；Compose 中 `admin-api` 没有映射宿主机端口。Host 的 SMTP 默认关闭，可在 appsettings 中启用并补齐邮件配置；两套手册分别给出了本地配置和容器配置的具体步骤。
+## 安全默认值与本地运行
+
+- Workbench 基础配置中的 `Auth:Authority` 为空，`Auth:RequireHttpsMetadata=true`；仓库的 Development 配置为本机开发显式覆盖为 `http://localhost:5100` 和 `false`。配置层允许任何环境显式设为 `false`，但规范上仅限隔离本地开发显式关闭。
+- Cookie 的基础 `Security:CookieSecurePolicy=Always`；Development 显式覆盖为 `SameAsRequest`。部署时不要在 HTTP 环境静默降低生产默认值。
+- Swagger 仅在 Development 环境或显式设置 `Swagger:Enabled=true` 时启用。
+- 转发头默认关闭。启用时必须配置明确的 `Security:KnownProxies` 或 `Security:KnownNetworks`；应用只信任这些代理或网络。
+- `/api` 与 `/signin-oidc` 响应使用 `Cache-Control: no-store`，避免登录状态和令牌交换结果进入浏览器或代理缓存。
+
+本地 Compose 必须显式叠加本地覆盖文件，由它启用隔离演示所需的 HTTP 设置：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+```
+
+基础 `docker-compose.yml` 保持 HTTPS 安全默认，不因本地预览而降低；生产使用 HTTPS Authority、`RequireHttpsMetadata=true`、`CookieSecurePolicy=Always` 和明确可信的代理网络。Compose 中 `admin-api` 没有映射宿主机端口。Host 的 SMTP 默认关闭，可在 appsettings 中启用并补齐邮件配置。
 
 ## 代码结构
 

@@ -1,13 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
-using Luck.AspNetCore.ApiResults;
-using Luck.Framework.Exceptions;
 using NexusAuth.Application;
 using NexusAuth.Application.Clients;
+using NexusAuth.Workbench.Api.Filters;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
 [ApiController]
-[ApiResultWrap]
+[WorkbenchApiResult]
 [Route("api/[controller]")]
 public class ClientsController : ControllerBase
 {
@@ -43,7 +42,7 @@ public class ClientsController : ControllerBase
     {
         var client = await _clientService.GetByIdAsync(id, ct);
         if (client is null)
-            throw new NotFoundException($"Client with id '{id}' was not found.");
+            throw new KeyNotFoundException($"Client with id '{id}' was not found.");
 
         return client;
     }
@@ -79,8 +78,9 @@ public class ClientsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    public async Task Delete(Guid id, CancellationToken ct = default)
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct = default)
     {
         await _clientService.DeleteAsync(id, ct);
+        return NoContent();
     }
 }

@@ -32,7 +32,7 @@
 本地环境先启动根目录的 NexusAuth Compose，再启动 APISIX。启动脚本会生成并复用忽略提交的 `.env.apisix.local` 管理密钥，并自动创建 `localhost:5100` 的内部回源路由：
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 ./docker/apisix/start-local.sh
 ```
 
@@ -55,6 +55,8 @@ docker ps --filter name=nexusauth-apisix
 这是本地开发账号。生产环境必须修改 `docker/apisix/dashboard.yaml` 中的密码与 JWT secret，并限制管理端口访问来源。
 
 ## 3. NexusAuth Client 前置检查
+
+本地 HTTP 演示须显式使用 `docker-compose.local.yml`，以关闭 HTTPS metadata 要求并设置 `SameAsRequest` Cookie；生产部署保留 HTTPS 和 Secure Cookie 默认值。
 
 先打开 Workbench：`http://localhost:5560`，进入应用管理。若不存在 Client `nexusauth.apisix.gateway`，先在 Dashboard 创建一个 Confidential client、生成密钥并登记回调；不要依赖 Workbench API 启动初始化创建网关应用。已有网关应用不会因 API 重启而修改。
 

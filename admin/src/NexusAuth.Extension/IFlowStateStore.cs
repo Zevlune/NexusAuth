@@ -6,6 +6,9 @@ namespace NexusAuth.Extension;
 /// </summary>
 public interface IFlowStateStore
 {
+    /// <summary>Atomically consumes an unexpired flow only when its browser binding matches.</summary>
+    Task<FlowState?> TryTakeAsync(string state, string browserBinding, CancellationToken ct = default);
+
     /// <summary>
     /// 中文：保存指定 state 参数对应的授权流程状态。
     /// English: Stores the authorization flow state associated with the specified state parameter.

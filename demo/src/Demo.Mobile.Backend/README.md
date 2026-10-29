@@ -4,23 +4,29 @@
 
 ## 本机快速运行（iOS 模拟器）
 
-1. 仓库根目录启动已有 Provider：`docker compose up -d --build`。
-2. 只登记移动客户端，不修改现有管理员或 Web demo（本地演示密钥自行替换）：
+1. 在仓库根目录启动一个连接到独立演示数据库的 Provider。不要把演示种子导入生产、预发布、共享或个人数据库。
+2. 只登记移动客户端，不修改任何既有用户、客户端或 secret（本地演示密钥自行替换）：
 
 ```bash
-docker compose exec -T db psql -U nexusauth -d nexusauth -v ON_ERROR_STOP=1 \
-  -v mobile_secret='local-mobile-demo-only' \
+docker compose exec -T db psql -U nexusauth -d postgres -v ON_ERROR_STOP=1 \
+  -v NEXUSAUTH_ALLOW_DEMO_SEED=1 \
+  -v NEXUSAUTH_DEMO_DATABASE=nexusauth_demo \
+  -v mobile_secret='replace-with-a-local-demo-secret' \
   -v mobile_redirect='http://localhost:5401/signin-oidc' < demo/mobile-seed.sql
 ```
+
+`NEXUSAUTH_ALLOW_DEMO_SEED=1` 和 `NEXUSAUTH_DEMO_DATABASE` 是强制确认门槛；两者缺一时脚本会拒绝执行。`mobile-seed.sql` 会连接变量指定的数据库，请确保 Provider 也配置为连接同一个隔离演示库。
 
 3. 在仓库根目录启动后端：
 
 ```bash
-NexusAuth__ClientSecret=local-mobile-demo-only \
+NexusAuth__ClientSecret=replace-with-a-local-demo-secret \
   dotnet run --project demo/src/Demo.Mobile.Backend
 ```
 
-4. 根据 `../Demo.Mobile/README.md` 构建 App。登录可用现有 Provider 用户，默认本地管理员 `admin / wzw0126..`（已有账号保留原密码）。也可导入 `demo/seed.sql` 使用 `alice / Pass@123`，但全量 seed 会更新 demo 用户密码；仅试移动端建议用 `mobile-seed.sql`。
+4. 根据 `../Demo.Mobile/README.md` 构建 App。登录使用该演示库中已有用户；本脚本不会创建或修改用户。需要完整 Web/mobile 演示数据时，可按 `demo/README.md` 的确认流程导入 `demo/seed.sql`，它只补齐缺失行，不会覆盖既有账号的密码、邮箱或状态。
+
+仓库提交的私钥、对应 JWKS 和共享 secret 都是公开演示材料，任何人都可能冒充相应客户端；它们只能用于隔离演示库，不能进入生产、预发布或共享环境。
 
 ## Android 模拟器和真机
 
@@ -37,7 +43,7 @@ NexusAuth__ClientSecret=local-mobile-demo-only \
 ```bash
 NexusAuth__Authority=http://192.168.1.20:5100 \
 NexusAuth__RedirectUri=http://192.168.1.20:5401/signin-oidc \
-NexusAuth__ClientSecret=local-mobile-demo-only \
+NexusAuth__ClientSecret=replace-with-a-local-demo-secret \
   dotnet run --project demo/src/Demo.Mobile.Backend --urls http://0.0.0.0:5401
 ```
 

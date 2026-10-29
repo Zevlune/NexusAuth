@@ -1,7 +1,12 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using NexusAuth.Extension;
 using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api.Authorization;
@@ -14,11 +19,19 @@ public class AuthController : ControllerBase
 {
     private readonly IFlowStateStore _flowStore;
     private readonly IOidcWorkbenchService _oidcService;
+    private readonly WorkbenchFlowStateOptions _flowOptions;
+    private readonly IOptionsMonitor<CookieAuthenticationOptions> _cookieOptions;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(IFlowStateStore flowStore, IOidcWorkbenchService oidcService)
+    public AuthController(IFlowStateStore flowStore, IOidcWorkbenchService oidcService,
+        IOptions<WorkbenchFlowStateOptions> flowOptions,
+        IOptionsMonitor<CookieAuthenticationOptions> cookieOptions, ILogger<AuthController> logger)
     {
         _flowStore = flowStore;
         _oidcService = oidcService;
+        _flowOptions = flowOptions.Value;
+        _cookieOptions = cookieOptions;
+        _logger = logger;
     }
 
     [HttpGet("/api/auth/config")]
@@ -35,17 +48,35 @@ public class AuthController : ControllerBase
 
     [HttpGet("/api/auth/login")]
     [AllowAnonymous]
+    [EnableRateLimiting("workbench-login")]
     public async Task<IActionResult> Login(CancellationToken ct)
     {
-        var discovery = await _oidcService.FetchDiscoveryAsync(ct);
-
-        var state = Guid.NewGuid().ToString("N");
-        var nonce = Guid.NewGuid().ToString("N");
+        var state = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var correlation = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         string codeChallenge;
         string codeVerifier;
         (codeChallenge, codeVerifier) = _oidcService.GeneratePkce();
 
-        await _flowStore.AddAsync(state, new FlowState(codeVerifier, nonce), ct);
+        try
+        {
+            await _flowStore.AddAsync(state, new FlowState(codeVerifier, nonce, HashBinding(correlation)), ct);
+        }
+        catch (FlowStateCapacityExceededException)
+        {
+            Response.Headers.RetryAfter = "60";
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "too_many_login_requests" });
+        }
+
+        DiscoveryDocument discovery;
+        try { discovery = await _oidcService.FetchDiscoveryAsync(ct); }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            await _flowStore.RemoveAsync(state, CancellationToken.None);
+            _logger.LogWarning("Provider discovery failed during login. FailureType={FailureType}", exception.GetType().Name);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "provider_unavailable" });
+        }
+        Response.Cookies.Append(CorrelationCookieName(state), correlation, CorrelationCookieOptions());
 
         var authorizeUrl = discovery.AuthorizationEndpoint +
             $"?response_type={OAuthResponseTypes.Code}" +
@@ -68,19 +99,22 @@ public class AuthController : ControllerBase
         var state = Request.Query["state"].ToString();
         var error = Request.Query["error"].ToString();
 
-        if (!string.IsNullOrWhiteSpace(error))
-            return RedirectToProviderError(error, Request.Query["error_description"].ToString());
-
         var frontendBase = _oidcService.PostLogoutRedirectUri.TrimEnd('/');
 
-        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state))
+        if (state.Length != 64 || !state.All(Uri.IsHexDigit)
+            || !Request.Cookies.TryGetValue(CorrelationCookieName(state), out var correlation)
+            || correlation.Length != 64)
             return Redirect($"{frontendBase}/login?error=invalid_callback");
 
-        var flow = await _flowStore.GetAsync(state, ct);
+        var flow = await _flowStore.TryTakeAsync(state, HashBinding(correlation), ct);
         if (flow == null)
             return Redirect($"{frontendBase}/login?error=invalid_callback");
 
-        await _flowStore.RemoveAsync(state, ct);
+        Response.Cookies.Delete(CorrelationCookieName(state), CorrelationCookieOptions());
+        if (!string.IsNullOrWhiteSpace(error))
+            return RedirectToProviderError(error, Request.Query["error_description"].ToString());
+        if (string.IsNullOrWhiteSpace(code))
+            return Redirect($"{frontendBase}/login?error=invalid_callback");
 
         try
         {
@@ -118,6 +152,25 @@ public class AuthController : ControllerBase
         }
     }
 
+    private string CorrelationCookieName(string state) =>
+        $"{(UseSecureCookies ? "__Host-" : ".")}NexusAuth.Workbench.Oidc.{state}";
+
+    private bool UseSecureCookies => Request.IsHttps || _cookieOptions.Get(WorkbenchAuthenticationDefaults.CookieScheme)
+        .Cookie.SecurePolicy == CookieSecurePolicy.Always;
+
+    private CookieOptions CorrelationCookieOptions() => new()
+    {
+        HttpOnly = true,
+        SameSite = SameSiteMode.Lax,
+        Secure = UseSecureCookies,
+        Path = "/",
+        MaxAge = _flowOptions.Lifetime,
+        IsEssential = true,
+    };
+
+    private static string HashBinding(string correlation) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(correlation)));
+
     private IActionResult RedirectToProviderError(string error, string? description)
     {
         var providerErrorUrl = $"{_oidcService.Authority.TrimEnd('/')}/oauth/error?error={Uri.EscapeDataString(error)}";
@@ -136,15 +189,46 @@ public class AuthController : ControllerBase
             WorkbenchAuthenticationDefaults.CookieScheme,
             "id_token") ?? User.FindFirstValue("id_token");
 
-        if (_oidcService.SignOutProvider && !string.IsNullOrWhiteSpace(idToken))
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        try
         {
-            logoutUrl = $"{_oidcService.Authority.TrimEnd('/')}/connect/endsession" +
-                $"?id_token_hint={Uri.EscapeDataString(idToken)}" +
-                $"&post_logout_redirect_uri={Uri.EscapeDataString(_oidcService.PostLogoutRedirectUri)}";
+            foreach (var tokenName in new[] { "refresh_token", "access_token" })
+            {
+                var token = await HttpContext.GetTokenAsync(WorkbenchAuthenticationDefaults.CookieScheme, tokenName);
+                if (string.IsNullOrWhiteSpace(token)) continue;
+                try { await _oidcService.RevokeTokenAsync(token, tokenName, timeout.Token); }
+                catch (Exception exception)
+                {
+                    _logger.LogWarning("Provider token revocation failed during logout. TokenType={TokenType} FailureType={FailureType}",
+                        tokenName, exception.GetType().Name);
+                }
+            }
+            if (_oidcService.SignOutProvider && !string.IsNullOrWhiteSpace(idToken))
+            {
+                try
+                {
+                    var discovery = await _oidcService.FetchDiscoveryAsync(timeout.Token);
+                    if (!string.IsNullOrWhiteSpace(discovery.EndSessionEndpoint))
+                    {
+                        logoutUrl = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(discovery.EndSessionEndpoint,
+                            new Dictionary<string, string?>
+                            {
+                                ["id_token_hint"] = idToken,
+                                ["post_logout_redirect_uri"] = _oidcService.PostLogoutRedirectUri,
+                            });
+                    }
+                }
+                catch (Exception exception)
+                {
+                    _logger.LogWarning("Provider discovery failed during logout. FailureType={FailureType}", exception.GetType().Name);
+                }
+            }
         }
-
-        if (User.Identity?.IsAuthenticated == true)
+        finally
+        {
             await HttpContext.SignOutAsync(WorkbenchAuthenticationDefaults.CookieScheme);
+        }
 
         return Ok(new { logoutUrl });
     }

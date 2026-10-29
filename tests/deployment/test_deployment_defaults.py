@@ -13,6 +13,18 @@ def read(relative_path: str) -> str:
 
 
 class DeploymentDefaultsTests(unittest.TestCase):
+    def test_workbench_http_opt_out_is_confined_to_explicit_local_override(self) -> None:
+        compose = read("docker-compose.yml")
+        self.assertIn("${NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA:-true}", compose)
+        self.assertIn("${NEXUSAUTH_WORKBENCH_SECURITY_COOKIE_SECURE_POLICY:-Always}", compose)
+        local = read("docker-compose.local.yml")
+        self.assertIn('NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA: "false"', local)
+        self.assertIn("NEXUSAUTH_WORKBENCH_SECURITY_COOKIE_SECURE_POLICY: SameAsRequest", local)
+        production = read("deploy/direct/workbench.env.example")
+        self.assertIn("NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA=true", production)
+        self.assertIn("NEXUSAUTH_WORKBENCH_SECURITY_COOKIE_SECURE_POLICY=Always", production)
+        self.assertIn("NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI=https://workbench.example.com/signin-oidc", production)
+
     def test_shell_scripts_are_checked_out_with_lf(self) -> None:
         attributes = read(".gitattributes")
         self.assertRegex(attributes, r"(?m)^\*\.sh\s+text\s+eol=lf$")

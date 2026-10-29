@@ -19,7 +19,7 @@ internal sealed record WorkbenchAuthenticationSettings(
     {
         var gatewayEnabled = configuration.IsWorkbenchGatewayEnabled();
         var scope = EnsureResourceScope(configuration["Auth:Scope"], configuration["Auth:Audience"]);
-        ValidateConfiguration(configuration, gatewayEnabled, scope);
+        var requireHttpsMetadata = ValidateConfiguration(configuration, gatewayEnabled, scope);
 
         var credentials = WorkbenchClientCredentials.FromConfiguration(
             configuration["Auth:ClientId"], configuration["Auth:ClientSecret"]);
@@ -40,13 +40,22 @@ internal sealed record WorkbenchAuthenticationSettings(
             Scope: scope ?? string.Empty,
             GatewayEnabled: gatewayEnabled,
             SignOutProvider: !bool.TryParse(configuration["Auth:SignOutProvider"], out var signOutProvider) || signOutProvider,
-            RequireHttpsMetadata: bool.TryParse(configuration["Auth:RequireHttpsMetadata"], out var requireHttpsMetadata) && requireHttpsMetadata,
+            RequireHttpsMetadata: requireHttpsMetadata,
             AllowedBearerClientIds: allowedClientIds);
     }
 
-    private static void ValidateConfiguration(IConfiguration configuration, bool gatewayEnabled, string? scope)
+    private static bool ValidateConfiguration(IConfiguration configuration, bool gatewayEnabled, string? scope)
     {
         var errors = new List<string>();
+        var requireHttpsMetadata = true;
+        var requireHttpsMetadataValue = configuration["Auth:RequireHttpsMetadata"];
+        if (!string.IsNullOrWhiteSpace(requireHttpsMetadataValue)
+            && !bool.TryParse(requireHttpsMetadataValue, out requireHttpsMetadata))
+        {
+            errors.Add(
+                "Auth:RequireHttpsMetadata (NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA) must be true or false.");
+        }
+
         RequireValue(configuration["Auth:Authority"], "Authority", "AUTHORITY", errors);
         RequireValue(configuration["Auth:Audience"], "Audience", "AUDIENCE", errors);
         RequireValue(configuration["Auth:ClientId"], "ClientId", "CLIENT_ID", errors);
@@ -65,8 +74,17 @@ internal sealed record WorkbenchAuthenticationSettings(
         {
             errors.Add("Auth:Authority (NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY) must be an absolute HTTP(S) URI without user info, query, or fragment.");
         }
+        else if (requireHttpsMetadata && authority.Scheme != Uri.UriSchemeHttps)
+        {
+            errors.Add(
+                "Auth:Authority (NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY) must use HTTPS when " +
+                "Auth:RequireHttpsMetadata (NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA) is true.");
+        }
+
         if (errors.Count > 0)
             throw new InvalidOperationException(string.Join(" ", errors));
+
+        return requireHttpsMetadata;
     }
 
     private static void RequireValue(string? value, string key, string environmentSuffix, List<string> errors)

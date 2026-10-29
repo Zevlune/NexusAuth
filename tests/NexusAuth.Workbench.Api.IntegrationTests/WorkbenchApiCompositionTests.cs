@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NexusAuth.Application.Users;
@@ -16,7 +18,9 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
     public WorkbenchApiCompositionTests(WebApplicationFactory<WorkbenchApiModule> factory)
     {
         this.factory = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Testing")
-            .UseSetting("Auth:ClientSecret", "test-only-client-secret"));
+            .UseSetting("Auth:Authority", "https://issuer.example.test")
+            .UseSetting("Auth:ClientSecret", "test-only-client-secret")
+            .UseSetting("Swagger:Enabled", "true"));
     }
 
     [Fact]
@@ -40,6 +44,38 @@ public sealed class WorkbenchApiCompositionTests : IClassFixture<WebApplicationF
         using var administrator = configured.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
         using var response = await administrator.GetAsync("/swagger/v1/swagger.json");
         response.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Swagger_is_not_exposed_by_default_in_production()
+    {
+        using var production = new WebApplicationFactory<WorkbenchApiModule>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Production")
+                    .UseSetting("Auth:Authority", "https://issuer.example.test")
+                    .UseSetting("Auth:ClientSecret", "test-only-client-secret");
+                builder.ConfigureServices(services =>
+                {
+                    var bootstrap = services.SingleOrDefault(descriptor =>
+                        descriptor.ImplementationType == typeof(WorkbenchClientCredentialHostedService));
+                    if (bootstrap is not null)
+                        services.Remove(bootstrap);
+                    services.PostConfigure<AuthorizationOptions>(
+                        options => options.FallbackPolicy = null);
+                });
+            });
+        Assert.Equal("Production", production.Services.GetRequiredService<IWebHostEnvironment>().EnvironmentName);
+        Assert.Null(production.Services.GetRequiredService<IConfiguration>()["Swagger:Enabled"]);
+        using var client = production.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        });
+
+        using var document = await client.GetAsync("/swagger/v1/swagger.json");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, document.StatusCode);
+        using var ui = await client.GetAsync("/swagger/index.html");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, ui.StatusCode);
     }
 
     [Fact]

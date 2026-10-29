@@ -1,12 +1,12 @@
-using Luck.AspNetCore.ApiResults;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Services.Scim;
+using NexusAuth.Workbench.Api.Filters;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
 /// <summary>Internal-only management surface. Raw bearer tokens are returned once at creation.</summary>
 [ApiController]
-[ApiResultWrap]
+[WorkbenchApiResult]
 [Route("api/scim-credentials")]
 public sealed class ScimCredentialsController(IScimCredentialService credentialService) : ControllerBase
 {

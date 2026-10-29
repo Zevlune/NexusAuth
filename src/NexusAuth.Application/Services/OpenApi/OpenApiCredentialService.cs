@@ -1,3 +1,4 @@
+using NexusAuth.Application.Clients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 
@@ -19,7 +20,7 @@ public sealed class OpenApiCredentialService(IOpenApiCredentialRepository creden
     public async Task<OpenApiCredentialCreated> CreateAsync(string name, string targetType, DateTimeOffset? expiresAt, CancellationToken ct = default)
     {
         if (expiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow) throw new ArgumentException("expiresAt must be in the future.");
-        if (await credentialRepository.FindByNameAsync(name, ct) is not null) throw new InvalidOperationException("An Open API credential with this name already exists.");
+        if (await credentialRepository.FindByNameAsync(name, ct) is not null) throw new WorkbenchBusinessConflictException("An Open API credential with this name already exists.");
         var created = OpenApiCredential.Create(name, targetType, ToUtc(expiresAt));
         await credentialRepository.AddAsync(created.Entity, ct);
         return new(Map(created.Entity), created.Token);
@@ -39,9 +40,9 @@ public sealed class OpenApiCredentialService(IOpenApiCredentialRepository creden
         if (expiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow && !IsSameInstant(expiry, credential.ExpiresAt))
             throw new ArgumentException("expiresAt must be in the future.");
         if (isActive && credential.RevokedAt is not null)
-            throw new InvalidOperationException("A revoked Open API credential cannot be re-activated. Create a new credential instead.");
+            throw new WorkbenchBusinessConflictException("A revoked Open API credential cannot be re-activated. Create a new credential instead.");
         var sameName = await credentialRepository.FindByNameAsync(name.Trim(), ct);
-        if (sameName is not null && sameName.Id != id) throw new InvalidOperationException("An Open API credential with this name already exists.");
+        if (sameName is not null && sameName.Id != id) throw new WorkbenchBusinessConflictException("An Open API credential with this name already exists.");
         credential.Update(name, ToUtc(expiresAt), isActive);
         await credentialRepository.UpdateAsync(credential, ct);
         return Map(credential);

@@ -1,4 +1,5 @@
 using NexusAuth.Application;
+using NexusAuth.Application.Clients;
 
 namespace NexusAuth.Application.Services.ApiResources;
 
@@ -43,7 +44,7 @@ public class ApiResourceService(
     {
         var existing = await apiResourceRepository.FindByNameAsync(name, ct);
         if (existing is not null)
-            throw new ApiResourceAlreadyExistsException(name);
+            throw new WorkbenchBusinessConflictException($"资源标识 '{name}' 已存在，请使用其他标识。");
 
         var resource = ApiResource.Create(name, displayName, audience, description);
         await apiResourceRepository.AddAsync(resource, ct);
@@ -66,7 +67,7 @@ public class ApiResourceService(
     public async Task<ApiResourceDto> UpdateAsync(Guid id, UpdateApiResourceRequest request, CancellationToken ct = default)
     {
         var resource = await apiResourceRepository.FindByIdAsync(id, ct)
-            ?? throw new InvalidOperationException($"Api resource with id {id} not found.");
+            ?? throw new KeyNotFoundException($"Api resource with id {id} not found.");
 
         resource.Update(
             request.DisplayName,
@@ -81,7 +82,7 @@ public class ApiResourceService(
     public async Task<ApiResourceDto> UpdateStatusAsync(Guid id, bool isActive, CancellationToken ct = default)
     {
         var resource = await apiResourceRepository.FindByIdAsync(id, ct)
-            ?? throw new InvalidOperationException($"Api resource with id {id} not found.");
+            ?? throw new KeyNotFoundException($"Api resource with id {id} not found.");
 
         resource.Update(isActive: isActive);
         await apiResourceRepository.UpdateAsync(resource, ct);
@@ -92,7 +93,7 @@ public class ApiResourceService(
     {
         var resource = await apiResourceRepository.FindByIdAsync(id, ct);
         if (resource is null)
-            return;
+            throw new KeyNotFoundException($"Api resource with id {id} not found.");
 
         await clientApiResourceRepository.RemoveByApiResourceIdAsync(id, ct);
         await apiResourceRepository.DeleteAsync(resource, ct);

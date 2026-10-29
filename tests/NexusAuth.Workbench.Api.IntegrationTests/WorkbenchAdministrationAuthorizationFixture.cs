@@ -82,6 +82,7 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                 .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
                 .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")
                 .UseSetting("Auth:Scope", WorkbenchScope)
+                .UseSetting("Swagger:Enabled", "true")
                 .UseSetting("Auth:AllowedBearerClientIds:0", "additional-bearer-client");
 
             builder.ConfigureServices(services =>
@@ -166,7 +167,11 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
     public int UserLookupCount => Volatile.Read(ref userLookupCount);
 
     public HttpClient CreateAnonymousClient() =>
-        factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            BaseAddress = new Uri("https://localhost"),
+        });
 
     public HttpClient CreateBearerClient(Guid userId, string? clientId = ClientId)
     {

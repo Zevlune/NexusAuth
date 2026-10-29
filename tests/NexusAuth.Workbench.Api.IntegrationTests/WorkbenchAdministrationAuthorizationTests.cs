@@ -134,7 +134,9 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         Assert.Equal(HttpStatusCode.NoContent, (await ordinary.DeleteAsync(userPath)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await administrator.DeleteAsync(userPath)).StatusCode);
         var revokePath = userPath + $"/passkeys/{Guid.NewGuid()}/revoke";
-        Assert.Equal(HttpStatusCode.OK, (await ordinary.PostAsJsonAsync(revokePath, new { reason = "Lost device" })).StatusCode);
+        using var revokeResponse = await ordinary.PostAsJsonAsync(revokePath, new { reason = "Lost device" });
+        Assert.Equal(HttpStatusCode.NoContent, revokeResponse.StatusCode);
+        Assert.Equal(string.Empty, await revokeResponse.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.Forbidden, (await administrator.PostAsJsonAsync(revokePath, new { reason = "Lost device" })).StatusCode);
     }
 

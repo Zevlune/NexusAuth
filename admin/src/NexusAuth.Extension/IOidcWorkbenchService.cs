@@ -104,6 +104,9 @@ public interface IOidcWorkbenchService
     /// <param name="ct">中文：用于取消 HTTP 请求的令牌。English: A token used to cancel the HTTP request.</param>
     /// <returns>中文：令牌是否有效及其主体和客户端标识。English: The token activity status together with its subject and client identifier.</returns>
     Task<AccessTokenIntrospectionResult> IntrospectAccessTokenAsync(string accessToken, CancellationToken ct);
+
+    /// <summary>Revokes a token using Discovery and the registered client authentication method.</summary>
+    Task RevokeTokenAsync(string token, string tokenTypeHint, CancellationToken ct);
 }
 
 /// <summary>

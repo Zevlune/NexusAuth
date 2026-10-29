@@ -8,7 +8,8 @@ namespace NexusAuth.Extension;
 /// </summary>
 /// <param name="codeVerifier">中文：用于 PKCE 校验的原始验证码。English: The original PKCE code verifier.</param>
 /// <param name="nonce">中文：用于防止 ID Token 重放攻击的随机值。English: The random value used to prevent ID token replay attacks.</param>
-public class FlowState(string codeVerifier, string nonce)
+/// <param name="browserBinding">Hash of the initiating browser's correlation cookie.</param>
+public class FlowState(string codeVerifier, string nonce, string? browserBinding = null)
 {
     /// <summary>
     /// 中文：获取本次授权流程的 PKCE 验证码。
@@ -21,6 +22,9 @@ public class FlowState(string codeVerifier, string nonce)
     /// English: Gets the OIDC nonce for this authorization flow.
     /// </summary>
     public string Nonce { get; } = nonce;
+
+    /// <summary>Hash of the browser correlation cookie required to consume this flow.</summary>
+    public string? BrowserBinding { get; } = browserBinding;
 }
 
 /// <summary>Claims extracted only after an ID token has been cryptographically validated.</summary>
@@ -139,4 +143,7 @@ public class WorkbenchAuthOptions
     /// English: Gets or sets whether local sign-out also signs out the OpenID Provider session.
     /// </summary>
     public bool SignOutProvider { get; set; } = true;
+
+    /// <summary>Requires HTTPS for discovery and all Provider endpoints.</summary>
+    public bool RequireHttpsMetadata { get; set; } = true;
 }

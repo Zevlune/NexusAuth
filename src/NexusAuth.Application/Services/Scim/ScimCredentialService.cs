@@ -1,3 +1,5 @@
+using NexusAuth.Application.Clients;
+
 namespace NexusAuth.Application.Services.Scim;
 
 public class ScimCredentialService(IScimServicePrincipalCredentialRepository credentialRepository) : IScimCredentialService
@@ -21,7 +23,7 @@ public class ScimCredentialService(IScimServicePrincipalCredentialRepository cre
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         if (expiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow) throw new ArgumentException("expiresAt must be in the future.");
         EnsureScopesNotEmpty(scopes);
-        if (await credentialRepository.FindByNameAsync(name.Trim(), ct) is not null) throw new InvalidOperationException("A SCIM credential with this name already exists.");
+        if (await credentialRepository.FindByNameAsync(name.Trim(), ct) is not null) throw new WorkbenchBusinessConflictException("A SCIM credential with this name already exists.");
         var created = ScimServicePrincipalCredential.Create(name, scopes ?? ScimServicePrincipalCredential.SupportedScopes, expiresAt);
         await credentialRepository.AddAsync(created.Entity, ct);
         return new ScimCredentialCreated(Map(created.Entity), created.RawToken);
@@ -44,9 +46,9 @@ public class ScimCredentialService(IScimServicePrincipalCredentialRepository cre
         if (expiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow && !IsSameInstant(expiry, credential.ExpiresAt))
             throw new ArgumentException("expiresAt must be in the future.");
         if (isActive && credential.RevokedAt is not null)
-            throw new InvalidOperationException("A revoked SCIM credential cannot be re-activated. Create a new credential instead.");
+            throw new WorkbenchBusinessConflictException("A revoked SCIM credential cannot be re-activated. Create a new credential instead.");
         var sameName = await credentialRepository.FindByNameAsync(name.Trim(), ct);
-        if (sameName is not null && sameName.Id != id) throw new InvalidOperationException("A SCIM credential with this name already exists.");
+        if (sameName is not null && sameName.Id != id) throw new WorkbenchBusinessConflictException("A SCIM credential with this name already exists.");
         credential.Update(name, scopes, expiresAt);
         credential.SetActive(isActive);
         await credentialRepository.UpdateAsync(credential, ct);

@@ -28,6 +28,12 @@ public static class WorkbenchConfigurationExtensions
             ["NEXUSAUTH_WORKBENCH_AUTH_AUDIENCE"] = "Auth:Audience",
             ["NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA"] = "Auth:RequireHttpsMetadata",
             ["NEXUSAUTH_WORKBENCH_AUTH_SIGN_OUT_PROVIDER"] = "Auth:SignOutProvider",
+            ["NEXUSAUTH_WORKBENCH_SECURITY_COOKIE_SECURE_POLICY"] = "Security:CookieSecurePolicy",
+            ["NEXUSAUTH_WORKBENCH_SECURITY_FORWARDED_HEADERS_ENABLED"] = "Security:ForwardedHeadersEnabled",
+            ["NEXUSAUTH_WORKBENCH_SECURITY_FORWARD_LIMIT"] = "Security:ForwardLimit",
+            ["NEXUSAUTH_WORKBENCH_SECURITY_KNOWN_PROXIES"] = "Security:KnownProxies",
+            ["NEXUSAUTH_WORKBENCH_SECURITY_KNOWN_NETWORKS"] = "Security:KnownNetworks",
+            ["NEXUSAUTH_WORKBENCH_SWAGGER_ENABLED"] = "Swagger:Enabled",
             ["NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_NAME"] = "Bootstrap:ResourceName",
             ["NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DISPLAY_NAME"] = "Bootstrap:ResourceDisplayName",
             ["NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DESCRIPTION"] = "Bootstrap:ResourceDescription",
@@ -67,5 +73,17 @@ public static class WorkbenchConfigurationExtensions
             return enabled;
         throw new InvalidOperationException(
             "Gateway:Enabled (NEXUSAUTH_WORKBENCH_GATEWAY_ENABLED) must be true or false.");
+    }
+
+    public static bool IsWorkbenchSwaggerEnabled(this IConfiguration configuration, IHostEnvironment environment)
+    {
+        var value = configuration["Swagger:Enabled"];
+        if (string.IsNullOrWhiteSpace(value))
+            return environment.IsDevelopment();
+        if (bool.TryParse(value, out var enabled))
+            return enabled;
+
+        throw new InvalidOperationException(
+            "Swagger:Enabled (NEXUSAUTH_WORKBENCH_SWAGGER_ENABLED) must be true or false.");
     }
 }

@@ -17,16 +17,19 @@ namespace NexusAuth.Extension;
 /// <param name="httpClientFactory">中文：用于创建访问 Provider 的 HTTP 客户端工厂。English: The factory used to create HTTP clients for Provider requests.</param>
 /// <param name="flowStateStore">中文：用于保存授权流程临时安全状态的存储服务。English: The store used to retain temporary authorization-flow security state.</param>
 /// <param name="authOptions">中文：Workbench OIDC 客户端配置。English: The Workbench OIDC client configuration.</param>
+/// <param name="discoveryCache">Shared provider metadata cache across request scopes.</param>
 public class OidcWorkbenchService(
     IHttpClientFactory httpClientFactory,
     IFlowStateStore flowStateStore,
-    IOptions<WorkbenchAuthOptions> authOptions) : IOidcWorkbenchService
+    IOptions<WorkbenchAuthOptions> authOptions,
+    WorkbenchDiscoveryCache? discoveryCache = null) : IOidcWorkbenchService
 {
     /// <summary>The named HTTP client configured for OIDC provider backchannel traffic.</summary>
     public const string HttpClientName = "NexusAuth.OidcBackchannel";
 
     private readonly FrontendOptions _frontendOptions = new();
     private readonly WorkbenchAuthOptions _options = authOptions.Value;
+    private readonly WorkbenchDiscoveryCache _discoveryCache = discoveryCache ?? new();
     private readonly WorkbenchClientCredentials _credentials =
         WorkbenchClientCredentials.FromConfiguration(authOptions.Value.ClientId, authOptions.Value.ClientSecret);
 
@@ -68,11 +71,49 @@ public class OidcWorkbenchService(
     /// <inheritdoc />
     public async Task<DiscoveryDocument> FetchDiscoveryAsync(CancellationToken ct)
     {
+        ValidateEndpoint(Authority);
+        var discovery = await _discoveryCache.GetAsync(Authority, async () =>
+        {
+            var client = httpClientFactory.CreateClient(HttpClientName);
+            using var response = await client.GetAsync($"{Authority.TrimEnd('/')}/.well-known/openid-configuration", ct);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<DiscoveryDocument>(cancellationToken: ct)
+                ?? throw new InvalidOperationException("Unable to load OpenID Connect discovery document.");
+        }, ct);
+        if (!string.Equals(discovery.Issuer.TrimEnd('/'), Authority.TrimEnd('/'), StringComparison.Ordinal))
+            throw new SecurityTokenInvalidIssuerException("Provider issuer does not match the configured authority.");
+        foreach (var endpoint in new[] { discovery.AuthorizationEndpoint, discovery.TokenEndpoint,
+                     discovery.JwksUri, discovery.IntrospectionEndpoint, discovery.RevocationEndpoint, discovery.EndSessionEndpoint })
+        {
+            if (!string.IsNullOrWhiteSpace(endpoint)) ValidateEndpoint(endpoint);
+        }
+        return discovery;
+    }
+
+    private void ValidateEndpoint(string endpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo)
+            || !string.IsNullOrEmpty(uri.Fragment) || (_options.RequireHttpsMetadata && uri.Scheme != "https"))
+            throw new InvalidOperationException("Provider endpoints must be absolute HTTPS URLs unless HTTPS metadata is explicitly disabled.");
+    }
+
+    /// <inheritdoc />
+    public async Task RevokeTokenAsync(string token, string tokenTypeHint, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        var discovery = await FetchDiscoveryAsync(ct);
+        if (string.IsNullOrWhiteSpace(discovery.RevocationEndpoint))
+            throw new InvalidOperationException("The Provider does not publish a revocation endpoint.");
         var client = httpClientFactory.CreateClient(HttpClientName);
-        var response = await client.GetAsync($"{Authority.TrimEnd('/')}/.well-known/openid-configuration", ct);
+        await ApplyClientAuthenticationAsync(client);
+        using var response = await client.PostAsync(discovery.RevocationEndpoint,
+            new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["token"] = token,
+                ["token_type_hint"] = tokenTypeHint,
+            }), ct);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<DiscoveryDocument>(cancellationToken: ct)
-            ?? throw new InvalidOperationException("Unable to load OpenID Connect discovery document.");
     }
 
     public async Task<ValidatedIdToken> ValidateIdTokenAsync(

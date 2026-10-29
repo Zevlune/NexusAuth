@@ -1,13 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
-using Luck.AspNetCore.ApiResults;
-using Luck.Framework.Exceptions;
 using NexusAuth.Application;
 using NexusAuth.Application.Services.ApiResources;
+using NexusAuth.Workbench.Api.Filters;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
 [ApiController]
-[ApiResultWrap]
+[WorkbenchApiResult]
 [Route("api/api-resources")]
 public class ApiResourcesController : ControllerBase
 {
@@ -43,7 +42,7 @@ public class ApiResourcesController : ControllerBase
     {
         var resource = await _apiResourceService.GetByIdAsync(id, ct);
         if (resource is null)
-            throw new NotFoundException($"API resource with id '{id}' was not found.");
+            throw new KeyNotFoundException($"API resource with id '{id}' was not found.");
 
         return resource;
     }
@@ -60,7 +59,7 @@ public class ApiResourcesController : ControllerBase
     public async Task<ApiResourceDto> Update(Guid id, [FromBody] UpdateApiResourceRequest request, CancellationToken ct = default)
     {
         if (await _apiResourceService.GetByIdAsync(id, ct) is null)
-            throw new NotFoundException($"API resource with id '{id}' was not found.");
+            throw new KeyNotFoundException($"API resource with id '{id}' was not found.");
 
         return await _apiResourceService.UpdateAsync(id, request, ct);
     }
@@ -72,14 +71,15 @@ public class ApiResourcesController : ControllerBase
         CancellationToken ct = default)
     {
         if (await _apiResourceService.GetByIdAsync(id, ct) is null)
-            throw new NotFoundException($"API resource with id '{id}' was not found.");
+            throw new KeyNotFoundException($"API resource with id '{id}' was not found.");
 
         return await _apiResourceService.UpdateStatusAsync(id, request.IsActive, ct);
     }
 
     [HttpDelete("{id:guid}")]
-    public async Task Delete(Guid id, CancellationToken ct = default)
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct = default)
     {
         await _apiResourceService.DeleteAsync(id, ct);
+        return NoContent();
     }
 }

@@ -8,7 +8,7 @@
 2. 用户点击“使用 NexusAuth 登录”，前端请求 `GET /api/auth/login`，取得服务端生成的 `authorizeUrl`，再用 `window.location.assign` 跳转。`state`、`nonce` 和 PKCE verifier 由 API 保存，前端不自行拼接敏感参数。
 3. NexusAuth 把浏览器重定向到 API 的 `/signin-oidc`。API 兑换、验证令牌并设置 HttpOnly Cookie，随后跳回前端 `/auth/callback`。
 4. 前端重新请求 `/api/auth/me`，成功后进入受保护页面。普通管理请求使用同源 Cookie；受保护 API 返回 401 时回到登录页。
-5. 登出时调用 `POST /api/auth/logout` 清 API 会话；若响应包含 `logoutUrl`，浏览器继续跳到 NexusAuth 的 `/connect/endsession`，完成 Provider 侧登出。
+5. 登出时调用 `POST /api/auth/logout` 清 API 会话；若响应包含 `logoutUrl`，浏览器继续跳到 Discovery 声明的 `end_session_endpoint`，完成 Provider 侧登出。
 
 接口由 [`src/api/login.ts`](../admin/src/NexusAuth.Workbench.Dashboard/src/api/login.ts) 封装；路由和登录状态判断见 [`src/router/auth.ts`](../admin/src/NexusAuth.Workbench.Dashboard/src/router/auth.ts) 与 [`src/router/routes.tsx`](../admin/src/NexusAuth.Workbench.Dashboard/src/router/routes.tsx)。`/auth/callback` 是前端落地页，不是 NexusAuth 登记的 OAuth 回调地址。不要把客户端的 `redirect_uri` 指向它。
 

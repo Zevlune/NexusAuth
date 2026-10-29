@@ -1,4 +1,5 @@
 using System.Reflection;
+using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.OpenApi;
 using NexusAuth.Application.Services.Scim;
 using NexusAuth.Domain.Entities;
@@ -27,7 +28,7 @@ public sealed class CredentialLifecycleTests
         Assert.True(await service.RevokeAsync(id));
         var revokedAt = store.Single().RevokedAt;
         Assert.NotNull(revokedAt);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateAsync(id, "idp", null, null, isActive: true));
+        await Assert.ThrowsAsync<WorkbenchBusinessConflictException>(() => service.UpdateAsync(id, "idp", null, null, isActive: true));
         var renamed = await service.UpdateAsync(id, "idp-renamed", null, null, isActive: false);
         Assert.False(renamed!.IsActive);
         Assert.Equal(revokedAt, renamed.RevokedAt);
@@ -86,7 +87,7 @@ public sealed class CredentialLifecycleTests
         Assert.True(await service.RevokeAsync(id));
         var revokedAt = store.Single().RevokedAt;
         Assert.NotNull(revokedAt);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateAsync(id, "app-reader", null, isActive: true));
+        await Assert.ThrowsAsync<WorkbenchBusinessConflictException>(() => service.UpdateAsync(id, "app-reader", null, isActive: true));
         var renamed = await service.UpdateAsync(id, "app-reader-old", null, isActive: false);
         Assert.Equal(revokedAt, renamed!.RevokedAt);
         Assert.True(await service.RevokeAsync(id));

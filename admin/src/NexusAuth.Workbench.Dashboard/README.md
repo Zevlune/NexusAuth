@@ -43,7 +43,7 @@ npm run dev
 3. Host 回调 API 的 `GET /signin-oidc`；API 在服务端兑换授权码、校验 ID Token 并写入 HttpOnly Cookie。
 4. API 跳转前端 `/auth/callback`，前端再次检查登录状态并进入 `/dashboard`。
 5. 普通管理请求使用同源 Cookie；受保护请求返回 401 时回到登录页。
-6. 退出调用 `POST /api/auth/logout` 清 Cookie；若响应含 `logoutUrl`，浏览器继续跳到 Host 的 `/connect/endsession`。
+6. 退出调用 `POST /api/auth/logout` 清 Cookie；若响应含 `logoutUrl`，浏览器继续跳到 Discovery 声明的 `end_session_endpoint`。
 
 Cookie 名为 `.NexusAuth.Workbench`，是独立的 24 小时会话并开启滑动续期。加密票据里保存了 access/refresh/id token，以 `HttpOnly` Cookie 形式发给浏览器，页面脚本无法读取或解密。access token 临近过期时由 API 自动刷新、introspection 复检并轮换令牌；这些逻辑都在服务端。
 
