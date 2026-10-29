@@ -82,29 +82,15 @@ Workbench 的默认模式（BFF 模式）需要 Host 提供 OIDC 登录。请先
 - Host 的 `Jwt:Issuer` 与 Workbench 配置的 `Auth:Authority` 完全一致；同一个 Authority 用于浏览器授权跳转、Discovery、令牌、JWKS、introspection 和 JWT issuer 校验。
 - 浏览器和 Workbench API 进程都能直接访问该 Authority。容器内的 `localhost` 指向容器自身；跨网段或跨容器时应使用同一个可达域名或 IP，并通过网络 DNS 或入口路由访问 Provider。
 
-Host 源码方式默认关闭 SMTP，因此没有邮件配置也能启动。只有需要邮件功能时，才显式设置 `NEXUSAUTH_SMTP_ENABLED=true` 并提供完整配置；启用后 `ValidateOnStart` 仍会在任何必需项缺失时立即阻止启动：
+Host 默认关闭 SMTP，因此没有邮件配置也能启动。需要邮件功能时，在 Host appsettings 中设置 `Smtp:Enabled=true` 并提供完整配置；启用后 `ValidateOnStart` 会在必需项缺失时阻止启动：
 
 ```bash
-# 方式一：提供完整可用的 SMTP 配置，并配置初始管理员
-NEXUSAUTH_SMTP_ENABLED=true \
-NEXUSAUTH_SMTP_PASSWORD=你的授权码 \
-NEXUSAUTH_SMTP_HOST=smtp.example.com \
-NEXUSAUTH_SMTP_PORT=465 \
-NEXUSAUTH_SMTP_SECURITY=SslOnConnect \
-NEXUSAUTH_SMTP_USERNAME=sender@example.com \
-NEXUSAUTH_SMTP_FROM_ADDRESS=sender@example.com \
-NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME=admin \
-NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD=请替换为强密码 \
-dotnet run --project src/NexusAuth.Host
-
-# 方式二：本地不验证邮件时保持默认关闭（初始管理员仍必填）
-NEXUSAUTH_SMTP_ENABLED=false \
-NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME=admin \
-NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD=请替换为强密码 \
 dotnet run --project src/NexusAuth.Host
 ```
 
-Compose 方式下 `docker-compose.yml` 显式传入 `NEXUSAUTH_SMTP_ENABLED=${NEXUSAUTH_SMTP_ENABLED:-false}`，所以默认不启用邮件。需要邮件时，可按 [SMTP 配置与发信验证](SMTP发信试验.md) 第 3 节设置 `NEXUSAUTH_SMTP_ENABLED=true`，并用 Compose override 提供完整 SMTP 配置。
+Compose 方式下需要配置邮件时，可按 [SMTP 配置与发信验证](SMTP发信试验.md) 提供 Host appsettings 文件。
+
+需要创建初始管理员时，在 Host 的 appsettings 中配置 `BootstrapAdmin`；未配置时跳过，详见 [管理员初始化](NexusAuth.Host使用手册.md#4-管理员初始化)。
 
 ## 3. 用根目录 Docker Compose 启动
 
@@ -118,7 +104,7 @@ Host 镜像内 `appsettings.json` 和 Compose 默认关闭 SMTP，无邮件配�
 docker compose up --build
 ```
 
-需要邮件功能时，设置 `NEXUSAUTH_SMTP_ENABLED=true` 并按 [SMTP 配置与发信验证](SMTP发信试验.md) 第 3 节提供完整配置。
+需要邮件功能时，按 [SMTP 配置与发信验证](SMTP发信试验.md) 在 Host appsettings 中启用并提供完整配置。
 
 会启动四个服务：
 
@@ -133,12 +119,12 @@ docker compose up --build
 
 Compose 为 Workbench API 注入的关键值（见根 `docker-compose.yml` 的 `admin-api` 服务）：
 
-- `Auth:Authority` 取 `${NEXUSAUTH_JWT_ISSUER:-http://localhost:5100}`，与 Host issuer 使用同一个值；
+- `Auth:Authority` 取 `${NEXUSAUTH_JWT_ISSUER:-http://localhost:5100}`，必须与 Host appsettings 中的 `Jwt:Issuer` 一致；
 - `Auth:RedirectUri` 默认 `http://localhost:5560/signin-oidc`；`Auth:PostLogoutRedirectUri` 默认 `http://localhost:5560/`，可通过 `NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI` 覆盖；
 - `Auth:ClientSecret` 由 `${WORKBENCH_CLIENT_SECRET:-c57cf0e110c54ad2ac5591b99801b852}` 注入；
 - 连接串与 Bootstrap 名称也由环境变量提供。
 
-`http://localhost:5100` 只适合浏览器和 Workbench 进程都运行在宿主机上的场景。`admin-api` 容器内的 `localhost` 是容器自身，不能借它访问 `sso`。容器化启动时应先把 `NEXUSAUTH_JWT_ISSUER` 设置为浏览器和 `admin-api` 都能通过同一 DNS/IP 直接访问、且路由到 Provider 的 Authority；不要改成 `sso:8080` 或其他内网地址替身。
+`http://localhost:5100` 只适合浏览器和 Workbench 进程都运行在宿主机上的场景。`admin-api` 容器内的 `localhost` 是容器自身，不能借它访问 `sso`。容器化启动时应将 Host 配置文件中的 `Jwt:Issuer` 与 Workbench 的 `NEXUSAUTH_JWT_ISSUER` 设置为相同的、浏览器和 `admin-api` 都能访问的地址。
 
 容器默认的 `WORKBENCH_CLIENT_SECRET` 是仓库内置的开发值，只适合本地。生产必须用密钥管理注入，并保证与 Host 数据库里的客户端密钥一致（见 [6.2](#62-自身-bootstrap-登记了什么)）。
 
@@ -171,13 +157,10 @@ docker compose up -d db
 
 ```bash
 # 终端 2：先启动身份认证服务器
-NEXUSAUTH_SMTP_ENABLED=false \
-NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME=admin \
-NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD=请替换为强密码 \
 dotnet run --project src/NexusAuth.Host
 ```
 
-如果要用真实邮件，把 `NEXUSAUTH_SMTP_ENABLED=false` 换成完整的 SMTP 环境变量。Host 详细配置见 [NexusAuth.Host 使用手册](NexusAuth.Host使用手册.md)。
+如果要用真实邮件，在 Host appsettings 中启用并配置 SMTP。Host 详细配置见 [NexusAuth.Host 使用手册](NexusAuth.Host使用手册.md)。
 
 ### 4.3 Workbench API
 
@@ -456,6 +439,8 @@ Dashboard 的菜单和路由都由 `src/api/auth.ts` 里的菜单定义动态生
 ### 9.6 SCIM 凭证
 
 入口：“应用中心 → SCIM 凭证”（`/oauth/scim-credential-management`）。SCIM 面向用户同步：应用用这些凭证调用 **Host** 的 `/scim/v2`。
+
+Host 可通过 appsettings 中的 `Scim:Enabled=false` 关闭 SCIM 接口；关闭后接口返回 404，Workbench 凭证管理仍然可用。配置优先级和接口清单见 [Host SCIM 接口说明](NexusAuth.Host使用手册.md#7-scim-20-用户供给)。
 
 - 创建时可填名称、scope（`scim:read`、`scim:write`）和过期时间；凭证明文只在创建时返回一次，服务端只存哈希。
 - 更新可改名称、scope、过期时间和启用状态；撤销调用 `POST /api/scim-credentials/{id}/revoke`。

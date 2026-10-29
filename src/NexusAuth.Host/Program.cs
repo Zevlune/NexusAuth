@@ -2,17 +2,31 @@ using Luck.AutoDependencyInjection;
 using Luck.Logging.Serilog;
 using Microsoft.Extensions.Configuration;
 using NexusAuth.Host;
+using NexusAuth.Host.Controllers;
 using NexusAuth.Host.Swagger;
+using NexusAuth.Application.Services.Email;
 
 var builder = WebApplication.CreateBuilder(args);
-AddSingleUnderscoreEnvironmentVariables(builder.Configuration);
+var listenUrls = builder.Configuration["urls"];
+var appSettingsConfiguration = new ConfigurationBuilder()
+    .SetFileProvider(builder.Environment.ContentRootFileProvider)
+    .AddJsonFile("appsettings.json", optional: true)
+    .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true)
+    .Build();
+builder.Configuration.Sources.Clear();
+builder.Configuration.AddConfiguration(appSettingsConfiguration);
+if (!string.IsNullOrWhiteSpace(listenUrls))
+    builder.WebHost.UseUrls(listenUrls);
 builder.AddLuckSerilog();
 
 try
 {
-    builder.Services.AddControllers();
+    builder.Services.AddControllers().ConfigureApplicationPartManager(manager =>
+        manager.FeatureProviders.Add(new ScimControllerFeatureProvider(builder.Configuration)));
     builder.Services.AddRazorPages();
     builder.Services.AddHttpContextAccessor();
+    builder.Services.Configure<BootstrapAdminOptions>(appSettingsConfiguration.GetSection("BootstrapAdmin"));
+    builder.Services.AddNexusAuthEmail(appSettingsConfiguration);
     builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(
         options => NexusAuth.Host.Authentication.ClientIpConfiguration.Configure(options, builder.Configuration));
     builder.Services.AddApplication<AppWebModule>();
@@ -39,93 +53,4 @@ catch (Exception exception)
 finally
 {
     LoggingExtensions.CloseAndFlush();
-}
-
-static void AddSingleUnderscoreEnvironmentVariables(ConfigurationManager configuration)
-{
-    var keyMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-    {
-        ["NEXUSAUTH_CLIENT_IP_FORWARDED_HEADERS_ENABLED"] = "ClientIp:ForwardedHeadersEnabled",
-        ["NEXUSAUTH_CLIENT_IP_KNOWN_PROXIES"] = "ClientIp:KnownProxies",
-        ["NEXUSAUTH_CLIENT_IP_KNOWN_NETWORKS"] = "ClientIp:KnownNetworks",
-        ["NEXUSAUTH_CLIENT_IP_FORWARD_LIMIT"] = "ClientIp:ForwardLimit",
-        ["NEXUSAUTH_CONNECTION_STRINGS_DEFAULT"] = "ConnectionStrings:Default",
-        ["NEXUSAUTH_SMTP_ENABLED"] = "Smtp:Enabled",
-        ["NEXUSAUTH_SMTP_HOST"] = "Smtp:Host",
-        ["NEXUSAUTH_SMTP_PORT"] = "Smtp:Port",
-        ["NEXUSAUTH_SMTP_SECURITY"] = "Smtp:Security",
-        ["NEXUSAUTH_SMTP_USERNAME"] = "Smtp:Username",
-        ["NEXUSAUTH_SMTP_PASSWORD"] = "Smtp:Password",
-        ["NEXUSAUTH_SMTP_FROM_ADDRESS"] = "Smtp:FromAddress",
-        ["NEXUSAUTH_SMTP_FROM_NAME"] = "Smtp:FromName",
-        ["NEXUSAUTH_SMTP_VERIFICATION_CODE_COOLDOWN_SECONDS"] = "Smtp:VerificationCodeCooldownSeconds",
-        ["NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES"] = "Smtp:VerificationCodeLifetimeMinutes",
-        ["NEXUSAUTH_JWT_ISSUER"] = "Jwt:Issuer",
-        ["NEXUSAUTH_JWT_SIGNING_MODE"] = "Jwt:SigningMode",
-        ["NEXUSAUTH_JWT_SIGNING_PATH"] = "Jwt:SigningPath",
-        ["NEXUSAUTH_JWT_SIGNING_PASSWORD"] = "Jwt:SigningPassword",
-        ["NEXUSAUTH_JWT_DEVELOPMENT_SIGNING_CERTIFICATE_PATH"] = "Jwt:DevelopmentSigningCertificatePath",
-        ["NEXUSAUTH_JWT_DEVELOPMENT_SIGNING_CERTIFICATE_PASSWORD"] = "Jwt:DevelopmentSigningCertificatePassword",
-        ["NEXUSAUTH_JWT_SIGNING_CERTIFICATE_PATH"] = "Jwt:SigningCertificatePath",
-        ["NEXUSAUTH_JWT_SIGNING_CERTIFICATE_PASSWORD"] = "Jwt:SigningCertificatePassword",
-        ["NEXUSAUTH_JWT_DEVELOPMENT_SIGNING_KEY_PATH"] = "Jwt:DevelopmentSigningKeyPath",
-        ["NEXUSAUTH_JWT_SIGNING_KEY_PATH"] = "Jwt:SigningKeyPath",
-        ["NEXUSAUTH_JWT_ACCESS_TOKEN_LIFETIME_MINUTES"] = "Jwt:AccessTokenLifetimeMinutes",
-        ["NEXUSAUTH_JWT_REFRESH_TOKEN_LIFETIME_MINUTES"] = "Jwt:RefreshTokenLifetimeMinutes",
-        ["NEXUSAUTH_SLIDER_CAPTCHA_ENABLED"] = "SliderCaptcha:Enabled",
-        ["NEXUSAUTH_SLIDER_CAPTCHA_CHALLENGE_LIFETIME_SECONDS"] = "SliderCaptcha:ChallengeLifetimeSeconds",
-        ["NEXUSAUTH_SLIDER_CAPTCHA_TOLERANCE_PIXELS"] = "SliderCaptcha:TolerancePixels",
-        ["NEXUSAUTH_SLIDER_CAPTCHA_TRACK_WIDTH_PIXELS"] = "SliderCaptcha:TrackWidthPixels",
-        ["NEXUSAUTH_LOGIN_FLOW_REMEMBER_ME_LIFETIME_DAYS"] = "LoginFlow:RememberMeLifetimeDays",
-        ["NEXUSAUTH_LOGIN_PAGE_BRAND_NAME"] = "LoginPage:BrandName",
-        ["NEXUSAUTH_LOGIN_PAGE_BRAND_LOGO_URL"] = "LoginPage:BrandLogoUrl",
-        ["NEXUSAUTH_LOGIN_PAGE_MARKETING_HEADING"] = "LoginPage:MarketingHeading",
-        ["NEXUSAUTH_LOGIN_PAGE_MARKETING_DESCRIPTION"] = "LoginPage:MarketingDescription",
-        ["NEXUSAUTH_LOGIN_PAGE_LOGIN_TITLE"] = "LoginPage:LoginTitle",
-        ["NEXUSAUTH_LOGIN_PAGE_LOGIN_SUBTITLE"] = "LoginPage:LoginSubtitle",
-        ["NEXUSAUTH_SELF_REGISTRATION_ENABLED"] = "SelfRegistration:Enabled",
-        ["NEXUSAUTH_WECHAT_MINIPROGRAM_ENABLED"] = "WeChat:MiniProgram:Enabled",
-        ["NEXUSAUTH_WECHAT_MINIPROGRAM_CLIENT_ID"] = "WeChat:MiniProgram:ClientId",
-        ["NEXUSAUTH_WECHAT_MINIPROGRAM_APP_ID"] = "WeChat:MiniProgram:AppId",
-        ["NEXUSAUTH_WECHAT_MINIPROGRAM_APP_SECRET"] = "WeChat:MiniProgram:AppSecret",
-        ["NEXUSAUTH_WECHAT_MINIPROGRAM_CODE2SESSION_ENDPOINT"] = "WeChat:MiniProgram:Code2SessionEndpoint",
-        ["NEXUSAUTH_WEBAUTHN_ENABLED"] = "WebAuthn:Enabled",
-        ["NEXUSAUTH_WEBAUTHN_RP_ID"] = "WebAuthn:RelyingPartyId",
-        ["NEXUSAUTH_WEBAUTHN_RP_NAME"] = "WebAuthn:RelyingPartyName",
-        ["NEXUSAUTH_WEBAUTHN_ORIGIN"] = "WebAuthn:Origins:0",
-        ["NEXUSAUTH_WEBAUTHN_CHALLENGE_LIFETIME_SECONDS"] = "WebAuthn:ChallengeLifetimeSeconds",
-        ["NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME"] = "BootstrapAdmin:Username",
-        ["NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD"] = "BootstrapAdmin:Password",
-        ["NEXUSAUTH_BOOTSTRAP_ADMIN_NICKNAME"] = "BootstrapAdmin:Nickname",
-        ["NEXUSAUTH_BOOTSTRAP_ADMIN_EMAIL"] = "BootstrapAdmin:Email",
-        ["NEXUSAUTH_DATA_RETENTION_ENABLED"] = "DataRetention:Enabled",
-        ["NEXUSAUTH_DATA_RETENTION_SWEEP_INTERVAL_MINUTES"] = "DataRetention:SweepIntervalMinutes",
-        ["NEXUSAUTH_DATA_RETENTION_EXPIRED_DATA_RETENTION_DAYS"] = "DataRetention:ExpiredDataRetentionDays",
-        ["NEXUSAUTH_DATA_RETENTION_LOGIN_AUDIT_RETENTION_DAYS"] = "DataRetention:LoginAuditRetentionDays",
-        ["NEXUSAUTH_DATA_RETENTION_CLEANUP_BATCH_SIZE"] = "DataRetention:CleanupBatchSize",
-        ["NEXUSAUTH_DATA_RETENTION_MAX_BATCHES_PER_TYPE_PER_SWEEP"] = "DataRetention:MaxBatchesPerTypePerSweep",
-        ["NEXUSAUTH_LUCK_LOGGING_MODULE"] = "LuckLogging:Module",
-        ["NEXUSAUTH_LUCK_LOGGING_FILE_PATH"] = "LuckLogging:FilePath",
-        ["NEXUSAUTH_LUCK_LOGGING_MINIMUM_LEVEL"] = "LuckLogging:MinimumLevel",
-        ["NEXUSAUTH_LUCK_LOGGING_FILE_SIZE_LIMIT_BYTES"] = "LuckLogging:FileSizeLimitBytes",
-        ["NEXUSAUTH_LUCK_LOGGING_RETAINED_FILE_COUNT_LIMIT"] = "LuckLogging:RetainedFileCountLimit",
-        ["NEXUSAUTH_LUCK_LOGGING_ROLL_ON_FILE_SIZE_LIMIT"] = "LuckLogging:RollOnFileSizeLimit",
-        ["NEXUSAUTH_LUCK_LOGGING_SHARED"] = "LuckLogging:Shared",
-        ["NEXUSAUTH_LUCK_LOGGING_FLUSH_INTERVAL_SECONDS"] = "LuckLogging:FlushIntervalSeconds",
-        ["NEXUSAUTH_LUCK_LOGGING_MINIMUM_LEVEL_OVERRIDES_MICROSOFT_ASPNETCORE"] = "LuckLogging:MinimumLevelOverrides:Microsoft.AspNetCore",
-        ["NEXUSAUTH_LUCK_LOGGING_MINIMUM_LEVEL_OVERRIDES_MICROSOFT_ENTITYFRAMEWORKCORE_DATABASE_COMMAND"] = "LuckLogging:MinimumLevelOverrides:Microsoft.EntityFrameworkCore.Database.Command"
-    };
-    var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-
-    foreach (var (environmentName, configurationKey) in keyMap)
-    {
-        var value = Environment.GetEnvironmentVariable(environmentName);
-        if (value is null)
-            continue;
-
-        values[configurationKey] = value;
-    }
-
-    if (values.Count > 0)
-        configuration.AddInMemoryCollection(values);
 }

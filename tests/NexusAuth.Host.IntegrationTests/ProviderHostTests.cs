@@ -20,8 +20,8 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     {
         this.factory = factory.WithWebHostBuilder(builder => builder
             .UseEnvironment("Development")
-            .UseSetting("BootstrapAdmin:Username", string.Empty)
-            .UseSetting("BootstrapAdmin:Password", string.Empty)
+            .UseTestSetting("BootstrapAdmin:Username", string.Empty)
+            .UseTestSetting("BootstrapAdmin:Password", string.Empty)
             .ConfigureTestServices(services => services.Remove(
                 services.Single(descriptor => descriptor.ImplementationType == typeof(BootstrapAdminHostedService)))));
     }
@@ -124,7 +124,7 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     public async Task Registration_page_is_available_to_anonymous_users_when_self_registration_is_enabled()
     {
         using var enabledFactory = factory.WithWebHostBuilder(builder => builder
-            .UseSetting("SelfRegistration:Enabled", "true"));
+            .UseTestSetting("SelfRegistration:Enabled", "true"));
         using var client = enabledFactory.CreateClient();
 
         var response = await client.GetAsync("/account/register");
@@ -140,8 +140,8 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     public async Task Enabled_slider_captcha_registration_page_contains_png_challenge_without_target_coordinate()
     {
         using var enabledFactory = factory.WithWebHostBuilder(builder => builder
-            .UseSetting("SelfRegistration:Enabled", "true")
-            .UseSetting("SliderCaptcha:Enabled", "true"));
+            .UseTestSetting("SelfRegistration:Enabled", "true")
+            .UseTestSetting("SliderCaptcha:Enabled", "true"));
         using var client = enabledFactory.CreateClient();
 
         var page = await client.GetStringAsync("/account/register");
@@ -160,8 +160,8 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     {
         var users = new RecordingRegistrationUserService();
         using var enabledFactory = factory.WithWebHostBuilder(builder => builder
-            .UseSetting("SelfRegistration:Enabled", "true")
-            .UseSetting("SliderCaptcha:Enabled", "true")
+            .UseTestSetting("SelfRegistration:Enabled", "true")
+            .UseTestSetting("SliderCaptcha:Enabled", "true")
             .ConfigureTestServices(services =>
             {
                 services.RemoveAll<IUserService>();
@@ -201,7 +201,7 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     public async Task Login_page_shows_registration_link_when_self_registration_is_enabled()
     {
         using var enabledFactory = factory.WithWebHostBuilder(builder => builder
-            .UseSetting("SelfRegistration:Enabled", "true"));
+            .UseTestSetting("SelfRegistration:Enabled", "true"));
         using var client = enabledFactory.CreateClient();
 
         var response = await client.GetAsync("/account/login");
@@ -226,7 +226,7 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     public async Task Enabled_webauthn_shows_passkey_login_action()
     {
         using var enabledFactory = factory.WithWebHostBuilder(builder =>
-            builder.UseSetting("WebAuthn:Enabled", "true"));
+            builder.UseTestSetting("WebAuthn:Enabled", "true"));
         using var client = enabledFactory.CreateClient();
 
         var loginPage = await client.GetStringAsync("/account/login");
@@ -238,7 +238,7 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     public async Task Enabled_slider_captcha_does_not_publish_its_target_coordinate()
     {
         using var enabledFactory = factory.WithWebHostBuilder(builder =>
-            builder.UseSetting("SliderCaptcha:Enabled", "true"));
+            builder.UseTestSetting("SliderCaptcha:Enabled", "true"));
         using var client = enabledFactory.CreateClient();
 
         var loginPage = await client.GetStringAsync("/account/login");
@@ -254,8 +254,8 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
     public async Task Captcha_refresh_returns_new_images_without_the_answer(string path)
     {
         using var enabledFactory = factory.WithWebHostBuilder(builder => builder
-            .UseSetting("SliderCaptcha:Enabled", "true")
-            .UseSetting("SelfRegistration:Enabled", "true"));
+            .UseTestSetting("SliderCaptcha:Enabled", "true")
+            .UseTestSetting("SelfRegistration:Enabled", "true"));
         using var client = enabledFactory.CreateClient();
         var first = await client.GetAsync(path + "?handler=Captcha");
         var second = await client.GetAsync(path + "?handler=Captcha");

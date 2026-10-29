@@ -88,12 +88,12 @@ public sealed class OidcHardeningPostgreSqlTests
         var appId = $"wx-{Guid.NewGuid():N}";
         using var factory = new WebApplicationFactory<AppWebModule>().WithWebHostBuilder(builder => builder
             .UseEnvironment("Development")
-            .UseSetting("Smtp:Enabled", "false")
-            .UseSetting("ConnectionStrings:Default", Connection())
-            .UseSetting("WeChat:MiniProgram:Enabled", "true")
-            .UseSetting("WeChat:MiniProgram:ClientId", clientId)
-            .UseSetting("WeChat:MiniProgram:AppId", appId)
-            .UseSetting("WeChat:MiniProgram:AppSecret", "test-secret")
+            .UseTestSetting("Smtp:Enabled", "false")
+            .UseTestSetting("ConnectionStrings:Default", Connection())
+            .UseTestSetting("WeChat:MiniProgram:Enabled", "true")
+            .UseTestSetting("WeChat:MiniProgram:ClientId", clientId)
+            .UseTestSetting("WeChat:MiniProgram:AppId", appId)
+            .UseTestSetting("WeChat:MiniProgram:AppSecret", "test-secret")
             .ConfigureTestServices(services =>
             {
                 var bootstrap = services.FirstOrDefault(value => value.ImplementationType == typeof(BootstrapAdminHostedService));

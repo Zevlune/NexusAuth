@@ -9,6 +9,8 @@ NexusAuth 包含身份认证服务和管理工作台两套用途不同的应用�
 
 Host 可以单独部署。Workbench 依赖可用的身份认证服务，当前实现与 Host 共用 NexusAuth 数据库；Dashboard 通过 Workbench API 操作管理数据。Dashboard 不能单独承担认证服务的职责。
 
+Host 的应用配置从 `appsettings.json` 和 `appsettings.{环境}.json` 读取。SCIM 用户同步默认开启，无需同步的部署可设置 `Scim:Enabled` 为 `false`；关闭后 SCIM 接口不会注册，详见 [SCIM 接口说明](document/NexusAuth.Host使用手册.md#7-scim-20-用户供给)。
+
 ## 从哪里开始
 
 - **提供统一登录、接入业务系统或调用身份协议**：阅读 [Host 使用手册](document/NexusAuth.Host使用手册.md)，按“独立启动 → 配置 → 协议接入”的顺序操作。
@@ -16,7 +18,7 @@ Host 可以单独部署。Workbench 依赖可用的身份认证服务，当前�
 - **阅读协议细节**：查看 [OAuth/OIDC 协议设计](document/11-OAuth-OIDC协议设计.md)。
 - **接入 APISIX**：查看 [APISIX 网关对接手册](document/13-APISIX网关对接手册.md)，先核对网关模式与默认 BFF 模式的区别。
 
-启动时需要留意当前源码的两个默认值：Workbench 的默认 Authority 和 Dashboard 的 Vite 代理指向局域网地址；Compose 中 `admin-api` 没有映射宿主机端口。Host 的 SMTP 默认关闭，只有显式设置 `NEXUSAUTH_SMTP_ENABLED=true` 并补齐有效邮件配置后才会启用；两套手册分别给出了本地配置和容器配置的具体步骤。
+启动时需要留意当前源码的两个默认值：Workbench 的默认 Authority 和 Dashboard 的 Vite 代理指向局域网地址；Compose 中 `admin-api` 没有映射宿主机端口。Host 的 SMTP 默认关闭，可在 appsettings 中启用并补齐邮件配置；两套手册分别给出了本地配置和容器配置的具体步骤。
 
 ## 代码结构
 

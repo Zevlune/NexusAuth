@@ -43,7 +43,6 @@ public class AppWebModule : LuckAppModule
         services.AddScopeKeyedServices(typeof(IClientAuthenticationStrategy).Assembly);
         services.AddTokenGrantStrategies();
         services.AddNexusAuthTokenSigning(configuration);
-        services.AddNexusAuthEmail(configuration);
         // The upstream URL contains AppSecret and the one-time code. Suppress
         // HttpClient URL logging and redirects for this credential-bearing call.
         services.AddHttpClient(WeChatMiniProgramLoginService.HttpClientName,
@@ -104,7 +103,6 @@ public class AppWebModule : LuckAppModule
                 options => options.EnrollmentLifetimeMinutes is >= 1 and <= 30,
                 "Totp:EnrollmentLifetimeMinutes must be between 1 and 30.")
             .ValidateOnStart();
-        services.Configure<BootstrapAdminOptions>(configuration.GetSection("BootstrapAdmin"));
         services.AddHostedService<BootstrapAdminHostedService>();
         services.AddOptions<AuthenticationDataRetentionOptions>()
             .Bind(configuration.GetSection(AuthenticationDataRetentionOptions.SectionName))

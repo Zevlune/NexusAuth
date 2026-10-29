@@ -6,34 +6,36 @@
 
 Host 已通过 `AddNexusAuthSmtp` 注册 `SmtpOptions`、启动校验、`IEmailSender` 和 MailKit SMTP 传输。邮箱验证码已经接入登录、个人邮箱管理和找回密码。注册表单填写邮箱不会自动完成邮箱验证。
 
-当前 [`appsettings.json`](../src/NexusAuth.Host/appsettings.json) 默认设置 `Smtp.Enabled=false`，因此未配置邮件服务的本地环境可以直接启动。只有显式启用时才会连接 SMTP；启用后如果缺少 Host、用户名、密码或有效发件人，`ValidateOnStart` 会阻止 Host 启动。
+Host 从 [`appsettings.json`](../src/NexusAuth.Host/appsettings.json) 读取 `Smtp` 节点，再读取 `appsettings.{环境}.json` 并使用其中的同名字段覆盖基础配置。`{环境}` 对应启动时的 `ASPNETCORE_ENVIRONMENT`，例如 Development 环境读取 `appsettings.Development.json`。Host 通过 `Smtp.Enabled` 控制邮件能力：默认 `false`，未配置邮件服务时可以直接启动；改为 `true` 后，如果缺少 Host、用户名、密码或有效发件人，`ValidateOnStart` 会阻止 Host 启动。关闭 SMTP 后，邮件发送和验证码流程不可用。
 
-本地只需要密码或 Passkey 登录时无需额外关闭邮件。若要确认运行进程中的值，可以设置：
-
-```bash
-export NEXUSAUTH_SMTP_ENABLED=false
-```
-
-然后按照 [Host 手册](NexusAuth.Host使用手册.md) 配置数据库、BootstrapAdmin 等并启动。关闭 SMTP 后，邮件发送和验证码流程不可用。
+Host 的 SMTP 参数不使用 `NEXUSAUTH_SMTP_*` 或 `Smtp__*` 环境变量。配置写在本进程实际读取的 `appsettings.json` 或对应的 `appsettings.{环境}.json` 中；后者适合保存部署环境的值。
 
 ## 2. 源码运行时的配置
 
-下列变量由 Host 的 [`Program.cs`](../src/NexusAuth.Host/Program.cs) 显式映射到配置。替换示例中的邮箱、SMTP 授权码，再在同一终端启动 Host；SMTP 密码通常是邮箱服务商的 SMTP 授权码。
+- 基础默认值放在 `appsettings.json`。
+- 开发、测试或生产环境的覆盖值放在对应的 `appsettings.{环境}.json`。
+- 启用前替换示例中的邮箱和 SMTP 授权码；密码通常使用邮箱服务商生成的 SMTP 授权码，配置文件中的实际密码不要提交到仓库。
 
-```bash
-export NEXUSAUTH_SMTP_ENABLED=true
-export NEXUSAUTH_SMTP_HOST=smtp.qq.com
-export NEXUSAUTH_SMTP_PORT=465
-export NEXUSAUTH_SMTP_SECURITY=SslOnConnect
-export NEXUSAUTH_SMTP_USERNAME=your-account@qq.com
-export NEXUSAUTH_SMTP_PASSWORD='replace-with-smtp-authorization-code'
-export NEXUSAUTH_SMTP_FROM_ADDRESS=your-account@qq.com
-export NEXUSAUTH_SMTP_FROM_NAME=NexusAuth
-export NEXUSAUTH_SMTP_VERIFICATION_CODE_COOLDOWN_SECONDS=60
-export NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES=5
+`appsettings.{环境}.json` 中的最小启用示例：
+
+```json
+{
+  "Smtp": {
+    "Enabled": true,
+    "Host": "smtp.qq.com",
+    "Port": 465,
+    "Security": "SslOnConnect",
+    "Username": "your-account@qq.com",
+    "Password": "REPLACE_WITH_SMTP_AUTHORIZATION_CODE",
+    "FromAddress": "your-account@qq.com",
+    "FromName": "NexusAuth",
+    "VerificationCodeCooldownSeconds": 60,
+    "VerificationCodeLifetimeMinutes": 5
+  }
+}
 ```
 
-| 配置 | 校验与含义 |
+| `Smtp` 配置 | 校验与含义 |
 | --- | --- |
 | `Enabled` | `false` 时跳过连接配置校验，发送服务拒绝发信 |
 | `Host` / `Port` | Host 必填；端口范围 `1..65535` |
@@ -43,37 +45,30 @@ export NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES=5
 | `VerificationCodeCooldownSeconds` | 发送冷却，范围 `1..3600` 秒，默认 60 |
 | `VerificationCodeLifetimeMinutes` | 验证码有效期，范围 `1..60` 分钟，默认 5；不得短于冷却时间 |
 
-也可使用标准配置键，例如 `Smtp__Enabled=false`。同一键同时配置 Host 专用 `NEXUSAUTH_SMTP_*` 变量时，专用变量的显式映射会覆盖该值。
+修改配置后重新启动 Host。运行容器时，需要确保更新后的 `appsettings.json` 或 `appsettings.{环境}.json` 已进入镜像，或通过卷覆盖容器 `/app` 下的对应文件。
 
-## 3. Docker Compose 的环境变量
+## 3. Docker Compose 与直接部署
 
-根 [`docker-compose.yml`](../docker-compose.yml) 的 `sso.environment` 显式转发 `NEXUSAUTH_SMTP_ENABLED`，默认值为 `false`，同时转发 `NEXUSAUTH_SMTP_PASSWORD`。因此宿主 `.env` 中的 `NEXUSAUTH_SMTP_ENABLED=true` 会进入容器并启用邮件；其余邮件配置仍读取镜像内 appsettings 或 Compose override。
+Host 的 Compose 服务直接使用镜像内 `/app/appsettings.json` 和 `/app/appsettings.{环境}.json`，环境文件中的 `ASPNETCORE_ENVIRONMENT` 决定加载哪个覆盖文件。Host 的 `.env`、`sso.env` 和 Compose `environment` 不再配置 SMTP 参数。
 
-启用邮件时，需要同时提供真实 SMTP 主机、用户名、密码和发件地址。推荐在仓库根目录创建本地覆盖文件 `docker-compose.smtp.local.yml`：
+启用邮件时，需要同时提供真实 SMTP 主机、用户名、密码和发件地址。本地开发可直接编辑上面的 JSON 配置文件；需要把配置留在容器外时，可在 Compose 覆盖文件中把对应配置文件只读挂载到 `/app`，例如：
 
 ```yaml
 services:
   sso:
     environment:
-      NEXUSAUTH_SMTP_ENABLED: "true"
-      NEXUSAUTH_SMTP_HOST: "${NEXUSAUTH_SMTP_HOST:-smtp.qq.com}"
-      NEXUSAUTH_SMTP_PORT: "${NEXUSAUTH_SMTP_PORT:-465}"
-      NEXUSAUTH_SMTP_SECURITY: "${NEXUSAUTH_SMTP_SECURITY:-SslOnConnect}"
-      NEXUSAUTH_SMTP_USERNAME: "${NEXUSAUTH_SMTP_USERNAME:?SMTP username is required}"
-      NEXUSAUTH_SMTP_PASSWORD: "${NEXUSAUTH_SMTP_PASSWORD:?SMTP password is required}"
-      NEXUSAUTH_SMTP_FROM_ADDRESS: "${NEXUSAUTH_SMTP_FROM_ADDRESS:?SMTP sender is required}"
-      NEXUSAUTH_SMTP_FROM_NAME: "${NEXUSAUTH_SMTP_FROM_NAME:-NexusAuth}"
-      NEXUSAUTH_SMTP_VERIFICATION_CODE_COOLDOWN_SECONDS: "60"
-      NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES: "5"
+      ASPNETCORE_ENVIRONMENT: Production
+    volumes:
+      - ./appsettings.Production.json:/app/appsettings.Production.json:ro
 ```
 
-在当前终端设置上一节的实际值，然后执行以下命令；其他 Host 配置仍按主手册准备：
+`ASPNETCORE_ENVIRONMENT` 和挂载文件名必须使用同一个环境名称，且配置文件权限应仅允许部署账号读取。示例中的占位值不能直接用于实际发信。
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up -d --build db sso
+docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up -d db sso
 ```
 
-不创建覆盖文件时，根 Compose 会以 `NEXUSAUTH_SMTP_ENABLED=false` 启动 Host；部署整套 Workbench 时同样不需要仅为关闭 SMTP 增加本地覆盖。
+不启用邮件时，保持 `Smtp.Enabled=false` 即可，不需要创建 SMTP 覆盖文件或 Host SMTP 环境变量。直接部署的 [`sso.env.example`](../deploy/direct/sso.env.example) 同样只保留非 SMTP 环境配置。
 
 ## 4. 页面使用步骤
 
@@ -106,8 +101,8 @@ docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up -d --bu
 
 | 现象 | 检查方向 |
 | --- | --- |
-| Host 无法启动，提示 SMTP 配置缺失 | 仅当显式启用 SMTP 时发生；补全配置或设置 `NEXUSAUTH_SMTP_ENABLED=false` |
-| 修改 `.env` 后行为不变 | 检查变量是否在 Compose 的 `environment` 中显式传递，容器是否已重建 |
+| Host 无法启动，提示 SMTP 配置缺失 | 仅当 `Smtp.Enabled=true` 时发生；补全配置文件或改回 `false` |
+| 修改配置后行为不变 | 检查 `ASPNETCORE_ENVIRONMENT`、配置文件名、容器挂载路径，并重启 Host 容器 |
 | 认证失败 | SMTP 服务是否开启；使用授权码；用户名是否为完整邮箱 |
 | TLS 连接失败 | 核对服务商要求的端口与 `Security`，避免混用 465 / StartTls |
 | 页面显示已发送但没有邮件 | 核对账号是否存在、启用且邮箱已验证；检查冷却、上限、SMTP 日志及收件箱 |
@@ -130,4 +125,4 @@ dotnet test tests/NexusAuth.Host.IntegrationTests/NexusAuth.Host.IntegrationTest
 - [真实 SMTP 传输](../src/NexusAuth.Shared/Email/MailKitSmtpTransport.cs)
 - [验证码服务](../src/NexusAuth.Application/Services/Email/EmailVerificationCodeService.cs)
 - [账号邮箱业务](../src/NexusAuth.Application/Services/Email/EmailAccountService.cs)
-- [Host 环境变量映射](../src/NexusAuth.Host/Program.cs)
+- [Host SMTP 注册](../src/NexusAuth.Host/Program.cs)

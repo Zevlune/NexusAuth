@@ -29,6 +29,7 @@ services:
     ports:
       - "5100:8080"
     volumes:
+      - ./sso.appsettings.json:/app/appsettings.json:ro
       - signing-data:/app/App_Data
       - sso-protection:/root/.aspnet/DataProtection-Keys
       - ./signing:/run/secrets:ro

@@ -44,19 +44,13 @@ class DeploymentDefaultsTests(unittest.TestCase):
         self.assertIn("Skip =", tests)
         self.assertNotIn("http://localhost:5100/scim/v2/", tests)
 
-    def test_smtp_defaults_off_and_compose_can_enable_it_explicitly(self) -> None:
+    def test_host_smtp_defaults_off_and_uses_appsettings(self) -> None:
         settings = json.loads(read("src/NexusAuth.Host/appsettings.json"))
         self.assertIs(settings["Smtp"]["Enabled"], False)
 
         compose = read("docker-compose.yml")
-        self.assertRegex(
-            compose,
-            r"(?m)^\s+NEXUSAUTH_SMTP_ENABLED:\s+\$\{NEXUSAUTH_SMTP_ENABLED:-false\}$",
-        )
-        self.assertRegex(
-            read("deploy/direct/sso.env.example"),
-            r"(?m)^NEXUSAUTH_SMTP_ENABLED=false$",
-        )
+        self.assertNotIn("NEXUSAUTH_SMTP_", compose)
+        self.assertNotIn("NEXUSAUTH_SMTP_", read("deploy/direct/sso.env.example"))
 
     def test_direct_deployment_uses_single_authority_and_overridable_logout(self) -> None:
         workbench_env = read("deploy/direct/workbench.env.example")
@@ -71,10 +65,9 @@ class DeploymentDefaultsTests(unittest.TestCase):
             "NEXUSAUTH_WORKBENCH_AUTH_BACKCHANNEL_AUTHORITY",
             workbench_env,
         )
-        self.assertRegex(
-            read("deploy/direct/sso.env.example"),
-            r"(?m)^NEXUSAUTH_JWT_ISSUER=https://sso\.example\.com$",
-        )
+        host_config = json.loads(read("deploy/direct/sso.appsettings.example.json"))
+        self.assertEqual(host_config["Jwt"]["Issuer"], "https://sso.example.com")
+        self.assertNotIn("NEXUSAUTH_JWT_ISSUER", read("deploy/direct/sso.env.example"))
 
         compose = read("docker-compose.yml")
         self.assertRegex(

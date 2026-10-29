@@ -1,8 +1,8 @@
 # Optional local preview data. Does not replace or clear existing volumes.
 services:
   sso:
-    environment:
-      NEXUSAUTH_SLIDER_CAPTCHA_ENABLED: "true"
+    volumes:
+      - ./docker/host.local.appsettings.json:/app/appsettings.${NEXUSAUTH_SSO_ENVIRONMENT:-Development}.json:ro
   db:
     volumes:
       - ./docker/local-demo-seed.sql:/docker-entrypoint-initdb.d/010-local-demo.sql:ro

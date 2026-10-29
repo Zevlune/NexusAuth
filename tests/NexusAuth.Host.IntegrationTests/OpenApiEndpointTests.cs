@@ -117,8 +117,8 @@ public sealed class OpenApiFactory : WebApplicationFactory<AppWebModule>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development")
-            .UseSetting("BootstrapAdmin:Username", string.Empty)
-            .UseSetting("BootstrapAdmin:Password", string.Empty)
+            .UseTestSetting("BootstrapAdmin:Username", string.Empty)
+            .UseTestSetting("BootstrapAdmin:Password", string.Empty)
             .ConfigureTestServices(services =>
             {
                 services.Remove(services.Single(descriptor => descriptor.ImplementationType == typeof(BootstrapAdminHostedService)));

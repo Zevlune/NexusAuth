@@ -1,0 +1,7 @@
+{
+  "ConnectionStrings": { "Default": "Host=db;Port=5432;Database=nexusauth;Username=nexusauth;Password=REPLACE_WITH_DATABASE_PASSWORD;Search Path=nexusauth" },
+  "Jwt": { "Issuer": "https://sso.example.com", "DefaultAudience": "NexusAuth", "SigningMode": "Certificate", "SigningPath": "/run/secrets/nexusauth-signing.pfx", "SigningPassword": "REPLACE_WITH_SIGNING_PASSWORD", "AccessTokenLifetimeMinutes": 60, "RefreshTokenLifetimeMinutes": 43200 },
+  "Smtp": { "Enabled": false },
+  "Scim": { "Enabled": true },
+  "BootstrapAdmin": { "Username": "", "Password": "" }
+}

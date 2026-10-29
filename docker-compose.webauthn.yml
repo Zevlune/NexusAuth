@@ -31,20 +31,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       ASPNETCORE_ENVIRONMENT: ${WEBAUTHN_NEXUSAUTH_ENVIRONMENT:-Development}
-      NEXUSAUTH_CONNECTION_STRINGS_DEFAULT: Host=webauthn-nexusauth-db;Port=5432;Database=WebAuthnNexusAuth;Username=${WEBAUTHN_NEXUSAUTH_POSTGRES_USER:-webauthnnexusauth};Password=${WEBAUTHN_NEXUSAUTH_POSTGRES_PASSWORD:-webauthnnexusauth_dev_password};Search Path=nexusauth
-      NEXUSAUTH_JWT_ISSUER: ${WEBAUTHN_NEXUSAUTH_ISSUER:-http://localhost:5200}
-      NEXUSAUTH_JWT_SIGNING_MODE: Certificate
-      NEXUSAUTH_JWT_SIGNING_PATH: ${WEBAUTHN_NEXUSAUTH_SIGNING_PATH:-}
-      NEXUSAUTH_JWT_SIGNING_PASSWORD: ${WEBAUTHN_NEXUSAUTH_SIGNING_PASSWORD:-webauthnnexusauth-compose-dev}
-      NEXUSAUTH_SELF_REGISTRATION_ENABLED: "true"
-      NEXUSAUTH_WEBAUTHN_ENABLED: ${WEBAUTHN_NEXUSAUTH_ENABLED:-true}
-      NEXUSAUTH_WEBAUTHN_RP_ID: ${WEBAUTHN_NEXUSAUTH_RP_ID:-localhost}
-      NEXUSAUTH_WEBAUTHN_RP_NAME: ${WEBAUTHN_NEXUSAUTH_RP_NAME:-WebAuthn NexusAuth}
-      NEXUSAUTH_WEBAUTHN_ORIGIN: ${WEBAUTHN_NEXUSAUTH_ORIGIN:-http://localhost:5200}
-      NEXUSAUTH_WEBAUTHN_CHALLENGE_LIFETIME_SECONDS: ${WEBAUTHN_NEXUSAUTH_CHALLENGE_LIFETIME_SECONDS:-300}
-      NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME: ${WEBAUTHN_NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME:-}
-      NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD: ${WEBAUTHN_NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
     volumes:
+      - ${WEBAUTHN_NEXUSAUTH_APPSETTINGS_FILE:-./docker/webauthn-host.appsettings.json}:/app/appsettings.${WEBAUTHN_NEXUSAUTH_ENVIRONMENT:-Development}.json:ro
       - webauthnnexusauth-signing-key:/app/App_Data
       - webauthnnexusauth-data-protection-keys:/root/.aspnet/DataProtection-Keys
       - ./logs/webauthn-nexusauth:/app/logs

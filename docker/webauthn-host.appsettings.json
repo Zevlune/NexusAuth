@@ -1,0 +1,6 @@
+{
+  "ConnectionStrings": { "Default": "Host=webauthn-nexusauth-db;Port=5432;Database=WebAuthnNexusAuth;Username=webauthnnexusauth;Password=webauthnnexusauth_dev_password;Search Path=nexusauth" },
+  "Jwt": { "Issuer": "http://localhost:5200", "SigningMode": "Certificate", "SigningPassword": "webauthnnexusauth-compose-dev" },
+  "SelfRegistration": { "Enabled": true },
+  "WebAuthn": { "Enabled": true, "RelyingPartyId": "localhost", "RelyingPartyName": "WebAuthn NexusAuth", "Origins": ["http://localhost:5200"], "ChallengeLifetimeSeconds": 300 }
+}

@@ -372,13 +372,13 @@ public sealed class AccountSecurityPageTests
             Factory = new WebApplicationFactory<AppWebModule>().WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Development")
-                    .UseSetting("BootstrapAdmin:Username", string.Empty)
-                    .UseSetting("BootstrapAdmin:Password", string.Empty)
-                    .UseSetting("Smtp:Enabled", "false");
+                    .UseTestSetting("BootstrapAdmin:Username", string.Empty)
+                    .UseTestSetting("BootstrapAdmin:Password", string.Empty)
+                    .UseTestSetting("Smtp:Enabled", "false");
                 if (cookieSecurePolicy is not null)
-                    builder.UseSetting("Security:CookieSecurePolicy", cookieSecurePolicy);
+                    builder.UseTestSetting("Security:CookieSecurePolicy", cookieSecurePolicy);
                 if (swaggerEnabled is not null)
-                    builder.UseSetting("Swagger:Enabled", swaggerEnabled);
+                    builder.UseTestSetting("Swagger:Enabled", swaggerEnabled);
 
                 builder.ConfigureTestServices(services =>
                 {

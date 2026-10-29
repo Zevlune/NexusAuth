@@ -147,8 +147,8 @@ public sealed class PasskeyAccountTests
         public Harness(bool requireTotp = false)
         {
             Factory = new WebApplicationFactory<AppWebModule>().WithWebHostBuilder(builder => builder.UseEnvironment("Development")
-                .UseSetting("WebAuthn:Enabled", "true")
-                .UseSetting("LoginFlow:Steps:1:Requirement", requireTotp ? "required" : "conditional")
+                .UseTestSetting("WebAuthn:Enabled", "true")
+                .UseTestSetting("LoginFlow:Steps:1:Requirement", requireTotp ? "required" : "conditional")
                 .ConfigureTestServices(services =>
                 {
                     services.Remove(services.Single(item => item.ImplementationType == typeof(BootstrapAdminHostedService)));

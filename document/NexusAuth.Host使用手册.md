@@ -60,33 +60,24 @@ Host 镜像构建见 [`src/NexusAuth.Host/Dockerfile`](../src/NexusAuth.Host/Doc
 
 ### 2.2 只启动 db 和 sso 的 Compose 流程
 
-仓库根目录的 [`docker-compose.yml`](../docker-compose.yml) 同时定义了 `db`、`sso`、`admin-api` 和 `dashboard`。只启动 Host 所需的数据库和认证服务时，要显式指定 `db` 和 `sso`。当前镜像内的 `Smtp:Enabled` 默认为 `false`，Compose 也通过 `NEXUSAUTH_SMTP_ENABLED=${NEXUSAUTH_SMTP_ENABLED:-false}` 显式保持关闭，因此可以直接启动；需要邮件功能时再配置完整的可用 SMTP。
+仓库根目录的 [`docker-compose.yml`](../docker-compose.yml) 同时定义了 `db`、`sso`、`admin-api` 和 `dashboard`。只启动 Host 所需的数据库和认证服务时，要显式指定 `db` 和 `sso`。Host 的 `Smtp:Enabled` 默认为 `false`；需要邮件功能时在 Host appsettings 中配置 SMTP。
 
-需要邮件功能时，按 [Host SMTP 配置与发信验证](SMTP发信试验.md) 配置完整的可用 SMTP。启用后任何必需项缺失仍会被 `ValidateOnStart` 立即拒绝。也可以创建本地 `docker-compose.smtp.local.yml`，至少包含：
-
-```yaml
-services:
-  sso:
-    environment:
-      NEXUSAUTH_SMTP_ENABLED: "true"
-```
-
-随后使用显式两个 `-f` 参数启动：
+需要邮件功能时，按 [Host SMTP 配置与发信验证](SMTP发信试验.md) 配置完整的可用 SMTP。启用后任何必需项缺失仍会被 `ValidateOnStart` 立即拒绝。
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up -d db sso
+docker compose up -d db sso
 ```
 
 需要重新构建 Host 镜像时：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml up -d --build db sso
+docker compose up -d --build db sso
 ```
 
 查看日志：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.smtp.local.yml logs -f sso
+docker compose logs -f sso
 ```
 
 Compose 默认把 SSO 暴露在本机回环地址：
@@ -94,7 +85,7 @@ Compose 默认把 SSO 暴露在本机回环地址：
 - SSO：`http://localhost:5100`
 - PostgreSQL：`127.0.0.1:33210`
 
-Compose 的 `sso` 默认会启用自注册和 Passkey，并使用一个开发用 Bootstrap 管理员默认值。生产或共享环境必须覆盖这些值。数据库、签名材料和 Data Protection key ring 使用命名卷持久化。
+Compose 的 `sso` 默认会启用自注册和 Passkey；生产或共享环境应检查这些值。默认不创建管理员，需要时通过 Host 的 appsettings 配置。数据库、签名材料和 Data Protection key ring 使用命名卷持久化。
 
 ### 2.3 数据库初始化和迁移边界
 
@@ -133,13 +124,10 @@ docker compose up -d db
 
 开发环境配置在 [`src/NexusAuth.Host/appsettings.Development.json`](../src/NexusAuth.Host/appsettings.Development.json) 中指向 `127.0.0.1:33210`。使用的启动配置见 [`src/NexusAuth.Host/Properties/launchSettings.json`](../src/NexusAuth.Host/Properties/launchSettings.json)。
 
-当前源码默认关闭 SMTP，可以直接运行。下面的命令显式保留关闭状态，避免从 shell 或本机配置继承意外的启用值：
+当前源码默认关闭 SMTP，可以直接运行：
 
 ```bash
 ASPNETCORE_ENVIRONMENT=Development \
-NEXUSAUTH_SMTP_ENABLED=false \
-NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME=admin \
-NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-strong-password' \
 dotnet run --project src/NexusAuth.Host/NexusAuth.Host.csproj --launch-profile NexusAuth.Host
 ```
 
@@ -151,18 +139,11 @@ dotnet run --project src/NexusAuth.Host/NexusAuth.Host.csproj --launch-profile N
 - Swagger UI：`http://localhost:5100/swagger`
 - OpenID Discovery：`http://localhost:5100/.well-known/openid-configuration`
 
-如果不使用 launch profile，需要自己补齐环境变量，尤其要避免意外以 Production 默认值启动：
+如果不使用 launch profile，可指定运行环境和监听地址；数据库和 JWT 参数在 appsettings 中配置：
 
 ```bash
 ASPNETCORE_ENVIRONMENT=Development \
 ASPNETCORE_URLS=http://localhost:5100 \
-NEXUSAUTH_CONNECTION_STRINGS_DEFAULT='Host=127.0.0.1;Port=33210;Database=nexusauth;Username=nexusauth;Password=nexusauth_dev_password;Search Path=nexusauth' \
-NEXUSAUTH_JWT_ISSUER=http://localhost:5100 \
-NEXUSAUTH_JWT_SIGNING_MODE=Certificate \
-NEXUSAUTH_JWT_SIGNING_PASSWORD='replace-with-a-development-only-password' \
-NEXUSAUTH_SMTP_ENABLED=false \
-NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME=admin \
-NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-strong-password' \
 dotnet run --project src/NexusAuth.Host/NexusAuth.Host.csproj --no-launch-profile
 ```
 
@@ -170,24 +151,9 @@ dotnet run --project src/NexusAuth.Host/NexusAuth.Host.csproj --no-launch-profil
 
 ### 3.1 配置来源与优先级
 
-Host 使用标准 .NET 配置系统，主要来源为：
+Host 应用配置只从 [`appsettings.json`](../src/NexusAuth.Host/appsettings.json) 和 `appsettings.{ASPNETCORE_ENVIRONMENT}.json` 读取，后者覆盖前者。Host 不读取 `NEXUSAUTH_*`、标准双下划线环境变量或命令行参数作为应用配置。`ASPNETCORE_ENVIRONMENT` 和 `ASPNETCORE_URLS` 仍用于选择运行环境和监听地址。
 
-1. [`src/NexusAuth.Host/appsettings.json`](../src/NexusAuth.Host/appsettings.json)
-2. `appsettings.{ASPNETCORE_ENVIRONMENT}.json`
-3. 环境变量
-4. 命令行参数
-5. Host 在 [`src/NexusAuth.Host/Program.cs`](../src/NexusAuth.Host/Program.cs) 中额外支持的少量单下划线环境变量映射
-
-单下划线变量不是 .NET 的通用语法，只是 Host 显式映射的兼容入口。完整配置能力始终可以通过标准双下划线环境变量使用，例如：
-
-```bash
-Smtp__Password=...
-Jwt__SigningKeys__0__Source=Certificate
-Jwt__SigningKeys__0__IsActive=true
-Jwt__SigningKeys__0__Path=/run/secrets/current.pfx
-```
-
-标准双下划线名称可以与仓库配置节一一对应。`Jwt:SigningKeys` 这类数组或多级对象没有全部列入单下划线白名单，应使用 `Jwt__SigningKeys__...`。
+根 Compose 默认挂载 [`docker/host.appsettings.json`](../docker/host.appsettings.json)，可通过 `NEXUSAUTH_HOST_APPSETTINGS_FILE` 指定部署配置文件。数据库连接、JWT Issuer、证书和功能开关均在该文件中配置。修改后重启 Host。自定义 PostgreSQL 用户或密码时，还须同步更新 Host 和 Workbench 的连接配置。Host 的 `Jwt:Issuer` 必须与 Workbench 的 Authority 一致。
 
 ### 3.2 默认配置差异
 
@@ -195,64 +161,23 @@ Jwt__SigningKeys__0__Path=/run/secrets/current.pfx
 
 | 配置 | `appsettings.json` | `appsettings.Development.json` | launch profile / Compose |
 | --- | --- | --- | --- |
-| `ConnectionStrings:Default` | `localhost:5432`，示例密码 | `127.0.0.1:33210`，开发库 | Compose 通过 `NEXUSAUTH_CONNECTION_STRINGS_DEFAULT` 覆盖到 `db:5432` |
+| `ConnectionStrings:Default` | `localhost:5432`，示例密码 | `127.0.0.1:33210`，开发库 | Compose 配置文件默认指向 `db:5432` |
 | `Jwt:Issuer` | `http://localhost:5100` | 不覆盖 | Compose 默认 `http://localhost:5100` |
 | `Jwt:SigningMode` | `Certificate` | `Certificate` | Host/Compose 默认 `Certificate` |
 | `Jwt:SigningPassword` | 未设置 | `nexusauth-development` | Compose 默认 `nexusauth-compose-dev` |
-| `Smtp:Enabled` | `false` | 不覆盖 | Compose 显式传入 `NEXUSAUTH_SMTP_ENABLED`，默认 `false` |
-| `Smtp:Password` | 未设置 | 不覆盖 | Compose 透传 `NEXUSAUTH_SMTP_PASSWORD` |
-| `SelfRegistration:Enabled` | `false` | 不覆盖 | launch profile 和 Compose 默认 `true` |
-| `WebAuthn:Enabled` | `false` | 不覆盖 | launch profile 和 Compose 默认 `true` |
-| `WebAuthn:Origins` | `http://localhost:5200` | 不覆盖 | launch profile 和 Compose 默认 `http://localhost:5100` |
-| Bootstrap 管理员 | 用户名为空 | 不覆盖 | Compose 有开发默认值，必须覆盖 |
+| `Smtp:Enabled` | `false` | 不覆盖 | 仅从 Host appsettings 读取 |
+| `Smtp:Password` | 空 | 不覆盖 | 仅从 Host appsettings 读取 |
+| `SelfRegistration:Enabled` | `false` | 不覆盖 | Compose 配置文件默认 `true` |
+| `Scim:Enabled` | `true` | 不覆盖 | 按需在 appsettings 配置 |
+| `WebAuthn:Enabled` | `false` | 不覆盖 | Compose 配置文件默认 `true` |
+| `WebAuthn:Origins` | `http://localhost:5200` | 不覆盖 | Compose 配置文件默认 `http://localhost:5100` |
+| Bootstrap 管理员 | 用户名和密码为空，跳过初始化 | 不覆盖 | 按需在 Host 的 appsettings 配置 |
 
-示例配置中的数据库密码、签名密码和 Bootstrap 密码都只适合本地开发。生产环境必须通过 Secret 或受控环境变量覆盖。
+示例配置中的数据库密码、签名密码和 Bootstrap 密码都只适合本地开发。生产环境应使用受权限控制的 appsettings 文件，并只读挂载到容器。
 
-### 3.3 Host 支持的单下划线环境变量
+### 3.3 容器配置
 
-以下为 Host 显式映射的主要变量。未列出的配置项请使用标准双下划线名称，或者修改对应的 JSON 配置文件。
-
-| 环境变量 | 配置键 |
-| --- | --- |
-| `NEXUSAUTH_CONNECTION_STRINGS_DEFAULT` | `ConnectionStrings:Default` |
-| `NEXUSAUTH_SMTP_ENABLED` | `Smtp:Enabled` |
-| `NEXUSAUTH_SMTP_HOST` | `Smtp:Host` |
-| `NEXUSAUTH_SMTP_PORT` | `Smtp:Port` |
-| `NEXUSAUTH_SMTP_SECURITY` | `Smtp:Security` |
-| `NEXUSAUTH_SMTP_USERNAME` | `Smtp:Username` |
-| `NEXUSAUTH_SMTP_PASSWORD` | `Smtp:Password` |
-| `NEXUSAUTH_SMTP_FROM_ADDRESS` | `Smtp:FromAddress` |
-| `NEXUSAUTH_SMTP_FROM_NAME` | `Smtp:FromName` |
-| `NEXUSAUTH_SMTP_VERIFICATION_CODE_COOLDOWN_SECONDS` | `Smtp:VerificationCodeCooldownSeconds` |
-| `NEXUSAUTH_SMTP_VERIFICATION_CODE_LIFETIME_MINUTES` | `Smtp:VerificationCodeLifetimeMinutes` |
-| `NEXUSAUTH_JWT_ISSUER` | `Jwt:Issuer` |
-| `NEXUSAUTH_JWT_SIGNING_MODE` | `Jwt:SigningMode` |
-| `NEXUSAUTH_JWT_SIGNING_PATH` | `Jwt:SigningPath` |
-| `NEXUSAUTH_JWT_SIGNING_PASSWORD` | `Jwt:SigningPassword` |
-| `NEXUSAUTH_JWT_DEVELOPMENT_SIGNING_CERTIFICATE_PATH` | `Jwt:DevelopmentSigningCertificatePath` |
-| `NEXUSAUTH_JWT_DEVELOPMENT_SIGNING_CERTIFICATE_PASSWORD` | `Jwt:DevelopmentSigningCertificatePassword` |
-| `NEXUSAUTH_JWT_SIGNING_CERTIFICATE_PATH` | `Jwt:SigningCertificatePath` |
-| `NEXUSAUTH_JWT_SIGNING_CERTIFICATE_PASSWORD` | `Jwt:SigningCertificatePassword` |
-| `NEXUSAUTH_JWT_DEVELOPMENT_SIGNING_KEY_PATH` | `Jwt:DevelopmentSigningKeyPath` |
-| `NEXUSAUTH_JWT_SIGNING_KEY_PATH` | `Jwt:SigningKeyPath` |
-| `NEXUSAUTH_JWT_ACCESS_TOKEN_LIFETIME_MINUTES` | `Jwt:AccessTokenLifetimeMinutes` |
-| `NEXUSAUTH_JWT_REFRESH_TOKEN_LIFETIME_MINUTES` | `Jwt:RefreshTokenLifetimeMinutes` |
-| `NEXUSAUTH_SELF_REGISTRATION_ENABLED` | `SelfRegistration:Enabled` |
-| `NEXUSAUTH_WEBAUTHN_ENABLED` | `WebAuthn:Enabled` |
-| `NEXUSAUTH_WEBAUTHN_RP_ID` | `WebAuthn:RelyingPartyId` |
-| `NEXUSAUTH_WEBAUTHN_RP_NAME` | `WebAuthn:RelyingPartyName` |
-| `NEXUSAUTH_WEBAUTHN_ORIGIN` | `WebAuthn:Origins:0` |
-| `NEXUSAUTH_WEBAUTHN_CHALLENGE_LIFETIME_SECONDS` | `WebAuthn:ChallengeLifetimeSeconds` |
-| `NEXUSAUTH_BOOTSTRAP_ADMIN_USERNAME` | `BootstrapAdmin:Username` |
-| `NEXUSAUTH_BOOTSTRAP_ADMIN_PASSWORD` | `BootstrapAdmin:Password` |
-| `NEXUSAUTH_BOOTSTRAP_ADMIN_NICKNAME` | `BootstrapAdmin:Nickname` |
-| `NEXUSAUTH_BOOTSTRAP_ADMIN_EMAIL` | `BootstrapAdmin:Email` |
-| `NEXUSAUTH_CLIENT_IP_FORWARDED_HEADERS_ENABLED` | `ClientIp:ForwardedHeadersEnabled` |
-| `NEXUSAUTH_CLIENT_IP_KNOWN_PROXIES` | `ClientIp:KnownProxies` |
-| `NEXUSAUTH_CLIENT_IP_KNOWN_NETWORKS` | `ClientIp:KnownNetworks` |
-| `NEXUSAUTH_CLIENT_IP_FORWARD_LIMIT` | `ClientIp:ForwardLimit` |
-
-登录页、滑块验证码、日志和 TOTP 也有一组单下划线映射；完整列表见 [`Program.cs`](../src/NexusAuth.Host/Program.cs)。
+在容器中通过只读挂载提供环境配置文件。完整键参考 [Host 配置示例](appsettings.Host.complete.example.json)。直接部署配置模板见 [`deploy/direct/sso.appsettings.example.json`](../deploy/direct/sso.appsettings.example.json)。
 
 ### 3.4 SMTP 与验证码
 
@@ -267,27 +192,7 @@ SMTP 配置在 [`src/NexusAuth.Shared/Email/SmtpOptions.cs`](../src/NexusAuth.Sh
 - 验证码有效期为 1 到 60 分钟；
 - 冷却时间不得超过验证码有效期。
 
-当前 `appsettings.json` 和根 Compose 默认把 `Smtp:Enabled` 设为 `false`，无邮件环境可以直接启动。需要邮件功能时显式启用并补齐配置：
-
-```bash
-export NEXUSAUTH_SMTP_ENABLED=true
-export NEXUSAUTH_SMTP_PASSWORD='smtp-authorization-code'
-```
-
-启用状态下，验证器仍会在启动时要求 Host、端口、TLS 模式、用户名、密码和发件地址有效。根 [`docker-compose.yml`](../docker-compose.yml) 给 `sso` 容器显式转发开关和密码：
-
-```yaml
-NEXUSAUTH_SMTP_ENABLED: ${NEXUSAUTH_SMTP_ENABLED:-false}
-NEXUSAUTH_SMTP_PASSWORD: ${NEXUSAUTH_SMTP_PASSWORD:-}
-```
-
-因此：
-
-- 不设置 `NEXUSAUTH_SMTP_ENABLED` 时，Compose 以 `false` 启动；
-- 设置 `NEXUSAUTH_SMTP_ENABLED=true` 会进入容器并启用验证；
-- 改 Host、端口、用户名或发件人时，仍需在 Compose override 或服务配置中显式增加相应环境变量，或修改镜像内使用的 `appsettings.json` 后重建镜像。
-
-标准双下划线变量如 `Smtp__Enabled=false` 也只有在它们实际传入容器环境时才生效。
+当前 Host `appsettings.json` 的 `Smtp:Enabled` 默认是 `false`。需要邮件功能时，在 Host 的 `appsettings.json` 或 `appsettings.{环境}.json` 中设为 `true` 并填写完整配置，重启后生效。SMTP 配置不读取环境变量或命令行参数。容器部署可将受权限控制的 appsettings 文件挂载到容器；避免将授权码提交到仓库或打入公共镜像。
 
 邮箱验证码的行为由 [`src/NexusAuth.Application/Services/Email/EmailVerificationCodeService.cs`](../src/NexusAuth.Application/Services/Email/EmailVerificationCodeService.cs) 定义：
 
@@ -356,20 +261,6 @@ NEXUSAUTH_SMTP_PASSWORD: ${NEXUSAUTH_SMTP_PASSWORD:-}
 }
 ```
 
-等价的标准双下划线环境变量如下：
-
-```bash
-Jwt__Issuer=https://sso.example.com
-Jwt__SigningKeys__0__Source=Certificate
-Jwt__SigningKeys__0__IsActive=false
-Jwt__SigningKeys__0__Path=/run/secrets/old-signing.pfx
-Jwt__SigningKeys__0__Password=...
-Jwt__SigningKeys__1__Source=Certificate
-Jwt__SigningKeys__1__IsActive=true
-Jwt__SigningKeys__1__Path=/run/secrets/new-signing.pfx
-Jwt__SigningKeys__1__Password=...
-```
-
 轮换步骤：
 
 1. 先把旧密钥设为非活跃、新密钥设为活跃，重启或滚动重启 Host。
@@ -417,17 +308,21 @@ Host 使用 `Luck.Logging.Serilog`，配置节为 `LuckLogging`，默认写入 `
 - 启用共享写入；
 - 每秒刷新。
 
-可用单下划线变量包括 `NEXUSAUTH_LUCK_LOGGING_FILE_PATH`、`NEXUSAUTH_LUCK_LOGGING_MINIMUM_LEVEL` 等；其他日志配置可使用 `LuckLogging__...`。
+日志参数在 Host appsettings 的 `LuckLogging` 中配置。
 
 ### 3.8 反向代理与客户端 IP
 
 默认情况下，Host 不处理 `X-Forwarded-*`。只有显式启用并配置可信代理时才接受转发头，见 [`src/NexusAuth.Host/Authentication/ClientIpConfiguration.cs`](../src/NexusAuth.Host/Authentication/ClientIpConfiguration.cs)。
 
-```bash
-NEXUSAUTH_CLIENT_IP_FORWARDED_HEADERS_ENABLED=true
-NEXUSAUTH_CLIENT_IP_KNOWN_PROXIES=10.10.0.8
-NEXUSAUTH_CLIENT_IP_KNOWN_NETWORKS=
-NEXUSAUTH_CLIENT_IP_FORWARD_LIMIT=1
+```json
+{
+  "ClientIp": {
+    "ForwardedHeadersEnabled": true,
+    "KnownProxies": "10.10.0.8",
+    "KnownNetworks": "",
+    "ForwardLimit": 1
+  }
+}
 ```
 
 约束：
@@ -458,9 +353,9 @@ NEXUSAUTH_CLIENT_IP_FORWARD_LIMIT=1
 
 关键行为：
 
-- `BootstrapAdmin:Username` 和 `BootstrapAdmin:Password` 始终是必填项，必须在配置中同时提供；
-- 用户名或密码任一为空，Host 启动失败；
-- 如果用户名已存在，Host 保留现有密码，只会在必要时把用户标记为系统账号；
+- 只从 Host 的 `appsettings.json` 和 `appsettings.{环境}.json` 读取配置；
+- 用户名和密码均为空时跳过初始化；只配置一项时 Host 启动失败；
+- 如果用户名已存在且是系统账号，Host 保留现有密码；同名普通账号默认不会被提升；
 - 如果用户名不存在，Host 使用配置中的密码创建管理员；
 - 配置中的密码只在创建时使用，后续修改配置不会自动重置已有管理员的密码；
 - 系统账号不能被 SCIM 修改。
@@ -478,7 +373,7 @@ Bootstrap 配置示例：
 }
 ```
 
-生产环境不要使用 Compose 中的默认管理员密码。
+生产环境应通过受权限控制的 appsettings 文件配置管理员密码，避免将密码提交到仓库或打入公共镜像。未配置时不会创建管理员，已有管理员不受影响。
 
 ## 5. 用户功能
 
@@ -898,6 +793,10 @@ OIDC 注销端点 `/connect/endsession` 先校验可选的 `id_token_hint` 和�
 
 ## 7. SCIM 2.0 用户供给
 
+Host 默认启用 SCIM，以兼容现有部署。无需同步用户的部署可以在 Host appsettings 中设置 `Scim:Enabled=false`。默认值为 `true`。
+
+配置在启动时生效，修改后需要重启 Host。关闭时 SCIM 控制器不会注册，本节列出的所有 `/scim/v2/*` 接口返回 404，Swagger 中也不再显示；Workbench 的 SCIM 凭证管理接口不受影响。
+
 实现见 [`src/NexusAuth.Host/Controllers/ScimController.cs`](../src/NexusAuth.Host/Controllers/ScimController.cs) 和 [`src/NexusAuth.Host/Filters/ScimAuthorizeAttribute.cs`](../src/NexusAuth.Host/Filters/ScimAuthorizeAttribute.cs)。
 
 基础地址：
@@ -1168,11 +1067,11 @@ Host 在 [`src/NexusAuth.Host/AppWebModule.cs`](../src/NexusAuth.Host/AppWebModu
 先看进程输出和 `logs/nexusauth-sso-*.log`，再检查以下常见原因：
 
 1. 显式设置 `Smtp:Enabled=true`，但 SMTP 配置不完整。
-   - 无邮件环境：删除启用值或设置 `NEXUSAUTH_SMTP_ENABLED=false`。
+   - 无邮件环境：在 Host appsettings 中设置 `Smtp:Enabled=false`。
    - 有邮件环境：补全 SMTP 主机、用户名、密码和发件人。
 
-2. `BootstrapAdmin:Username` 或 `BootstrapAdmin:Password` 为空。
-   - 两项必须同时配置。已有用户不会用新配置密码覆盖。
+2. `BootstrapAdmin:Username` 和 `BootstrapAdmin:Password` 只配置了一项。
+   - 两项应同时配置或同时留空。已有用户不会用新配置密码覆盖。
 
 3. 生产环境找不到签名证书或密钥。
    - 检查 `Jwt:SigningPath`、`Jwt:SigningCertificatePath` 或 `Jwt:SigningKeys[*].Path`。
@@ -1264,7 +1163,7 @@ Host 在 [`src/NexusAuth.Host/AppWebModule.cs`](../src/NexusAuth.Host/AppWebModu
 - Host 不提供客户端、API 资源、SCIM 凭证或 Open API 凭证管理端点。
 - Host 不执行数据库自动迁移。
 - `Smtp:Enabled` 默认 `false`；显式启用后若配置不完整，启动校验会失败。
-- 根 Compose 默认关闭 SMTP，并向 `sso` 转发开关和密码；其他 SMTP 变量不会从宿主 `.env` 自动进入容器。
+- Host 默认关闭 SMTP，仅从 appsettings 读取 SMTP 配置。
 - `private_key_jwt` 当前只读取已登记的 JWK Set，不远程下载 `JwksUri`。
 - OIDC 只支持授权码流程，不支持隐式、混合、`request` 或 `request_uri`。
 - SCIM 只实现 User resource，过滤字段有限，不提供 Group。

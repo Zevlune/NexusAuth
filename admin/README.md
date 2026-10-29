@@ -29,7 +29,7 @@
 - 一个可用的 NexusAuth.Host（BFF 模式必需），启动前提见 [Workbench 使用手册](../document/Workbench使用手册.md)；
 - 为 Workbench API 配置完整的认证与 Bootstrap 环境变量，它会自行登记客户端和资源。
 
-Host 源码运行需要注意：`src/NexusAuth.Host/appsettings.json` 默认 `Smtp.Enabled=true` 但密码为空，`ValidateOnStart` 会让 Host 启动失败。源码方式请提供完整 SMTP 配置，或用 `NEXUSAUTH_SMTP_ENABLED=false` 关闭。Compose 只为 Host 显式转发 `NEXUSAUTH_SMTP_PASSWORD`，因此把 `NEXUSAUTH_SMTP_ENABLED=false` 写进根目录 `.env` 不能关闭容器内 SMTP；请用 `docker-compose.smtp.local.yml` 覆盖并通过两个 `-f` 参数启动，见 [SMTP 配置与发信验证](../document/SMTP发信试验.md) 第 3 节。
+Host 默认关闭 SMTP。需要邮件功能时，在 Host 的 appsettings 中启用 `Smtp:Enabled` 并填写完整配置；详见 [SMTP 配置与发信验证](../document/SMTP发信试验.md)。Workbench API 的邮件配置独立管理。
 
 ## 启动方式总览
 

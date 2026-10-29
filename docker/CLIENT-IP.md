@@ -4,16 +4,20 @@ Provider 在限流、认证和记录审计之前处理代理转发头。登录�
 
 ## 经过反向代理访问
 
-仅信任实际代理节点，示例 `.env`（将示例地址替换为实际地址）：
+仅信任实际代理节点，在 Host 的 `appsettings.json`（或环境对应的 `appsettings.{Environment}.json`）中配置，示例（将示例地址替换为实际地址）：
 
-```dotenv
-NEXUSAUTH_CLIENT_IP_FORWARDED_HEADERS_ENABLED=true
-NEXUSAUTH_CLIENT_IP_KNOWN_PROXIES=10.10.0.8
-NEXUSAUTH_CLIENT_IP_KNOWN_NETWORKS=
-NEXUSAUTH_CLIENT_IP_FORWARD_LIMIT=1
+```json
+{
+  "ClientIp": {
+    "ForwardedHeadersEnabled": true,
+    "KnownProxies": "10.10.0.8",
+    "KnownNetworks": "",
+    "ForwardLimit": 1
+  }
+}
 ```
 
-代理有多个固定地址时用逗号分隔；地址会变化时可配置专属代理子网，例如 `NEXUSAUTH_CLIENT_IP_KNOWN_NETWORKS=10.10.0.0/28`。不要信任整个公网或包含普通客户端的网络。启用转发但没有指定可信代理/网段会拒绝启动。
+代理有多个固定地址时，在 `KnownProxies` 中用逗号或分号分隔；地址会变化时可配置专属代理子网，例如 `"KnownNetworks": "10.10.0.0/28"`。不要信任整个公网或包含普通客户端的网络。启用转发但没有指定可信代理/网段会拒绝启动。
 
 直接面对浏览器的 Nginx 入口应覆盖客户端提供的头：
 

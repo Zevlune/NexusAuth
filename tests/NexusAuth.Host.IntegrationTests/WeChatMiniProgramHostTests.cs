@@ -410,12 +410,12 @@ public sealed class WeChatMiniProgramHostTests
             Upstream = new(OpenId);
             Factory = new WebApplicationFactory<AppWebModule>().WithWebHostBuilder(builder => builder
                 .UseEnvironment("Development")
-                .UseSetting("Smtp:Enabled", "false")
-                .UseSetting("ConnectionStrings:Default", Connection())
-                .UseSetting("WeChat:MiniProgram:Enabled", "true")
-                .UseSetting("WeChat:MiniProgram:ClientId", ClientId)
-                .UseSetting("WeChat:MiniProgram:AppId", AppId)
-                .UseSetting("WeChat:MiniProgram:AppSecret", "test-secret")
+                .UseTestSetting("Smtp:Enabled", "false")
+                .UseTestSetting("ConnectionStrings:Default", Connection())
+                .UseTestSetting("WeChat:MiniProgram:Enabled", "true")
+                .UseTestSetting("WeChat:MiniProgram:ClientId", ClientId)
+                .UseTestSetting("WeChat:MiniProgram:AppId", AppId)
+                .UseTestSetting("WeChat:MiniProgram:AppSecret", "test-secret")
                 .ConfigureTestServices(services =>
                 {
                     services.RemoveAll<BootstrapAdminHostedService>();
