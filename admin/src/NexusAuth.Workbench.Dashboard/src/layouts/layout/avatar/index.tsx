@@ -1,14 +1,17 @@
 import { Avatar, Dropdown, Button } from 'tdesign-react';
 import type { DropdownOption } from 'tdesign-react';
-import { KeyIcon, PoweroffIcon, UserIcon } from 'tdesign-icons-react';
+import { KeyIcon, PoweroffIcon } from 'tdesign-icons-react';
 
 import { setCachedAuthStatus } from '../../../router/auth';
 import { getConfig, logout } from '../../../api/login';
-
-const TABS_STORAGE_KEY = 'nexus-auth-layout-tabs';
+import {
+  LAYOUT_TABS_STORAGE_KEY,
+  LEGACY_LAYOUT_TABS_STORAGE_KEY,
+} from '../../../router/defaults';
 
 const clearLayoutTabs = () => {
-  window.localStorage.removeItem(TABS_STORAGE_KEY);
+  window.localStorage.removeItem(LAYOUT_TABS_STORAGE_KEY);
+  window.localStorage.removeItem(LEGACY_LAYOUT_TABS_STORAGE_KEY);
 };
 
 const AvatarComponent = () => {
@@ -27,15 +30,6 @@ const AvatarComponent = () => {
         </span>
       ),
       value: 'account-settings',
-    },
-    {
-      content: (
-        <span>
-          <UserIcon style={iconStyle} />
-          个人信息
-        </span>
-      ),
-      value: 'admin',
     },
     {
       content: (

@@ -26,7 +26,30 @@ public class TokenBlacklistRepository : EfCoreEntityRepository<TokenBlacklistEnt
 
     public async Task<bool> ExistsActiveAsync(string jti, DateTimeOffset now, CancellationToken ct = default)
     {
-        return await FindAll(t => t.Jti == jti && t.ExpiresAt > now).AnyAsync(ct);
+        if (await FindAll(t => t.Jti == jti && t.ExpiresAt > now).AnyAsync(ct))
+            return true;
+
+        // A rotated refresh token's own lifetime can end while a descendant token
+        // remains active. Keep replay detection effective for the whole family.
+        if (!jti.StartsWith(RefreshToken.RotationMarkerPrefix, StringComparison.Ordinal))
+            return false;
+
+        if (!await FindAll(t => t.Jti == jti && t.TokenType == RefreshToken.RotationMarkerTokenType).AnyAsync(ct))
+            return false;
+
+        var rotatedToken = await _dbContext.Set<RefreshToken>()
+            .AsNoTracking()
+            .Where(token => jti == RefreshToken.RotationMarkerPrefix + token.TokenHash)
+            .Select(token => new { token.UserId, token.ClientId })
+            .FirstOrDefaultAsync(ct);
+        if (rotatedToken is null)
+            return false;
+
+        return await _dbContext.Set<RefreshToken>()
+            .AnyAsync(token => token.UserId == rotatedToken.UserId
+                && token.ClientId == rotatedToken.ClientId
+                && !token.IsRevoked
+                && token.ExpiresAt > now, ct);
     }
 
     public async Task AddAsync(TokenBlacklistEntry entry, CancellationToken ct = default)

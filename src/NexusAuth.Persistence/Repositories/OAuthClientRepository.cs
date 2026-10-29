@@ -56,6 +56,11 @@ public class OAuthClientRepository : EfCoreAggregateRootRepository<OAuthClient, 
 
     public async Task DeleteAsync(OAuthClient client, CancellationToken ct = default)
     {
+        var dbContext = _unitOfWork.GetLuckDbContext() as LuckDbContextBase
+            ?? throw new InvalidOperationException("Failed to resolve LuckDbContext.");
+        await dbContext.Set<ConsentGrant>()
+            .Where(grant => grant.ClientId == client.ClientId)
+            .ExecuteDeleteAsync(ct);
         Remove(client);
         await _unitOfWork.CommitAsync(ct);
     }

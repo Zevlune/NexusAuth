@@ -64,9 +64,10 @@ public class OpenIdController(
             introspection_endpoint = $"{issuer}/connect/introspect",
             device_authorization_endpoint = $"{issuer}/connect/deviceauthorization",
             end_session_endpoint = $"{issuer}/connect/endsession",
-            scopes_supported = new[] { "openid", "profile", "email", "phone", "address", "offline_access" },
+            scopes_supported = new[] { "openid", "profile", "email", "phone", "offline_access" },
             response_types_supported = new[] { "code" },
             response_modes_supported = new[] { "query", "form_post" },
+            authorization_response_iss_parameter_supported = true,
             grant_types_supported = new[]
             {
                 "authorization_code",
@@ -82,7 +83,7 @@ public class OpenIdController(
             claims_supported = new[]
             {
                 "sub", "preferred_username", "name", "nickname", "email", "phone_number", "email_verified",
-                "phone_number_verified", "gender", "ethnicity", "address", "nonce", "at_hash", "auth_time", "acr", "amr"
+                "phone_number_verified", "gender", "ethnicity", "nonce", "at_hash", "auth_time", "acr", "amr"
             },
             code_challenge_methods_supported = new[] { "S256" },
             claims_parameter_supported = true,
@@ -109,6 +110,7 @@ public class OpenIdController(
     /// 3. 按 scope 和 claims 参数返回用户信息
     /// </summary>
     [HttpGet("/connect/userinfo")]
+    [HttpPost("/connect/userinfo")]
     public async Task<IActionResult> UserInfo(CancellationToken ct)
     {
         var authorization = Request.Headers.Authorization.ToString();
@@ -117,21 +119,34 @@ public class OpenIdController(
             : null;
 
         if (string.IsNullOrWhiteSpace(bearerToken))
-            return Unauthorized(new { error = "invalid_token", error_description = "Bearer token is required." });
+            return UserInfoUnauthorized("Bearer token is required.", tokenWasSupplied: false);
 
         var introspection = await _tokenService.IntrospectAsync(bearerToken, ct);
         if (!introspection.Active)
-            return Unauthorized(new { error = "invalid_token", error_description = "Access token is invalid." });
+            return UserInfoUnauthorized("Access token is invalid.", tokenWasSupplied: true);
 
         if (!string.Equals(introspection.TokenUse, "access_token", StringComparison.Ordinal))
-            return Unauthorized(new { error = "invalid_token", error_description = "Only access tokens can call userinfo." });
+            return UserInfoUnauthorized("Only access tokens can call userinfo.", tokenWasSupplied: true);
+
+        if (!OidcClaimEmissionPolicy.ParseScopes(introspection.Scope).Contains("openid"))
+        {
+            Response.Headers.WWWAuthenticate = "Bearer error=\"insufficient_scope\", scope=\"openid\"";
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                new
+                {
+                    error = "insufficient_scope",
+                    error_description = "The access token must include the 'openid' scope.",
+                    scope = "openid",
+                });
+        }
 
         if (!Guid.TryParse(introspection.Subject, out var userId))
-            return Unauthorized(new { error = "invalid_token", error_description = "Access token does not represent a user." });
+            return UserInfoUnauthorized("Access token does not represent a user.", tokenWasSupplied: true);
 
         var user = await _userService.FindByIdAsync(userId, ct);
         if (user is null || !user.IsActive)
-            return Unauthorized(new { error = "invalid_token", error_description = "User not found." });
+            return UserInfoUnauthorized("User not found.", tokenWasSupplied: true);
 
         var requestedClaims = ResolveRequestedClaims(introspection.Scope, introspection.ClaimsJson);
 
@@ -460,6 +475,14 @@ public class OpenIdController(
         return Unauthorized(new { error = "invalid_client" });
     }
 
+    private IActionResult UserInfoUnauthorized(string description, bool tokenWasSupplied)
+    {
+        Response.Headers.WWWAuthenticate = tokenWasSupplied
+            ? "Bearer error=\"invalid_token\""
+            : "Bearer";
+        return Unauthorized(new { error = "invalid_token", error_description = description });
+    }
+
     private string GetTokenEndpointUrl()
     {
         return GetIssuer() + "/connect/token";
@@ -527,14 +550,6 @@ public class OpenIdController(
 
         if (OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "ethnicity", user.Ethnicity))
             payload["ethnicity"] = user.Ethnicity;
-
-        if (requestedClaims.RequestsUserInfoClaim("address"))
-        {
-            payload["address"] = new Dictionary<string, object?>
-            {
-                ["formatted"] = null,
-            };
-        }
 
         return payload;
     }

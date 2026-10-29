@@ -121,7 +121,7 @@ services:
       context: .
       dockerfile: admin/src/NexusAuth.Workbench.Dashboard/Dockerfile
       args:
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     environment:
       TZ: Asia/Shanghai
     depends_on:

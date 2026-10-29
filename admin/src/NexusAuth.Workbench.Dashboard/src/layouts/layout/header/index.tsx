@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Button, Input, Space, Tooltip } from 'tdesign-react';
-import { Fullscreen1Icon, FullscreenExit1Icon, MoonIcon, SearchIcon, SunnyIcon } from 'tdesign-icons-react';
+import { Button, Space, Tooltip } from 'tdesign-react';
+import { Fullscreen1Icon, FullscreenExit1Icon, MoonIcon, SunnyIcon } from 'tdesign-icons-react';
 
 interface PublicHeaderProps {
   theme: 'light' | 'dark';
@@ -32,14 +32,6 @@ const PublicHeader = ({ theme, onChangeTheme }: PublicHeaderProps) => {
     return (
         <div className="layout-header-edit" >
             <Space size="medium">
-                <Input
-                  style={{
-                    width: 200,
-                  }}
-                  aria-label="全局搜索"
-                  prefixIcon={<SearchIcon />}
-                  placeholder="请输入内容查询"
-                />
                 <Tooltip
                   placement="bottom"
                   trigger="hover"

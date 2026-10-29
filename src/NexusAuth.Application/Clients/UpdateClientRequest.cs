@@ -12,4 +12,5 @@ public record UpdateClientRequest(
     string? Jwks,
     string? JwksUri,
     bool? IsActive,
-    List<Guid>? ApiResourceIds = null);
+    List<Guid>? ApiResourceIds = null,
+    bool? RequireConsent = null);

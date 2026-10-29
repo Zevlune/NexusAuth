@@ -45,6 +45,8 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
 
     public bool RequirePkce { get; private set; }
 
+    public bool RequireConsent { get; private set; }
+
     public bool IsActive { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -69,7 +71,8 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         string? tokenEndpointAuthMethod = null,
         IEnumerable<OAuthClientSecret>? clientSecrets = null,
         string? jwks = null,
-        string? jwksUri = null)
+        string? jwksUri = null,
+        bool requireConsent = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
         ArgumentException.ThrowIfNullOrWhiteSpace(clientName);
@@ -100,6 +103,7 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
             AllowedScopes = allowedScopes?.ToList() ?? [],
             AllowedGrantTypes = normalizedGrantTypes,
             RequirePkce = requirePkce,
+            RequireConsent = requireConsent,
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow,
         };
@@ -119,7 +123,8 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         string tokenEndpointAuthMethod = TokenEndpointAuthMethodClientSecretBasic,
         IEnumerable<OAuthClientSecret>? clientSecrets = null,
         string? jwks = null,
-        string? jwksUri = null)
+        string? jwksUri = null,
+        bool requireConsent = false)
     {
         return Create(
             Guid.NewGuid(),
@@ -134,7 +139,8 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
             tokenEndpointAuthMethod,
             clientSecrets,
             jwks,
-            jwksUri);
+            jwksUri,
+            requireConsent);
     }
 
     public bool VerifyClientSecret(string rawSecret)
@@ -192,7 +198,8 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         string? tokenEndpointAuthMethod = null,
         IEnumerable<OAuthClientSecret>? clientSecrets = null,
         string? jwks = null,
-        string? jwksUri = null)
+        string? jwksUri = null,
+        bool? requireConsent = null)
     {
         var normalizedAuthMethod = tokenEndpointAuthMethod is null
             ? TokenEndpointAuthMethod
@@ -239,6 +246,9 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         if (requirePkce is { } requirePkceValue)
             RequirePkce = requirePkceValue;
         
+        if (requireConsent is { } requireConsentValue)
+            RequireConsent = requireConsentValue;
+
         if (isActive is { } isActiveValue)
             IsActive = isActiveValue;
 

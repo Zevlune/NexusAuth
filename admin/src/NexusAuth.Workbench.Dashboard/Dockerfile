@@ -2,11 +2,16 @@ FROM node:22-alpine AS build
 WORKDIR /app
 ARG NPM_REGISTRY=https://registry.npmjs.org
 
-COPY admin/src/NexusAuth.Workbench.Dashboard/package.json ./
-RUN npm install --registry="$NPM_REGISTRY"
+RUN corepack enable \
+    && corepack prepare pnpm@11.10.0 --activate
+
+COPY admin/src/NexusAuth.Workbench.Dashboard/package.json \
+    admin/src/NexusAuth.Workbench.Dashboard/pnpm-lock.yaml \
+    admin/src/NexusAuth.Workbench.Dashboard/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --registry="$NPM_REGISTRY"
 
 COPY admin/src/NexusAuth.Workbench.Dashboard/ ./
-RUN npm run build
+RUN pnpm run build
 
 FROM nginx:1.27-alpine AS runtime
 COPY admin/src/NexusAuth.Workbench.Dashboard/nginx.conf /etc/nginx/conf.d/default.conf

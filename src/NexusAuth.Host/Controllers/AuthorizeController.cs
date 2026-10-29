@@ -6,7 +6,9 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
+using Microsoft.Extensions.Options;
 using NexusAuth.Application.Services;
+using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Host.Controllers;
 
@@ -16,7 +18,9 @@ public class AuthorizeController(
     IClientService clientService,
     IDataProtectionProvider? dataProtectionProvider = null,
     IUserService? userService = null,
-    ISecurityPolicyService? securityPolicyService = null)
+    ISecurityPolicyService? securityPolicyService = null,
+    IOptions<JwtOptions>? jwtOptions = null,
+    IConsentStore? consentStore = null)
     : ControllerBase
 {
     /// <summary>
@@ -25,6 +29,7 @@ public class AuthorizeController(
     /// 不早于该时间点即视为已重新认证，避免 prompt=login / max_age=0 无限循环登录。
     /// </summary>
     public const string ReauthenticationParameterName = "nexusauth_reauth";
+    public const string ConsentParameterName = "nexusauth_consent";
 
     private const string ReauthenticationProtectorPurpose = "NexusAuth.Authorize.Reauthentication.v1";
     private static readonly TimeSpan ReauthenticationMarkerLifetime = TimeSpan.FromMinutes(10);
@@ -98,6 +103,16 @@ public class AuthorizeController(
                 "query",
                 "invalid_request",
                 "response_mode must be query or form_post.",
+                state);
+        }
+
+        if (Request.Query.ContainsKey("request") || Request.Query.ContainsKey("request_uri"))
+        {
+            return AuthorizationError(
+                redirectUri,
+                normalizedResponseMode,
+                Request.Query.ContainsKey("request_uri") ? "request_uri_not_supported" : "request_not_supported",
+                "Request objects and request_uri are not supported.",
                 state);
         }
 
@@ -270,25 +285,47 @@ public class AuthorizeController(
                 state);
         }
 
-        if (promptValues.Contains("consent", StringComparer.Ordinal))
+        var consentId = Request.Query[ConsentParameterName].ToString();
+        var hasOfflineAccess = scopeValidation.NormalizedScope!
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Contains("offline_access", StringComparer.Ordinal);
+        var requiresConsent = clientValidation.Client?.RequireConsent == true || hasOfflineAccess;
+        var forceConsent = promptValues.Contains("consent", StringComparer.Ordinal) || hasOfflineAccess;
+        var originalQuery = QueryString.Create(Request.Query
+            .Where(pair => !string.Equals(pair.Key, ConsentParameterName, StringComparison.Ordinal))
+            .SelectMany(pair => pair.Value.Select(value => new KeyValuePair<string, string?>(pair.Key, value)))).Value ?? "";
+
+        if (!string.IsNullOrWhiteSpace(consentId))
         {
-            // 中文注释：当 RP 显式要求 prompt=consent 时，先进入服务端确认页，
-            // 由当前用户确认本次授权的 scope 与 claims，再回到授权端继续签发 code。
-            // 重新认证标记一并透传，确认后回到授权端不会再次要求登录。
-            // 主要调用方：标准 OIDC 客户端，以及后续需要强制重新确认授权的 demo 场景。
-            return Redirect(BuildConsentPageUrl(
-                clientId,
-                redirectUri,
-                scope,
-                state,
-                nonce,
-                prompt,
-                maxAge,
-                responseMode,
-                claims,
-                codeChallenge,
-                codeChallengeMethod,
-                reauthenticated ? reauthenticationMarker : null));
+            if (consentStore is null || Request.Query[ConsentParameterName].Count != 1)
+                return AuthorizationError(redirectUri, normalizedResponseMode, "invalid_request", "Invalid consent request.", state);
+
+            var pending = await consentStore.GetRequestAsync(consentId, userId, ct);
+            if (pending is null || !string.Equals(pending.Query, originalQuery, StringComparison.Ordinal))
+                return AuthorizationError(redirectUri, normalizedResponseMode, "invalid_request", "Invalid consent request.", state);
+
+            var approved = await consentStore.ConsumeApprovedRequestAsync(consentId, userId, ct);
+            if (approved is null || !string.Equals(approved.Query, originalQuery, StringComparison.Ordinal))
+                return AuthorizationError(redirectUri, normalizedResponseMode, "invalid_request", "Consent has expired or was already used.", state);
+
+            if (approved.Remember)
+                await consentStore.SaveGrantAsync(userId, clientId, scopeValidation.NormalizedScope!, claims, ct);
+        }
+        else if (requiresConsent || forceConsent)
+        {
+            if (consentStore is null)
+                return AuthorizationError(redirectUri, normalizedResponseMode, "server_error", "Consent is unavailable.", state);
+
+            var previouslyGranted = !forceConsent && await consentStore.HasGrantAsync(
+                userId, clientId, scopeValidation.NormalizedScope!, claims, ct);
+            if (!previouslyGranted)
+            {
+                if (promptValues.Contains("none", StringComparer.Ordinal))
+                    return AuthorizationError(redirectUri, normalizedResponseMode, "consent_required", "User consent is required.", state);
+
+                var requestId = await consentStore.CreateRequestAsync(userId, originalQuery, ct);
+                return Redirect(Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString("/consent", "id", requestId));
+            }
         }
 
         // Generate authorization code
@@ -472,6 +509,9 @@ public class AuthorizeController(
             .Where(pair => pair.Value is not null)
             .ToDictionary(pair => pair.Key, pair => (string?)pair.Value, StringComparer.Ordinal);
 
+        if (!string.IsNullOrWhiteSpace(jwtOptions?.Value.Issuer))
+            presentParameters["iss"] = jwtOptions.Value.Issuer.TrimEnd('/');
+
         if (!string.Equals(responseMode, "form_post", StringComparison.Ordinal))
         {
             var redirectUrl = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(
@@ -496,36 +536,4 @@ public class AuthorizeController(
         };
     }
 
-    private static string BuildConsentPageUrl(
-        string clientId,
-        string redirectUri,
-        string scope,
-        string? state,
-        string? nonce,
-        string? prompt,
-        int? maxAge,
-        string? responseMode,
-        string? claims,
-        string? codeChallenge,
-        string? codeChallengeMethod,
-        string? reauthenticationMarker)
-    {
-        var query = new Dictionary<string, string?>
-        {
-            ["client_id"] = clientId,
-            ["redirect_uri"] = redirectUri,
-            ["scope"] = scope,
-            ["state"] = state,
-            ["nonce"] = nonce,
-            ["prompt"] = prompt,
-            ["max_age"] = maxAge?.ToString(CultureInfo.InvariantCulture),
-            ["response_mode"] = responseMode,
-            ["claims"] = claims,
-            ["code_challenge"] = codeChallenge,
-            ["code_challenge_method"] = codeChallengeMethod,
-            [ReauthenticationParameterName] = reauthenticationMarker,
-        };
-
-        return Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString("/consent", query!);
-    }
 }

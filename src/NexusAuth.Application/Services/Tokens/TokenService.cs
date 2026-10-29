@@ -15,11 +15,6 @@ public class TokenService(
     ILogger<TokenService> logger,
     ISecurityPolicyService? securityPolicyService = null) : ITokenService
 {
-    // 中文注释：refresh token 轮换成功后在黑名单表登记一条“已轮换”标记（不改表结构），
-    // 用于区分“轮换后被重放”与“被显式撤销/登出”的 refresh token。
-    private const string RotatedRefreshTokenMarkerPrefix = "refresh_rotated:";
-    private const string RotatedRefreshTokenMarkerType = "refresh_token_rotated";
-
     private readonly JwtOptions _jwtOptions = jwtOptions.Value;
 
     /// <summary>
@@ -534,7 +529,7 @@ public class TokenService(
             await tokenBlacklistRepository.AddAsync(
                 TokenBlacklistEntry.Create(
                     BuildRotationMarker(rotatedToken.TokenHash),
-                    RotatedRefreshTokenMarkerType,
+                    RefreshToken.RotationMarkerTokenType,
                     rotatedToken.UserId.ToString(),
                     rotatedToken.ExpiresAt),
                 ct);
@@ -550,7 +545,7 @@ public class TokenService(
 
     private static string BuildRotationMarker(string tokenHash)
     {
-        return RotatedRefreshTokenMarkerPrefix + tokenHash;
+        return RefreshToken.BuildRotationMarkerJti(tokenHash);
     }
 
     /// <summary>

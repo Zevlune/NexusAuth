@@ -50,7 +50,7 @@
                 <ul>
                     @foreach (var item in Model.ScopeItems)
                     {
-                        <li>@item</li>
+                        <li>@item@if (item == "offline_access") { <span>（允许应用在你不在线时继续访问）</span> }</li>
                     }
                 </ul>
             </div>
@@ -69,36 +69,13 @@
             }
 
             <div class="actions">
-                @* 中文注释：隐藏字段名必须与 PageModel 上 BindProperty 的 OAuth 参数名一致（asp-for 会生成
-                   ClientId 这类 C# 属性名，POST 时无法绑定）；允许与拒绝两个表单都提交完整的授权请求参数。 *@
                 <form method="post" asp-page-handler="Approve">
-                    <input type="hidden" name="client_id" value="@Model.ClientId" />
-                    <input type="hidden" name="redirect_uri" value="@Model.RedirectUri" />
-                    <input type="hidden" name="scope" value="@Model.Scope" />
-                    <input type="hidden" name="state" value="@Model.State" />
-                    <input type="hidden" name="nonce" value="@Model.Nonce" />
-                    <input type="hidden" name="prompt" value="@Model.Prompt" />
-                    <input type="hidden" name="max_age" value="@Model.MaxAge" />
-                    <input type="hidden" name="response_mode" value="@Model.ResponseMode" />
-                    <input type="hidden" name="claims" value="@Model.Claims" />
-                    <input type="hidden" name="code_challenge" value="@Model.CodeChallenge" />
-                    <input type="hidden" name="code_challenge_method" value="@Model.CodeChallengeMethod" />
-                    <input type="hidden" name="nexusauth_reauth" value="@Model.ReauthenticationMarker" />
+                    <input type="hidden" name="id" value="@Model.Id" />
+                    <label><input type="checkbox" name="Remember" value="true" /> 记住本次授权</label>
                     <button type="submit" class="approve">允许并继续</button>
                 </form>
                 <form method="post" asp-page-handler="Deny">
-                    <input type="hidden" name="client_id" value="@Model.ClientId" />
-                    <input type="hidden" name="redirect_uri" value="@Model.RedirectUri" />
-                    <input type="hidden" name="scope" value="@Model.Scope" />
-                    <input type="hidden" name="state" value="@Model.State" />
-                    <input type="hidden" name="nonce" value="@Model.Nonce" />
-                    <input type="hidden" name="prompt" value="@Model.Prompt" />
-                    <input type="hidden" name="max_age" value="@Model.MaxAge" />
-                    <input type="hidden" name="response_mode" value="@Model.ResponseMode" />
-                    <input type="hidden" name="claims" value="@Model.Claims" />
-                    <input type="hidden" name="code_challenge" value="@Model.CodeChallenge" />
-                    <input type="hidden" name="code_challenge_method" value="@Model.CodeChallengeMethod" />
-                    <input type="hidden" name="nexusauth_reauth" value="@Model.ReauthenticationMarker" />
+                    <input type="hidden" name="id" value="@Model.Id" />
                     <button type="submit" class="deny">拒绝</button>
                 </form>
             </div>

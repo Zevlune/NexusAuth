@@ -1,154 +1,101 @@
 import './style.less';
 
-import { Column, Line, Pie } from '@ant-design/charts';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, List, Select, Statistic, Tag, Typography } from 'tdesign-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
+  Button,
+  Card,
+  Empty,
+  List,
+  Tag,
+  Typography,
+} from 'tdesign-react';
+import {
+  AppIcon,
   ChartLineDataIcon,
   CheckCircleFilledIcon,
-  ChevronRightIcon,
   ErrorCircleFilledIcon,
+  PercentIcon,
   RefreshIcon,
-  ShieldErrorFilledIcon,
-  TrendingDownIcon,
-  TrendingUpIcon,
+  ServerIcon,
   UserIcon,
 } from 'tdesign-icons-react';
 
-import { isDarkTheme, subscribeThemeMode } from '../../theme';
+import { getApiResources } from '../../api/api-resource';
+import { getClients } from '../../api/client';
+import { getLoginAudits, type LoginAuditLog } from '../../api/login-audit';
+import { getUsers } from '../../api/user';
 
-type MetricIconKind = 'requests' | 'success' | 'users' | 'risk';
-type TrendTone = 'positive' | 'negative';
+type DashboardData = {
+  loginRecords: number | null;
+  successfulLogins: number | null;
+  failedLogins: number | null;
+  users: number | null;
+  applications: number | null;
+  apiResources: number | null;
+  recentAudits: LoginAuditLog[] | null;
+};
 
-type MetricCard = {
-  key: string;
+type MetricKey = 'loginRecords' | 'successfulLogins' | 'failedLogins' | 'successRate';
+
+type MetricDefinition = {
+  key: MetricKey;
   title: string;
-  value: string;
-  trend: string;
-  trendDirection: 'up' | 'down';
-  trendTone: TrendTone;
-  icon: MetricIconKind;
   helper: string;
+  icon: React.ReactNode;
+  tone: 'primary' | 'success' | 'danger' | 'warning';
 };
 
-type SecurityEvent = {
-  level: '高' | '中' | '低';
-  title: string;
-  source: string;
-  time: string;
+const emptyDashboardData: DashboardData = {
+  loginRecords: null,
+  successfulLogins: null,
+  failedLogins: null,
+  users: null,
+  applications: null,
+  apiResources: null,
+  recentAudits: null,
 };
 
-const metricCards: MetricCard[] = [
+const metricDefinitions: MetricDefinition[] = [
   {
-    key: 'requests',
-    title: '认证请求',
-    value: '128,640',
-    trend: '+12.4%',
-    trendDirection: 'up',
-    trendTone: 'positive',
-    icon: 'requests',
-    helper: '较上一周期',
+    key: 'loginRecords',
+    title: '登录记录',
+    helper: '全部保留记录',
+    icon: <ChartLineDataIcon />,
+    tone: 'primary',
   },
   {
-    key: 'success-rate',
-    title: '认证成功率',
-    value: '98.72%',
-    trend: '+0.36%',
-    trendDirection: 'up',
-    trendTone: 'positive',
-    icon: 'success',
-    helper: '较上一周期',
+    key: 'successfulLogins',
+    title: '成功登录',
+    helper: '审计结果成功',
+    icon: <CheckCircleFilledIcon />,
+    tone: 'success',
   },
   {
-    key: 'users',
-    title: '活跃用户',
-    value: '18,426',
-    trend: '+6.8%',
-    trendDirection: 'up',
-    trendTone: 'positive',
-    icon: 'users',
-    helper: '较上一周期',
+    key: 'failedLogins',
+    title: '失败登录',
+    helper: '审计结果失败',
+    icon: <ErrorCircleFilledIcon />,
+    tone: 'danger',
   },
   {
-    key: 'risk-events',
-    title: '高风险事件',
-    value: '23',
-    trend: '-18.0%',
-    trendDirection: 'down',
-    trendTone: 'positive',
-    icon: 'risk',
-    helper: '较上一周期',
+    key: 'successRate',
+    title: '登录成功率',
+    helper: '成功记录 / 全部记录',
+    icon: <PercentIcon />,
+    tone: 'warning',
   },
 ];
 
-const authTrendData = [
-  { date: '05-27', status: '成功', value: 15680 },
-  { date: '05-28', status: '成功', value: 17420 },
-  { date: '05-29', status: '成功', value: 16850 },
-  { date: '05-30', status: '成功', value: 19380 },
-  { date: '05-31', status: '成功', value: 18410 },
-  { date: '06-01', status: '成功', value: 20560 },
-  { date: '06-02', status: '成功', value: 20340 },
-  { date: '05-27', status: '失败', value: 260 },
-  { date: '05-28', status: '失败', value: 310 },
-  { date: '05-29', status: '失败', value: 284 },
-  { date: '05-30', status: '失败', value: 352 },
-  { date: '05-31', status: '失败', value: 326 },
-  { date: '06-01', status: '失败', value: 382 },
-  { date: '06-02', status: '失败', value: 348 },
-];
+const formatNumber = (value: number) => value.toLocaleString('zh-CN');
 
-const authResultData = [
-  { type: '成功', value: 98.72 },
-  { type: '凭据错误', value: 0.81 },
-  { type: '账号锁定', value: 0.29 },
-  { type: 'MFA 失败', value: 0.18 },
-];
-
-const applicationRankData = [
-  { application: 'Workbench Portal', value: 36.8 },
-  { application: 'Mobile App', value: 28.4 },
-  { application: 'Partner BFF', value: 21.7 },
-  { application: 'Open API', value: 16.9 },
-  { application: 'CLI', value: 8.6 },
-];
-
-const securityEvents: SecurityEvent[] = [
-  { level: '高', title: '检测到异常登录尝试', source: '185.22.64.18', time: '8 分钟前' },
-  { level: '中', title: 'Partner BFF 签名校验失败', source: 'Partner BFF', time: '24 分钟前' },
-  { level: '低', title: '新设备完成 MFA 验证', source: '用户 10482', time: '41 分钟前' },
-  { level: '中', title: '账号触发登录频率限制', source: '103.76.12.90', time: '1 小时前' },
-];
-
-const rangeOptions = [
-  { label: '近 7 天', value: '7d' },
-  { label: '近 30 天', value: '30d' },
-  { label: '近 90 天', value: '90d' },
-];
-
-const getMetricIcon = (kind: MetricIconKind) => {
-  switch (kind) {
-    case 'requests':
-      return <ChartLineDataIcon />;
-    case 'success':
-      return <CheckCircleFilledIcon />;
-    case 'users':
-      return <UserIcon />;
-    case 'risk':
-      return <ShieldErrorFilledIcon />;
-    default:
-      return <ChartLineDataIcon />;
+const formatDateTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
   }
-};
 
-const getEventTheme = (level: SecurityEvent['level']): 'danger' | 'warning' | 'success' => {
-  if (level === '高') {
-    return 'danger';
-  }
-  if (level === '中') {
-    return 'warning';
-  }
-  return 'success';
+  return date.toLocaleString('zh-CN', { hour12: false });
 };
 
 const formatUpdatedAt = (value: Date) => value.toLocaleTimeString('zh-CN', {
@@ -157,282 +104,245 @@ const formatUpdatedAt = (value: Date) => value.toLocaleTimeString('zh-CN', {
   second: '2-digit',
 });
 
-const getMetricStatistic = (value: string) => {
-  const suffix = value.endsWith('%') ? '%' : undefined;
-
-  return {
-    value: Number(value.replace(/[,%]/g, '')),
-    suffix,
-    decimalPlaces: suffix ? 2 : undefined,
-  };
-};
-
 const Dashboard = () => {
-  const [isDark, setIsDark] = useState(() => isDarkTheme());
-  const [dateRange, setDateRange] = useState('7d');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(() => new Date());
-  const refreshTimer = useRef<number | null>(null);
+  const [data, setData] = useState<DashboardData>(emptyDashboardData);
+  const [loading, setLoading] = useState(true);
+  const [failedRequestCount, setFailedRequestCount] = useState(0);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  useEffect(() => {
-    return subscribeThemeMode((theme) => {
-      setIsDark(theme === 'dark');
-    });
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+
+    const results = await Promise.allSettled([
+      getLoginAudits({ page: 1, pageSize: 6 }),
+      getLoginAudits({ isSuccessful: true, page: 1, pageSize: 1 }),
+      getLoginAudits({ isSuccessful: false, page: 1, pageSize: 1 }),
+      getUsers({ page: 1, pageSize: 1 }),
+      getClients({ page: 1, pageSize: 1 }),
+      getApiResources({ page: 1, pageSize: 1 }),
+    ]);
+
+    setData((previous) => ({
+      loginRecords: results[0].status === 'fulfilled'
+        ? results[0].value.total
+        : previous.loginRecords,
+      recentAudits: results[0].status === 'fulfilled'
+        ? results[0].value.items
+        : previous.recentAudits,
+      successfulLogins: results[1].status === 'fulfilled'
+        ? results[1].value.total
+        : previous.successfulLogins,
+      failedLogins: results[2].status === 'fulfilled'
+        ? results[2].value.total
+        : previous.failedLogins,
+      users: results[3].status === 'fulfilled'
+        ? results[3].value.total
+        : previous.users,
+      applications: results[4].status === 'fulfilled'
+        ? results[4].value.total
+        : previous.applications,
+      apiResources: results[5].status === 'fulfilled'
+        ? results[5].value.total
+        : previous.apiResources,
+    }));
+
+    const failures = results.filter((result) => result.status === 'rejected').length;
+    setFailedRequestCount(failures);
+    if (failures < results.length) {
+      setLastUpdated(new Date());
+    }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    return () => {
-      if (refreshTimer.current !== null) {
-        window.clearTimeout(refreshTimer.current);
-      }
-    };
-  }, []);
+    void loadDashboard();
+  }, [loadDashboard]);
 
-  const chartColors = useMemo(
-    () => ({
-      trend: isDark ? ['#71a2ff', '#5bdb9d'] : ['#2563eb', '#16845b'],
-      bar: isDark ? '#71a2ff' : '#3f7bff',
-      pie: isDark ? ['#71a2ff', '#5bdb9d', '#f0b45d', '#b493ff'] : ['#2563eb', '#16845b', '#b76711', '#805ad5'],
-      axisText: isDark ? '#82909e' : '#7b8794',
-    }),
-    [isDark],
-  );
-
-  const selectedRangeLabel = rangeOptions.find((option) => option.value === dateRange)?.label || '近 7 天';
-
-  const handleRefresh = () => {
-    if (isRefreshing) {
-      return;
+  const successRate = useMemo(() => {
+    if (data.successfulLogins === null || data.loginRecords === null || data.loginRecords === 0) {
+      return null;
     }
 
-    setIsRefreshing(true);
-    refreshTimer.current = window.setTimeout(() => {
-      setLastUpdated(new Date());
-      setIsRefreshing(false);
-      refreshTimer.current = null;
-    }, 650);
+    return (data.successfulLogins / data.loginRecords) * 100;
+  }, [data.loginRecords, data.successfulLogins]);
+
+  const getMetricValue = (key: MetricKey) => {
+    if (key === 'successRate') {
+      return successRate === null ? null : `${successRate.toFixed(2)}%`;
+    }
+
+    const value = data[key];
+    return value === null ? null : formatNumber(value);
+  };
+
+  const renderRecentAudits = () => {
+    if (data.recentAudits === null) {
+      return (
+        <Empty
+          className="dashboard-empty"
+          description={loading ? '正在加载登录记录' : '登录记录暂时不可用'}
+        />
+      );
+    }
+
+    if (data.recentAudits.length === 0) {
+      return <Empty className="dashboard-empty" description="暂无登录记录" />;
+    }
+
+    return (
+      <List className="dashboard-audit-list" split>
+        {data.recentAudits.map((audit) => (
+          <List.ListItem key={audit.id} className="dashboard-audit-item">
+            <div className="dashboard-audit-main">
+              <div className="dashboard-audit-identity">
+                <span className="dashboard-audit-avatar" aria-hidden="true">
+                  {(audit.username || 'U').slice(0, 1).toUpperCase()}
+                </span>
+                <div>
+                  <strong>{audit.username}</strong>
+                  <span>{audit.clientId || '直接登录'}</span>
+                </div>
+              </div>
+              <div className="dashboard-audit-result">
+                <Tag
+                  theme={audit.isSuccessful ? 'success' : 'danger'}
+                  variant="light-outline"
+                  size="small"
+                >
+                  {audit.isSuccessful ? '成功' : '失败'}
+                </Tag>
+                <span>{formatDateTime(audit.occurredAt)}</span>
+              </div>
+            </div>
+            <div className="dashboard-audit-meta">
+              <span>{audit.ipAddress || '未记录 IP'}</span>
+              {!audit.isSuccessful && audit.failureReason && <span>{audit.failureReason}</span>}
+            </div>
+          </List.ListItem>
+        ))}
+      </List>
+    );
   };
 
   return (
     <div className="dashboard-page">
       <header className="dashboard-header">
         <div className="dashboard-heading">
-          <Typography.Title level="h1" className="dashboard-title">身份与访问态势</Typography.Title>
-          <Typography.Paragraph className="dashboard-subtitle">实时监测组织内认证流量、访问风险与协议健康度</Typography.Paragraph>
-          <div className="dashboard-health" aria-label="协议健康度：稳定">
-            <span>协议健康度</span>
-            <Tag
-              className="dashboard-health-status"
-              theme="success"
-              variant="light"
-              size="small"
-              icon={<CheckCircleFilledIcon />}
-            >
-              稳定
-            </Tag>
-            <span className="dashboard-health-detail">OIDC · OAuth 2.0 · SAML 2.0</span>
-          </div>
+          <Typography.Title level="h1" className="dashboard-title">仪表盘</Typography.Title>
+          <Typography.Paragraph className="dashboard-subtitle">
+            NexusAuth 身份与访问管理概览
+          </Typography.Paragraph>
         </div>
         <div className="dashboard-controls">
-          <Select
-            className="dashboard-range-select"
-            value={dateRange}
-            options={rangeOptions}
-            onChange={(value) => setDateRange(String(value))}
-            aria-label="选择统计时间范围"
-          />
           <Button
             variant="outline"
             icon={<RefreshIcon />}
-            loading={isRefreshing}
-            onClick={handleRefresh}
+            loading={loading}
+            onClick={() => void loadDashboard()}
           >
             刷新
           </Button>
-          <span className="dashboard-updated">更新于 {formatUpdatedAt(lastUpdated)}</span>
+          <span className="dashboard-updated">
+            {lastUpdated ? `更新于 ${formatUpdatedAt(lastUpdated)}` : '尚未取得数据'}
+          </span>
         </div>
       </header>
 
-      <section className="dashboard-metrics" aria-label="核心身份指标">
-        {metricCards.map((metric) => {
-          const statistic = getMetricStatistic(metric.value);
+      {failedRequestCount > 0 && (
+        <Alert
+          className="dashboard-load-alert"
+          theme="warning"
+          title="部分数据暂时无法加载"
+          message="已保留此前成功获取的数据。请稍后刷新；持续失败时请检查当前账号权限或 BFF 服务状态。"
+        />
+      )}
+
+      <section className="dashboard-metrics" aria-label="登录审计统计">
+        {metricDefinitions.map((metric) => {
+          const value = getMetricValue(metric.key);
 
           return (
-            <Card key={metric.key} className="dashboard-metric-card" bordered={false}>
-              <div className="metric-card-top">
-                <span className="metric-title">{metric.title}</span>
-                <span className={`metric-icon metric-icon-${metric.icon}`} aria-hidden="true">
-                  {getMetricIcon(metric.icon)}
-                </span>
+            <Card
+              key={metric.key}
+              className={`dashboard-metric-card dashboard-metric-card--${metric.tone}`}
+              bordered={false}
+            >
+              <div className="dashboard-metric-card__top">
+                <span>{metric.title}</span>
+                <span className="dashboard-metric-card__icon" aria-hidden="true">{metric.icon}</span>
               </div>
-              <div className="metric-value-row">
-                <Statistic
-                  className="metric-statistic"
-                  value={statistic.value}
-                  decimalPlaces={statistic.decimalPlaces}
-                  suffix={statistic.suffix}
-                />
-                <span className={`metric-trend is-${metric.trendTone}`}>
-                  {metric.trendDirection === 'up' ? <TrendingUpIcon /> : <TrendingDownIcon />}
-                  {metric.trend}
-                </span>
-              </div>
-              <div className="metric-helper">{metric.helper}</div>
+              <strong className={`dashboard-metric-card__value${value === null ? ' is-empty' : ''}`}>
+                {value ?? (loading ? '加载中' : '—')}
+              </strong>
+              <span className="dashboard-metric-card__helper">
+                {value === null && !loading ? '暂不可用' : metric.helper}
+              </span>
             </Card>
           );
         })}
       </section>
 
-      <section className="dashboard-main-grid" aria-label="认证趋势与结果分布">
-        <Card className="dashboard-panel dashboard-trend-panel" bordered={false}>
-          <div className="panel-header">
-            <div>
-              <Typography.Title level="h2" className="panel-title">认证请求趋势</Typography.Title>
-              <Typography.Paragraph className="panel-caption">成功与失败请求量</Typography.Paragraph>
-            </div>
-            <Tag theme="primary" variant="light-outline">{selectedRangeLabel}</Tag>
+      <section className="dashboard-resources" aria-label="身份资源统计">
+        <Card className="dashboard-resource-card" bordered={false}>
+          <span className="dashboard-resource-card__icon"><UserIcon /></span>
+          <div>
+            <span>用户</span>
+            <strong>{data.users === null ? '—' : formatNumber(data.users)}</strong>
           </div>
-          <div className="dashboard-chart dashboard-trend-chart">
-            <Line
-              height={300}
-              data={authTrendData}
-              xField="date"
-              yField="value"
-              colorField="status"
-              seriesField="status"
-              theme={isDark ? 'classicDark' : 'classic'}
-              color={chartColors.trend}
-              shapeField="smooth"
-              point={{ shapeField: 'circle', sizeField: 3 }}
-              style={{ lineWidth: 2 }}
-              legend={{ position: 'top' }}
-              interaction={{ tooltip: { marker: true } }}
-              axis={{
-                x: { title: '日期' },
-                y: {
-                  title: '请求数',
-                  labelFormatter: (value: string) => `${(Number(value) / 1000).toFixed(0)}k`,
-                },
-              }}
-              tooltip={{
-                title: 'date',
-                items: [
-                  {
-                    channel: 'y',
-                    valueFormatter: (value: number | string) => `${Number(value).toLocaleString('zh-CN')} 次`,
-                  },
-                ],
-              }}
-            />
-          </div>
+          <small>{data.users === null ? '暂不可用' : '当前账号总数'}</small>
         </Card>
-
-        <Card className="dashboard-panel dashboard-result-panel" bordered={false}>
-          <div className="panel-header">
-            <div>
-              <Typography.Title level="h2" className="panel-title">认证结果分布</Typography.Title>
-              <Typography.Paragraph className="panel-caption">按请求结果统计</Typography.Paragraph>
-            </div>
+        <Card className="dashboard-resource-card" bordered={false}>
+          <span className="dashboard-resource-card__icon"><AppIcon /></span>
+          <div>
+            <span>应用</span>
+            <strong>{data.applications === null ? '—' : formatNumber(data.applications)}</strong>
           </div>
-          <div className="dashboard-donut-wrap">
-            <Pie
-              height={248}
-              data={authResultData}
-              angleField="value"
-              colorField="type"
-              theme={isDark ? 'classicDark' : 'classic'}
-              color={chartColors.pie}
-              innerRadius={0.72}
-              legend={{ position: 'bottom' }}
-              label={false}
-              tooltip={{
-                items: [
-                  {
-                    name: '占比',
-                    field: 'value',
-                    valueFormatter: (value: number | string) => `${Number(value).toFixed(2)}%`,
-                  },
-                ],
-              }}
-            />
-            <div className="donut-center" aria-label="认证成功率 98.72%">
-              <strong>98.72%</strong>
-              <span>认证成功率</span>
-            </div>
+          <small>{data.applications === null ? '暂不可用' : '已注册 OAuth 应用'}</small>
+        </Card>
+        <Card className="dashboard-resource-card" bordered={false}>
+          <span className="dashboard-resource-card__icon"><ServerIcon /></span>
+          <div>
+            <span>服务资源</span>
+            <strong>{data.apiResources === null ? '—' : formatNumber(data.apiResources)}</strong>
           </div>
+          <small>{data.apiResources === null ? '暂不可用' : '已注册 API 资源'}</small>
         </Card>
       </section>
 
-      <section className="dashboard-secondary-grid" aria-label="应用调用排行与近期安全事件">
-        <Card className="dashboard-panel dashboard-application-panel" bordered={false}>
-          <div className="panel-header">
+      <section className="dashboard-main-grid">
+        <Card className="dashboard-panel dashboard-recent-panel" bordered={false}>
+          <div className="dashboard-panel-header">
             <div>
-              <Typography.Title level="h2" className="panel-title">应用认证调用排行</Typography.Title>
-              <Typography.Paragraph className="panel-caption">{selectedRangeLabel}认证请求量（千次）</Typography.Paragraph>
+              <Typography.Title level="h2" className="dashboard-panel-title">近期登录记录</Typography.Title>
+              <Typography.Paragraph className="dashboard-panel-caption">
+                来自登录审计接口的最新记录
+              </Typography.Paragraph>
             </div>
+            <Tag theme="primary" variant="light-outline">{data.loginRecords === null ? '—' : `${formatNumber(data.loginRecords)} 条`}</Tag>
           </div>
-          <div className="dashboard-chart dashboard-application-chart">
-            <Column
-              height={276}
-              data={applicationRankData}
-              xField="application"
-              yField="value"
-              theme={isDark ? 'classicDark' : 'classic'}
-              color={chartColors.bar}
-              columnStyle={{ radius: [5, 5, 0, 0] }}
-              label={{
-                text: 'value',
-                position: 'top',
-                formatter: (value: number | string) => `${Number(value).toFixed(1)}k`,
-              }}
-              axis={{
-                x: { title: '应用' },
-                y: {
-                  title: '调用量（千次）',
-                  labelFormatter: (value: string) => `${value}k`,
-                },
-              }}
-              tooltip={{
-                items: [
-                  {
-                    name: '调用量',
-                    field: 'value',
-                    valueFormatter: (value: number | string) => `${Number(value).toFixed(1)}k 次`,
-                  },
-                ],
-              }}
-            />
-          </div>
+          {renderRecentAudits()}
         </Card>
 
-        <Card className="dashboard-panel dashboard-security-panel" bordered={false}>
-          <div className="panel-header">
-            <div>
-              <Typography.Title level="h2" className="panel-title">近期安全事件</Typography.Title>
-              <Typography.Paragraph className="panel-caption">需要关注的访问与认证活动</Typography.Paragraph>
+        <div className="dashboard-insights">
+          <Card className="dashboard-panel dashboard-empty-panel" bordered={false}>
+            <div className="dashboard-panel-header">
+              <div>
+                <Typography.Title level="h2" className="dashboard-panel-title">认证趋势</Typography.Title>
+                <Typography.Paragraph className="dashboard-panel-caption">按日期聚合的登录结果</Typography.Paragraph>
+              </div>
             </div>
-            <ErrorCircleFilledIcon className="panel-header-icon" aria-hidden="true" />
-          </div>
-          <List className="security-event-list" size="small" split>
-            {securityEvents.map((event) => (
-              <List.ListItem key={`${event.title}-${event.time}`} className="security-event-item">
-                <Tag theme={getEventTheme(event.level)} variant="light-outline" size="small">
-                  {event.level}
-                </Tag>
-                <div className="security-event-content">
-                  <div className="security-event-title">{event.title}</div>
-                  <div className="security-event-meta">
-                    <span>{event.source}</span>
-                    <span>{event.time}</span>
-                  </div>
-                </div>
-              </List.ListItem>
-            ))}
-          </List>
-          <Button className="security-event-more" variant="text" suffix={<ChevronRightIcon />}>
-            查看全部
-          </Button>
-        </Card>
+            <Empty description="当前 API 未提供按日期聚合的认证数据" />
+          </Card>
+          <Card className="dashboard-panel dashboard-empty-panel" bordered={false}>
+            <div className="dashboard-panel-header">
+              <div>
+                <Typography.Title level="h2" className="dashboard-panel-title">应用调用排行</Typography.Title>
+                <Typography.Paragraph className="dashboard-panel-caption">按应用聚合的认证请求量</Typography.Paragraph>
+              </div>
+            </div>
+            <Empty description="当前 API 未提供按应用聚合的调用数据" />
+          </Card>
+        </div>
       </section>
     </div>
   );

@@ -14,6 +14,13 @@ public interface IDeviceAuthorizationRepository : IEntityRepository<DeviceAuthor
 
     Task AddAsync(DeviceAuthorization authorization, CancellationToken ct = default);
 
+    /// <summary>
+    /// Attempts to persist a new authorization. A unique-key violation, including
+    /// one caused by a historical user code that has not yet been cleaned up,
+    /// returns <see langword="false"/> so the caller can generate a new code.
+    /// </summary>
+    Task<bool> TryAddAsync(DeviceAuthorization authorization, CancellationToken ct = default);
+
     Task UpdateAsync(DeviceAuthorization authorization, CancellationToken ct = default);
 
     Task<bool> ApprovePendingAsync(

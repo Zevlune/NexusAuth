@@ -35,6 +35,7 @@ type ClientFormData = {
   allowedGrantTypes: string[];
   apiResourceIds: string[];
   requirePkce: boolean;
+  requireConsent: boolean;
   tokenEndpointAuthMethod: TokenEndpointAuthMethod;
   keyMaterialSource: 'jwks' | 'jwks_uri';
   jwksInputMode: 'auto_generate' | 'manual';
@@ -79,6 +80,7 @@ const defaultFormData: ClientFormData = {
   allowedGrantTypes: [],
   apiResourceIds: [],
   requirePkce: false,
+  requireConsent: false,
   tokenEndpointAuthMethod: 'client_secret_basic',
   keyMaterialSource: 'jwks',
   jwksInputMode: 'manual',
@@ -123,6 +125,7 @@ const toFormData = (client: Client): ClientFormData => ({
   allowedGrantTypes: client.allowedGrantTypes ?? ['authorization_code'],
   apiResourceIds: client.apiResourceIds ?? [],
   requirePkce: client.requirePkce,
+  requireConsent: client.requireConsent ?? false,
   tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
   keyMaterialSource: client.jwksUri ? 'jwks_uri' : 'jwks',
   jwksInputMode: 'manual',
@@ -278,6 +281,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
       allowedGrantTypes: formData.allowedGrantTypes,
       apiResourceIds: formData.apiResourceIds,
       requirePkce: formData.requirePkce,
+      requireConsent: formData.requireConsent,
       isActive: formData.isActive,
     });
   }, [loadingDetail, formData]);
@@ -398,6 +402,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     const redirectUris = formData.redirectUris.map((uri) => uri.value.trim()).filter(Boolean);
     const postLogoutRedirectUris = formData.postLogoutRedirectUris.map((uri) => uri.value.trim()).filter(Boolean);
     const requirePkce = Boolean(form.getFieldValue('requirePkce'));
+    const requireConsent = Boolean(form.getFieldValue('requireConsent'));
     const isActive = Boolean(form.getFieldValue('isActive'));
     const isPrivateKeyJwt = formData.tokenEndpointAuthMethod === 'private_key_jwt';
     const jwks = isPrivateKeyJwt && formData.keyMaterialSource === 'jwks' && formData.jwksInputMode === 'manual'
@@ -426,6 +431,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
           allowedGrantTypes: formData.allowedGrantTypes,
           apiResourceIds: formData.apiResourceIds,
           requirePkce,
+          requireConsent,
           isActive,
           tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
           jwks: clearJwks ? '' : jwks,
@@ -448,6 +454,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
         allowedGrantTypes: formData.allowedGrantTypes,
         apiResourceIds: formData.apiResourceIds,
         requirePkce,
+        requireConsent,
         tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
         autoGenerateJwks: isPrivateKeyJwt && formData.keyMaterialSource === 'jwks' && formData.jwksInputMode === 'auto_generate',
         jwks,
@@ -614,6 +621,9 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
               </Form.FormItem>
               <Form.FormItem label="服务资源" name="apiResourceIds" help="选择应用可以访问的 API 服务资源，资源的 audience 会用于生成访问令牌的 aud。">
                 <Select value={formData.apiResourceIds} multiple loading={loadingResources} placeholder="请选择服务资源" options={apiResourceSelectOptions} onChange={(value) => setFormData((prev) => ({ ...prev, apiResourceIds: value as string[] }))} />
+              </Form.FormItem>
+              <Form.FormItem label="要求用户同意授权" name="requireConsent" help="开启后，用户首次登录该应用时需要确认授予的权限。">
+                <Switch value={formData.requireConsent} onChange={(value) => setFormData((prev) => ({ ...prev, requireConsent: value }))} />
               </Form.FormItem>
             </Card>
 

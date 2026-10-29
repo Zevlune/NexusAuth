@@ -144,12 +144,14 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
         var first = CreateController(Principal(DateTimeOffset.UtcNow.AddHours(-1)), AuthorizeUrl("prompt=login%20consent"), out _);
         var returnUrl = ExtractReturnUrl(Assert.IsType<RedirectResult>(await InvokeAsync(first)).Url);
 
-        var second = CreateController(Principal(DateTimeOffset.UtcNow), returnUrl, out _);
+        var store = new InMemoryConsentStore();
+        var second = CreateController(Principal(DateTimeOffset.UtcNow), returnUrl, out _, consentStore: store);
         var consent = Assert.IsType<RedirectResult>(await InvokeAsync(second));
 
         Assert.StartsWith("/consent?", consent.Url);
         var consentQuery = QueryHelpers.ParseQuery(new Uri("https://issuer.example" + consent.Url).Query);
-        Assert.False(string.IsNullOrWhiteSpace(consentQuery[AuthorizeController.ReauthenticationParameterName]));
+        var savedQuery = QueryHelpers.ParseQuery(store.GetRequest(consentQuery["id"].ToString()).Query);
+        Assert.False(string.IsNullOrWhiteSpace(savedQuery[AuthorizeController.ReauthenticationParameterName]));
     }
 
     [Fact]
@@ -185,7 +187,8 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
         ClaimsPrincipal principal,
         string pathAndQuery,
         out RecordingSignOutAuthenticationService authentication,
-        TestSecurityPolicy? policy = null)
+        TestSecurityPolicy? policy = null,
+        NexusAuth.Domain.Repositories.IConsentStore? consentStore = null)
     {
         authentication = new RecordingSignOutAuthenticationService();
         var services = new ServiceCollection()
@@ -209,7 +212,8 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
             HardeningClientServices.AcceptingAuthorizeRequests(),
             dataProtection,
             users,
-            (policy ?? new TestSecurityPolicy()).Service);
+            (policy ?? new TestSecurityPolicy()).Service,
+            consentStore: consentStore);
         controller.ControllerContext = new ControllerContext { HttpContext = context };
         return controller;
     }

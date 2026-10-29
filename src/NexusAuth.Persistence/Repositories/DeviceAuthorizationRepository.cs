@@ -4,6 +4,7 @@ using Luck.Framework.UnitOfWorks;
 using Microsoft.EntityFrameworkCore;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using Npgsql;
 
 namespace NexusAuth.Persistence.Repositories;
 
@@ -46,6 +47,21 @@ public class DeviceAuthorizationRepository : EfCoreEntityRepository<DeviceAuthor
     {
         _dbContext.Add(authorization);
         await _unitOfWork.CommitAsync(ct);
+    }
+
+    public async Task<bool> TryAddAsync(DeviceAuthorization authorization, CancellationToken ct = default)
+    {
+        _dbContext.Add(authorization);
+        try
+        {
+            await _unitOfWork.CommitAsync(ct);
+            return true;
+        }
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception))
+        {
+            _dbContext.Entry(authorization).State = EntityState.Detached;
+            return false;
+        }
     }
 
     public async Task UpdateAsync(DeviceAuthorization authorization, CancellationToken ct = default)
@@ -151,5 +167,16 @@ public class DeviceAuthorizationRepository : EfCoreEntityRepository<DeviceAuthor
                 ct);
 
         return affected == 1 ? candidate : null;
+    }
+
+    private static bool IsUniqueViolation(DbUpdateException exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+                return true;
+        }
+
+        return false;
     }
 }

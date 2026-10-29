@@ -15,7 +15,8 @@ public record ClientDto(
     List<string> AllowedGrantTypes,
     bool RequirePkce,
     bool IsActive,
-    DateTimeOffset CreatedAt)
+    DateTimeOffset CreatedAt,
+    bool RequireConsent = false)
 {
     public List<Guid> ApiResourceIds { get; init; } = [];
 }
