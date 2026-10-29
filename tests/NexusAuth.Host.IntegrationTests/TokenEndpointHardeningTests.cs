@@ -17,6 +17,7 @@ using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Host.Controllers;
 using NexusAuth.Host.TokenEndpoint;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -25,7 +26,6 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
 {
     private const string Issuer = InMemoryTokenServiceHarness.Issuer;
     private const string RedirectUri = "https://client.example/callback";
-    private const string WeChatGrantType = "urn:nexusauth:grant-type:wechat_miniprogram";
     private readonly User user;
 
     public TokenEndpointHardeningTests(SharedUser shared)
@@ -36,7 +36,7 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
     [Fact]
     public async Task Code_verifier_for_a_code_issued_without_pkce_is_rejected()
     {
-        var code = AuthorizationCode.Create("web-client", user.Id, RedirectUri, "openid");
+        var code = AuthorizationCode.Create("web-client", user.Id, RedirectUri, OidcScopes.OpenId);
         var consumed = 0;
         var codes = HardeningProxy.Create<IAuthorizationCodeRepository>((method, _) =>
         {
@@ -51,17 +51,32 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
                     return null;
             }
         });
-        var service = new AuthorizationService(codes, null!, new TestSecurityPolicy().Service, NullLogger<AuthorizationService>.Instance);
+        var authorizationValidations = 0;
+        var clients = HardeningProxy.Create<IClientService>((method, args) => method.Name switch
+        {
+            nameof(IClientService.ValidateClientForAuthorizationAsync) => IncrementAndAcceptAuthorization(),
+            nameof(IClientService.ValidateScopesAsync) => ScopeValidationResult.Success((string)args![1]!),
+            _ => null,
+        });
+        var service = new AuthorizationService(codes, clients, new TestSecurityPolicy().Service, NullLogger<AuthorizationService>.Instance);
 
         var downgrade = await service.ValidateAndConsumeCodeAsync(code.RawCode, "web-client", RedirectUri, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
 
         Assert.False(downgrade.IsSuccess);
         Assert.Contains("did not use PKCE", downgrade.Error);
         Assert.Equal(0, consumed);
+        Assert.Equal(0, authorizationValidations);
 
         var plain = await service.ValidateAndConsumeCodeAsync(code.RawCode, "web-client", RedirectUri);
         Assert.True(plain.IsSuccess);
         Assert.Equal(1, consumed);
+        Assert.Equal(1, authorizationValidations);
+
+        ClientValidationResult IncrementAndAcceptAuthorization()
+        {
+            authorizationValidations++;
+            return ClientValidationResult.Success();
+        }
     }
 
     [Fact]
@@ -77,10 +92,10 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
         controller.HttpContext.Request.Path = "/connect/token";
 
         var result = await controller.Token(
-            "client_credentials",
+            OAuthGrantTypes.ClientCredentials,
             clientId: "pk-client",
             scope: "orders.api",
-            clientAssertionType: OAuthClient.ClientAssertionTypeJwtBearer,
+            clientAssertionType: OAuthClientAssertionTypes.JwtBearer,
             clientAssertion: "header.payload.signature");
 
         Assert.IsType<UnauthorizedObjectResult>(result);
@@ -95,7 +110,12 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
         var controller = CreateOpenIdController(HardeningClientServices.AcceptingAuthorizeRequests(inputs), tokenService: null!);
         controller.HttpContext.Request.Host = new HostString("evil.example");
 
-        await controller.Introspect("pk-client", null, OAuthClient.ClientAssertionTypeJwtBearer, "header.payload.signature", "token");
+        await controller.Introspect(
+            "pk-client",
+            null,
+            OAuthClientAssertionTypes.JwtBearer,
+            "header.payload.signature",
+            "token");
 
         var audiences = Assert.Single(inputs).GetAcceptedAssertionAudiences();
         Assert.Equal([$"{Issuer}/connect/token", Issuer, $"{Issuer}/connect/introspect"], audiences);
@@ -109,13 +129,22 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
         var publicClient = OAuthClient.Create(
             "miniapp",
             "Mini program",
-            allowedGrantTypes: [WeChatGrantType, "refresh_token"],
+            allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram, OAuthGrantTypes.RefreshToken],
             requirePkce: false,
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone);
-        var refreshToken = await harness.Service.IssueRefreshTokenAsync("miniapp", user.Id, "openid offline_access");
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None);
+        var refreshToken = await harness.Service.IssueRefreshTokenAsync(
+            "miniapp",
+            user.Id,
+            $"{OidcScopes.OpenId} {OidcScopes.OfflineAccess}");
         var controller = CreateOpenIdController(ClientLookup(publicClient), harness.Service);
 
-        var result = await controller.Revoke("miniapp", null, null, null, refreshToken, "refresh_token");
+        var result = await controller.Revoke(
+            "miniapp",
+            null,
+            null,
+            null,
+            refreshToken,
+            OAuthGrantTypes.RefreshToken);
 
         Assert.IsType<OkResult>(result);
         Assert.True(harness.IsRefreshTokenRevoked(refreshToken));
@@ -129,16 +158,22 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
         var publicClient = OAuthClient.Create(
             "miniapp",
             "Mini program",
-            allowedGrantTypes: [WeChatGrantType, "refresh_token"],
+            allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram, OAuthGrantTypes.RefreshToken],
             requirePkce: false,
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone);
-        var confidentialClient = OAuthClient.Create("web-client", "Web", allowedGrantTypes: ["authorization_code", "refresh_token"]);
-        var confidentialToken = await harness.Service.IssueRefreshTokenAsync("web-client", user.Id, "openid offline_access");
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None);
+        var confidentialClient = OAuthClient.Create(
+            "web-client",
+            "Web",
+            allowedGrantTypes: [OAuthGrantTypes.AuthorizationCode, OAuthGrantTypes.RefreshToken]);
+        var confidentialToken = await harness.Service.IssueRefreshTokenAsync(
+            "web-client",
+            user.Id,
+            $"{OidcScopes.OpenId} {OidcScopes.OfflineAccess}");
 
         var withSecret = await CreateOpenIdController(ClientLookup(publicClient), harness.Service)
             .Revoke("miniapp", "unexpected-secret", null, null, "token", null);
         var unauthenticatedConfidential = await CreateOpenIdController(ClientLookup(confidentialClient), harness.Service)
-            .Revoke("web-client", null, null, null, confidentialToken, "refresh_token");
+            .Revoke("web-client", null, null, null, confidentialToken, OAuthGrantTypes.RefreshToken);
 
         Assert.IsType<UnauthorizedObjectResult>(withSecret);
         Assert.IsType<UnauthorizedObjectResult>(unauthenticatedConfidential);
@@ -150,12 +185,21 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
     {
         using var harness = new InMemoryTokenServiceHarness();
         harness.Add(user);
-        var confidentialClient = OAuthClient.Create("web-client", "Web", allowedGrantTypes: ["authorization_code"]);
-        var accessToken = await harness.Service.IssueAccessTokenAsync("web-client", "openid", null, user.Id);
+        var confidentialClient = OAuthClient.Create(
+            "web-client",
+            "Web",
+            allowedGrantTypes: [OAuthGrantTypes.AuthorizationCode]);
+        var accessToken = await harness.Service.IssueAccessTokenAsync("web-client", OidcScopes.OpenId, null, user.Id);
         Assert.True((await harness.Service.IntrospectAsync(accessToken, "web-client")).Active);
         var controller = CreateOpenIdController(ClientLookup(confidentialClient, authenticates: true), harness.Service);
 
-        var result = await controller.Revoke("web-client", "secret", null, null, accessToken, "refresh_token");
+        var result = await controller.Revoke(
+            "web-client",
+            "secret",
+            null,
+            null,
+            accessToken,
+            OAuthGrantTypes.RefreshToken);
 
         Assert.IsType<OkResult>(result);
         Assert.False((await harness.Service.IntrospectAsync(accessToken, "web-client")).Active);
@@ -171,7 +215,12 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
         using var services = TokenControllerServices(ConfidentialClient(), tokenService, CodeExchange());
         var controller = CreateTokenController(services);
 
-        var result = await controller.Token("authorization_code", "web-client", "secret", "code", RedirectUri);
+        var result = await controller.Token(
+            OAuthGrantTypes.AuthorizationCode,
+            "web-client",
+            "secret",
+            "code",
+            RedirectUri);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal("invalid_grant", JsonSerializer.SerializeToElement(badRequest.Value).GetProperty("error").GetString());
@@ -191,7 +240,12 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
         using var services = TokenControllerServices(ConfidentialClient(), tokenService, CodeExchange(), policy);
         var controller = CreateTokenController(services);
 
-        var result = await controller.Token("authorization_code", "web-client", "secret", "code", RedirectUri);
+        var result = await controller.Token(
+            OAuthGrantTypes.AuthorizationCode,
+            "web-client",
+            "secret",
+            "code",
+            RedirectUri);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal("invalid_grant", JsonSerializer.SerializeToElement(badRequest.Value).GetProperty("error").GetString());
@@ -200,12 +254,15 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
 
     private IAuthorizationService CodeExchange() => HardeningProxy.Create<IAuthorizationService>((method, _) =>
         method.Name == nameof(IAuthorizationService.ValidateAndConsumeCodeAsync)
-            ? AuthorizationCodeResult.Success(user.Id, "web-client", "openid", null, null, DateTimeOffset.UtcNow, null, null)
+            ? AuthorizationCodeResult.Success(user.Id, "web-client", OidcScopes.OpenId, null, null, DateTimeOffset.UtcNow, null, null)
             : null);
 
     private static IClientService ConfidentialClient()
     {
-        var client = OAuthClient.Create("web-client", "Web", allowedGrantTypes: ["authorization_code"]);
+        var client = OAuthClient.Create(
+            "web-client",
+            "Web",
+            allowedGrantTypes: [OAuthGrantTypes.AuthorizationCode]);
         return HardeningProxy.Create<IClientService>((method, _) =>
             method.Name == nameof(IClientService.AuthenticateClientAsync) ? ClientAuthenticationResult.Success(client) : null);
     }

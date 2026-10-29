@@ -17,6 +17,7 @@ using NexusAuth.Application.Services.Sessions;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Host.Authentication;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 using Proxy = NexusAuth.Host.IntegrationTests.PasskeyManagementTests.RecordingProxy;
 
@@ -234,7 +235,8 @@ public sealed class AccountSecurityPageTests
         Assert.Equal("nosniff", Assert.Single(login.Headers.GetValues("X-Content-Type-Options")));
         Assert.Equal("strict-origin-when-cross-origin", Assert.Single(login.Headers.GetValues("Referrer-Policy")));
 
-        var authorize = await client.GetAsync("/connect/authorize?response_type=code");
+        var authorize = await client.GetAsync(
+            $"/connect/authorize?response_type={OAuthResponseTypes.Code}");
         Assert.Equal("no-referrer", Assert.Single(authorize.Headers.GetValues("Referrer-Policy")));
         Assert.Equal("DENY", Assert.Single(authorize.Headers.GetValues("X-Frame-Options")));
     }

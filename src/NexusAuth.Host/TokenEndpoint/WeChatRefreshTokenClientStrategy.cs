@@ -2,6 +2,7 @@ using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.ExternalIdentity;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Host.TokenEndpoint;
 
@@ -14,7 +15,7 @@ public class WeChatRefreshTokenClientStrategy(IClientService clientService) : IR
         if (!result.IsSuccess)
             return result;
 
-        if (result.Client?.TokenEndpointAuthMethod != "none"
+        if (result.Client?.TokenEndpointAuthMethod != OAuthClientAuthenticationMethods.None
             || input.ClientSecret is not null || input.ClientAssertion is not null
             || input.ClientAssertionType is not null || !string.IsNullOrWhiteSpace(context.HttpContext.Request.Headers.Authorization))
             return ClientAuthenticationResult.Failure("invalid_client", "Public clients must not submit client credentials.");
@@ -23,6 +24,6 @@ public class WeChatRefreshTokenClientStrategy(IClientService clientService) : IR
     }
 
     public bool IsGrantAllowed(OAuthClient? client) =>
-        client?.IsGrantTypeAllowed("refresh_token") == true
-        && client.IsGrantTypeAllowed(WeChatMiniProgramGrantTypes.GrantType);
+        client?.IsGrantTypeAllowed(OAuthGrantTypes.RefreshToken) == true
+        && client.IsGrantTypeAllowed(OAuthGrantTypes.WeChatMiniProgram);
 }

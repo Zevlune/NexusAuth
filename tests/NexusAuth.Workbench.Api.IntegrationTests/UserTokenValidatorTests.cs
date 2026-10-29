@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.AggregateRoots.Users;
@@ -499,11 +500,16 @@ public sealed class UserTokenValidatorTests
                     ? Array.Empty<ApiResource>()
                     : null;
             });
+            var clientService = RecordingDispatchProxy.Create<IClientService>((method, args) =>
+                method.Name == nameof(IClientService.ValidateScopesAsync)
+                    ? ScopeValidationResult.Success((string)args![1]!)
+                    : null);
             Service = new TokenService(
                 refreshTokens,
                 blacklist,
                 userRepository,
                 apiResources,
+                clientService,
                 Options.Create(new JwtOptions
                 {
                     Issuer = Issuer,

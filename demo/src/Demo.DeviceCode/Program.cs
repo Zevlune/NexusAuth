@@ -1,11 +1,13 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using NexusAuth.Shared.OAuth;
 
 var authority = Environment.GetEnvironmentVariable("NEXUSAUTH_AUTHORITY") ?? "http://localhost:5100";
 var clientId = Environment.GetEnvironmentVariable("NEXUSAUTH_CLIENT_ID") ?? "demo-device";
 var privateKeyPath = Environment.GetEnvironmentVariable("NEXUSAUTH_CLIENT_PRIVATE_KEY_PATH") ?? Path.Combine(AppContext.BaseDirectory, "keys", "demo-client-private.pem");
 var keyId = Environment.GetEnvironmentVariable("NEXUSAUTH_CLIENT_KEY_ID") ?? "demo-device-key-1";
-var scope = Environment.GetEnvironmentVariable("NEXUSAUTH_SCOPE") ?? "openid profile email phone offline_access demo-bff-api";
+var scope = Environment.GetEnvironmentVariable("NEXUSAUTH_SCOPE")
+    ?? string.Join(' ', OidcScopes.OpenId, OidcScopes.Profile, OidcScopes.Email, OidcScopes.Phone, OidcScopes.OfflineAccess, "demo-bff-api");
 var apiUrl = Environment.GetEnvironmentVariable("DEMO_BFF_API") ?? "http://localhost:5201/api/m2m/profile";
 
 Console.WriteLine("=== Demo: device_code ===");
@@ -60,7 +62,7 @@ while (true)
 
     var pollForm = new Dictionary<string, string>
     {
-        ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code",
+        ["grant_type"] = OAuthGrantTypes.DeviceCode,
         ["device_code"] = deviceCode,
     };
     await ClientAssertionHelper.AppendPrivateKeyJwtAsync(pollForm, clientId, tokenEndpoint, privateKeyPath, keyId);
@@ -103,7 +105,7 @@ while (true)
 
             var refreshForm = new Dictionary<string, string>
             {
-                ["grant_type"] = "refresh_token",
+                ["grant_type"] = OAuthGrantTypes.RefreshToken,
                 ["refresh_token"] = latestRefreshToken,
             };
             await ClientAssertionHelper.AppendPrivateKeyJwtAsync(refreshForm, clientId, tokenEndpoint, privateKeyPath, keyId);

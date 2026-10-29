@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.Options;
+using NexusAuth.Shared.OAuth;
 
 namespace Demo.Bff.Services;
 
@@ -110,7 +111,7 @@ public class OidcBffService
         await ApplyClientAuthenticationAsync(client);
         var refreshForm = new Dictionary<string, string>
         {
-            ["grant_type"] = "refresh_token",
+            ["grant_type"] = OAuthGrantTypes.RefreshToken,
             ["refresh_token"] = session.RefreshToken,
         };
         await AppendClientAuthenticationFormFieldsAsync(refreshForm, discovery.TokenEndpoint, ct);
@@ -218,7 +219,10 @@ public class OidcBffService
     /// </summary>
     public Task ApplyClientAuthenticationAsync(HttpClient client, string? clientId = null, string? clientSecret = null)
     {
-        if (string.Equals(TokenEndpointAuthMethod, "private_key_jwt", StringComparison.Ordinal))
+        if (string.Equals(
+            TokenEndpointAuthMethod,
+            OAuthClientAuthenticationMethods.PrivateKeyJwt,
+            StringComparison.Ordinal))
             return Task.CompletedTask;
 
         var actualClientId = clientId ?? ClientId;
@@ -238,11 +242,14 @@ public class OidcBffService
     /// </summary>
     public async Task AppendClientAuthenticationFormFieldsAsync(Dictionary<string, string> form, string endpointAudience, CancellationToken ct)
     {
-        if (string.Equals(TokenEndpointAuthMethod, "private_key_jwt", StringComparison.Ordinal))
+        if (string.Equals(
+            TokenEndpointAuthMethod,
+            OAuthClientAuthenticationMethods.PrivateKeyJwt,
+            StringComparison.Ordinal))
         {
             form["client_id"] = ClientId;
             var assertion = await BuildClientAssertionAsync(ClientId, endpointAudience, ct);
-            form["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+            form["client_assertion_type"] = OAuthClientAssertionTypes.JwtBearer;
             form["client_assertion"] = assertion;
         }
     }

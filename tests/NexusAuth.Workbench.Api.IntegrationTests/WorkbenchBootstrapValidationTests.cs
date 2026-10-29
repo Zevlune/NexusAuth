@@ -10,6 +10,7 @@ using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -77,7 +78,9 @@ public sealed class WorkbenchBootstrapValidationTests
         await service.StartAsync(default);
         var clientId = client!.Id;
         var resourceId = resource!.Id;
-        Assert.Equal(new[] { "authorization_code", "refresh_token" }, client.AllowedGrantTypes);
+        Assert.Equal(
+            new[] { OAuthGrantTypes.AuthorizationCode, OAuthGrantTypes.RefreshToken },
+            client.AllowedGrantTypes);
 
         configuration["Gateway:Enabled"] = "true";
         configuration["Auth:RedirectUri"] = "";
@@ -97,7 +100,9 @@ public sealed class WorkbenchBootstrapValidationTests
         configuration["Auth:RedirectUri"] = "https://app.test/signin-oidc";
         configuration["Auth:PostLogoutRedirectUri"] = "https://app.test/";
         await service.StartAsync(default);
-        Assert.Equal(new[] { "authorization_code", "refresh_token" }, client.AllowedGrantTypes);
+        Assert.Equal(
+            new[] { OAuthGrantTypes.AuthorizationCode, OAuthGrantTypes.RefreshToken },
+            client.AllowedGrantTypes);
         Assert.Single(client.RedirectUris);
         Assert.Equal(1, secretWrites);
     }

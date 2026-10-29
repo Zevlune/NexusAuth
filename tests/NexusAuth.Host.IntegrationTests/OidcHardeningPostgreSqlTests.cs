@@ -14,6 +14,7 @@ using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Persistence.Repositories;
+using NexusAuth.Shared.OAuth;
 using Npgsql;
 using Xunit;
 using AuthDbContext = NexusAuth.Persistence.DbContext;
@@ -39,15 +40,15 @@ public sealed class OidcHardeningPostgreSqlTests
         var user = Guid.NewGuid();
         var anotherUser = Guid.NewGuid();
 
-        var targetTokens = new[] { RefreshToken.Create(target, user, "openid").Entity, RefreshToken.Create(target, user, "openid").Entity };
-        var otherUserToken = RefreshToken.Create(target, anotherUser, "openid").Entity;
-        var otherClientToken = RefreshToken.Create(other, user, "openid").Entity;
-        var unusedCode = AuthorizationCode.Create(target, user, "https://client.example/cb", "openid").Entity;
-        var otherCode = AuthorizationCode.Create(other, user, "https://client.example/cb", "openid").Entity;
-        var pending = DeviceAuthorization.Create(target, "openid").Entity;
-        var approved = DeviceAuthorization.Create(target, "openid").Entity;
+        var targetTokens = new[] { RefreshToken.Create(target, user, OidcScopes.OpenId).Entity, RefreshToken.Create(target, user, OidcScopes.OpenId).Entity };
+        var otherUserToken = RefreshToken.Create(target, anotherUser, OidcScopes.OpenId).Entity;
+        var otherClientToken = RefreshToken.Create(other, user, OidcScopes.OpenId).Entity;
+        var unusedCode = AuthorizationCode.Create(target, user, "https://client.example/cb", OidcScopes.OpenId).Entity;
+        var otherCode = AuthorizationCode.Create(other, user, "https://client.example/cb", OidcScopes.OpenId).Entity;
+        var pending = DeviceAuthorization.Create(target, OidcScopes.OpenId).Entity;
+        var approved = DeviceAuthorization.Create(target, OidcScopes.OpenId).Entity;
         approved.Approve(user);
-        var otherDevice = DeviceAuthorization.Create(other, "openid").Entity;
+        var otherDevice = DeviceAuthorization.Create(other, OidcScopes.OpenId).Entity;
         var targetClientId = Guid.NewGuid();
         var otherClientId = Guid.NewGuid();
         context.AddRange(targetTokens);
@@ -105,20 +106,26 @@ public sealed class OidcHardeningPostgreSqlTests
             }));
         await using (var db = CreateContext())
         {
-            db.Add(OAuthClient.Create(clientId, "Mini program", allowedScopes: ["openid", "profile", "offline_access"],
-                allowedGrantTypes: [WeChatMiniProgramGrantTypes.GrantType, "refresh_token"],
-                tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone, requirePkce: false));
+            db.Add(OAuthClient.Create(clientId, "Mini program", allowedScopes: [OidcScopes.OpenId, OidcScopes.Profile, OidcScopes.OfflineAccess],
+                allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram, OAuthGrantTypes.RefreshToken],
+                tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None,
+                requirePkce: false));
             await db.SaveChangesAsync();
         }
 
         using var client = factory.CreateClient();
         using var login = await client.PostAsync("/connect/token", Form(
-            ("grant_type", WeChatMiniProgramGrantTypes.GrantType), ("client_id", clientId), ("code", "code-1"), ("scope", "openid offline_access")));
+            ("grant_type", OAuthGrantTypes.WeChatMiniProgram),
+            ("client_id", clientId),
+            ("code", "code-1"),
+            ("scope", OidcScopes.OpenId + " " + OidcScopes.OfflineAccess)));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         var original = (await ReadAsync(login)).GetProperty("refresh_token").GetString()!;
 
         using var rotated = await client.PostAsync("/connect/token", Form(
-            ("grant_type", "refresh_token"), ("client_id", clientId), ("refresh_token", original)));
+            ("grant_type", OAuthGrantTypes.RefreshToken),
+            ("client_id", clientId),
+            ("refresh_token", original)));
         Assert.Equal(HttpStatusCode.OK, rotated.StatusCode);
         var descendant = (await ReadAsync(rotated)).GetProperty("refresh_token").GetString()!;
 
@@ -144,11 +151,15 @@ public sealed class OidcHardeningPostgreSqlTests
         }
 
         using var replay = await client.PostAsync("/connect/token", Form(
-            ("grant_type", "refresh_token"), ("client_id", clientId), ("refresh_token", original)));
+            ("grant_type", OAuthGrantTypes.RefreshToken),
+            ("client_id", clientId),
+            ("refresh_token", original)));
         Assert.Equal("invalid_grant", (await ReadAsync(replay)).GetProperty("error").GetString());
 
         using var afterReplay = await client.PostAsync("/connect/token", Form(
-            ("grant_type", "refresh_token"), ("client_id", clientId), ("refresh_token", descendant)));
+            ("grant_type", OAuthGrantTypes.RefreshToken),
+            ("client_id", clientId),
+            ("refresh_token", descendant)));
         Assert.Equal("invalid_grant", (await ReadAsync(afterReplay)).GetProperty("error").GetString());
     }
 
@@ -166,18 +177,18 @@ public sealed class OidcHardeningPostgreSqlTests
         var retained = now.AddDays(-1);
         var user = Guid.NewGuid();
 
-        var expiredCode = AuthorizationCode.Create("cleanup-client", user, "https://client.example/cb", "openid").Entity;
-        var retainedCode = AuthorizationCode.Create("cleanup-client", user, "https://client.example/cb", "openid").Entity;
+        var expiredCode = AuthorizationCode.Create("cleanup-client", user, "https://client.example/cb", OidcScopes.OpenId).Entity;
+        var retainedCode = AuthorizationCode.Create("cleanup-client", user, "https://client.example/cb", OidcScopes.OpenId).Entity;
         Set(context, expiredCode, value => value.ExpiresAt, expired);
         Set(context, retainedCode, value => value.ExpiresAt, retained);
 
-        var expiredRefresh = RefreshToken.Create("cleanup-client", user, "openid").Entity;
-        var retainedRefresh = RefreshToken.Create("cleanup-client", user, "openid").Entity;
+        var expiredRefresh = RefreshToken.Create("cleanup-client", user, OidcScopes.OpenId).Entity;
+        var retainedRefresh = RefreshToken.Create("cleanup-client", user, OidcScopes.OpenId).Entity;
         Set(context, expiredRefresh, value => value.ExpiresAt, expired);
         Set(context, retainedRefresh, value => value.ExpiresAt, retained);
 
-        var expiredDevice = DeviceAuthorization.Create("cleanup-client", "openid").Entity;
-        var retainedDevice = DeviceAuthorization.Create("cleanup-client", "openid").Entity;
+        var expiredDevice = DeviceAuthorization.Create("cleanup-client", OidcScopes.OpenId).Entity;
+        var retainedDevice = DeviceAuthorization.Create("cleanup-client", OidcScopes.OpenId).Entity;
         Set(context, expiredDevice, value => value.ExpiresAt, expired);
         Set(context, retainedDevice, value => value.ExpiresAt, retained);
 
@@ -274,17 +285,17 @@ public sealed class OidcHardeningPostgreSqlTests
         await using var context = CreateContext();
         await using var transaction = await context.Database.BeginTransactionAsync();
         var repository = new DeviceAuthorizationRepository(new TestUnitOfWork(context));
-        var first = DeviceAuthorization.Create("cleanup-client", "openid").Entity;
+        var first = DeviceAuthorization.Create("cleanup-client", OidcScopes.OpenId).Entity;
         context.Add(first);
         await context.SaveChangesAsync();
 
-        var duplicate = DeviceAuthorization.Create("cleanup-client", "openid").Entity;
+        var duplicate = DeviceAuthorization.Create("cleanup-client", OidcScopes.OpenId).Entity;
         Set(context, duplicate, value => value.UserCode, first.UserCode);
         Set(context, duplicate, value => value.UserCodeNormalized, first.UserCodeNormalized);
 
         Assert.False(await repository.TryAddAsync(duplicate));
 
-        var replacement = DeviceAuthorization.Create("cleanup-client", "openid").Entity;
+        var replacement = DeviceAuthorization.Create("cleanup-client", OidcScopes.OpenId).Entity;
         Assert.True(await repository.TryAddAsync(replacement));
     }
 

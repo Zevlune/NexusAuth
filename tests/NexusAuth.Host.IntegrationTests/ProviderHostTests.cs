@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using System.Text.Json;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -289,7 +290,8 @@ public sealed class ProviderHostTests : IClassFixture<WebApplicationFactory<AppW
             AllowAutoRedirect = false,
         });
 
-        var response = await client.GetAsync("/connect/authorize?response_type=code");
+        var response = await client.GetAsync(
+            $"/connect/authorize?response_type={OAuthResponseTypes.Code}");
 
         Assert.Equal(System.Net.HttpStatusCode.Redirect, response.StatusCode);
         var location = response.Headers.Location?.ToString();

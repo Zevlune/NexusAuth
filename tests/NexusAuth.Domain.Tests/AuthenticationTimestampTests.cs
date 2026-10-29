@@ -1,5 +1,6 @@
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Domain.Tests;
@@ -125,7 +126,7 @@ public sealed class AuthenticationTimestampTests
             "client",
             Guid.NewGuid(),
             "https://client.example/callback",
-            "openid",
+            OidcScopes.OpenId,
             authenticatedAt: provided);
 
         AssertUtcInstant(provided, result.Entity.AuthenticatedAt);
@@ -140,7 +141,7 @@ public sealed class AuthenticationTimestampTests
             "client",
             Guid.NewGuid(),
             "https://client.example/callback",
-            "openid");
+            OidcScopes.OpenId);
 
         Assert.Null(result.Entity.AuthenticatedAt);
     }
@@ -157,7 +158,7 @@ public sealed class AuthenticationTimestampTests
             "client",
             Guid.NewGuid(),
             "https://client.example/callback",
-            "openid");
+            OidcScopes.OpenId);
 
         var after = DateTimeOffset.UtcNow;
 
@@ -173,7 +174,7 @@ public sealed class AuthenticationTimestampTests
     [MemberData(nameof(NonUtcOffsets))]
     public void DeviceAuthorization_RegisterPoll_normalizes_last_polled_at(TimeSpan offset)
     {
-        var authorization = DeviceAuthorization.Create("client", "openid").Entity;
+        var authorization = DeviceAuthorization.Create("client", OidcScopes.OpenId).Entity;
         var provided = new DateTimeOffset(2026, 5, 6, 7, 8, 9, offset);
 
         authorization.RegisterPoll(provided, slowDown: false);
@@ -184,7 +185,7 @@ public sealed class AuthenticationTimestampTests
     [Fact]
     public void DeviceAuthorization_slow_down_boundary_is_unchanged()
     {
-        var authorization = DeviceAuthorization.Create("client", "openid", intervalSeconds: 5).Entity;
+        var authorization = DeviceAuthorization.Create("client", OidcScopes.OpenId, intervalSeconds: 5).Entity;
         var polledAt = new DateTimeOffset(2026, 5, 6, 7, 8, 9, TimeSpan.FromHours(8));
 
         authorization.RegisterPoll(polledAt, slowDown: false);
@@ -199,7 +200,7 @@ public sealed class AuthenticationTimestampTests
     {
         var before = DateTimeOffset.UtcNow;
 
-        var authorization = DeviceAuthorization.Create("client", "openid").Entity;
+        var authorization = DeviceAuthorization.Create("client", OidcScopes.OpenId).Entity;
         authorization.RegisterPoll(DateTimeOffset.UtcNow, slowDown: false);
         authorization.Approve(Guid.NewGuid());
 
@@ -215,7 +216,7 @@ public sealed class AuthenticationTimestampTests
     [Fact]
     public void DeviceAuthorization_Deny_default_time_is_utc()
     {
-        var authorization = DeviceAuthorization.Create("client", "openid").Entity;
+        var authorization = DeviceAuthorization.Create("client", OidcScopes.OpenId).Entity;
 
         authorization.Deny();
 

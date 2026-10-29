@@ -1,11 +1,8 @@
+import { OAuthClientAuthenticationMethods } from '../constants/oauth';
 import request from './request';
 
 export type TokenEndpointAuthMethod =
-  | 'client_secret_basic'
-  | 'client_secret_post'
-  | 'client_secret_jwt'
-  | 'private_key_jwt'
-  | 'none';
+  (typeof OAuthClientAuthenticationMethods)[keyof typeof OAuthClientAuthenticationMethods];
 
 export type CreateClientRequest = {
   clientId: string;

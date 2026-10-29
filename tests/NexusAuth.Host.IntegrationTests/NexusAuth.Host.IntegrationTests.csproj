@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/NexusAuth.Host/NexusAuth.Host.csproj" />
+    <ProjectReference Include="../../src/NexusAuth.Shared/NexusAuth.Shared.csproj" />
   </ItemGroup>
 
   <ItemGroup>

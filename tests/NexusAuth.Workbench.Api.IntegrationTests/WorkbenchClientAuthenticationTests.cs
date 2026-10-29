@@ -14,6 +14,7 @@ using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Extension;
+using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -66,7 +67,9 @@ public sealed class WorkbenchClientAuthenticationTests
         Assert.True(parsed.IsSuccess, parsed.Error);
         Assert.Equal(ExpectedClientId, parsed.Authentication!.ClientId);
         Assert.Equal(ExpectedClientSecret, parsed.Authentication.ClientSecret);
-        Assert.Equal(OAuthClient.TokenEndpointAuthMethodClientSecretBasic, parsed.Authentication.TokenEndpointAuthMethod);
+        Assert.Equal(
+            OAuthClientAuthenticationMethods.ClientSecretBasic,
+            parsed.Authentication.TokenEndpointAuthMethod);
     }
 
     [Fact]
@@ -181,7 +184,7 @@ public sealed class WorkbenchClientAuthenticationTests
                 ClientSecret = Raw(ExpectedClientSecret),
                 RedirectUri = "https://app.test/signin-oidc",
                 PostLogoutRedirectUri = "https://app.test/",
-                Scope = "openid profile",
+                Scope = OidcScopes.OpenId + " " + OidcScopes.Profile,
             }));
     }
 
@@ -214,7 +217,9 @@ public sealed class WorkbenchClientAuthenticationTests
             var requestBody = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);
-            return requestBody.Contains("grant_type=authorization_code", StringComparison.Ordinal)
+            return requestBody.Contains(
+                "grant_type=" + OAuthGrantTypes.AuthorizationCode,
+                StringComparison.Ordinal)
                 ? JsonResponse("""{"access_token":"access","refresh_token":"refresh","id_token":"id","expires_in":120}""")
                 : JsonResponse("""{"access_token":"access","refresh_token":"refresh","expires_in":120}""");
         }

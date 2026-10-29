@@ -1,6 +1,7 @@
 using NexusAuth.Application.Clients;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Host.TokenEndpoint;
 
@@ -10,5 +11,6 @@ public class ConfidentialRefreshTokenClientStrategy(IClientService clientService
     public Task<ClientAuthenticationResult> AuthenticateAsync(TokenGrantContext context, ClientAuthenticationInput input, CancellationToken ct) =>
         clientService.AuthenticateClientAsync(input, requireClientAuthentication: true, ct);
 
-    public bool IsGrantAllowed(OAuthClient? client) => client?.IsGrantTypeAllowed("refresh_token") == true;
+    public bool IsGrantAllowed(OAuthClient? client) =>
+        client?.IsGrantTypeAllowed(OAuthGrantTypes.RefreshToken) == true;
 }

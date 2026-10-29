@@ -9,6 +9,7 @@ using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Services;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Host.Controllers;
 
@@ -100,7 +101,7 @@ public class AuthorizeController(
         {
             return AuthorizationError(
                 redirectUri,
-                "query",
+                OAuthResponseModes.Query,
                 "invalid_request",
                 "response_mode must be query or form_post.",
                 state);
@@ -126,7 +127,7 @@ public class AuthorizeController(
                 state);
         }
 
-        if (!string.Equals(responseType, "code", StringComparison.Ordinal))
+        if (!string.Equals(responseType, OAuthResponseTypes.Code, StringComparison.Ordinal))
         {
             return AuthorizationError(
                 redirectUri,
@@ -137,7 +138,12 @@ public class AuthorizeController(
         }
 
         var clientValidation = await clientService.ValidateClientForAuthorizationAsync(
-            clientId, redirectUri, "authorization_code", codeChallenge, codeChallengeMethod, ct);
+            clientId,
+            redirectUri,
+            OAuthGrantTypes.AuthorizationCode,
+            codeChallenge,
+            codeChallengeMethod,
+            ct);
 
         if (!clientValidation.IsSuccess)
         {
@@ -175,9 +181,9 @@ public class AuthorizeController(
 
         var promptValues = ParsePrompt(prompt);
         var unsupportedPrompt = promptValues.FirstOrDefault(value =>
-            !value.Equals("none", StringComparison.Ordinal)
-            && !value.Equals("login", StringComparison.Ordinal)
-            && !value.Equals("consent", StringComparison.Ordinal));
+            !value.Equals(OidcPromptValues.None, StringComparison.Ordinal)
+            && !value.Equals(OidcPromptValues.Login, StringComparison.Ordinal)
+            && !value.Equals(OidcPromptValues.Consent, StringComparison.Ordinal));
         if (unsupportedPrompt is not null)
         {
             return AuthorizationError(
@@ -211,7 +217,7 @@ public class AuthorizeController(
             }
         }
 
-        if (promptValues.Contains("none", StringComparer.Ordinal) && promptValues.Count > 1)
+        if (promptValues.Contains(OidcPromptValues.None, StringComparer.Ordinal) && promptValues.Count > 1)
         {
             return AuthorizationError(
                 redirectUri,
@@ -224,7 +230,7 @@ public class AuthorizeController(
         // Check if user is already authenticated via cookie
         if (User.Identity?.IsAuthenticated != true)
         {
-            if (promptValues.Contains("none", StringComparer.Ordinal))
+            if (promptValues.Contains(OidcPromptValues.None, StringComparer.Ordinal))
             {
                 return AuthorizationError(
                     redirectUri,
@@ -237,7 +243,7 @@ public class AuthorizeController(
             // Not logged in — redirect to login page with returnUrl (must be relative for Url.IsLocalUrl)
             // 中文注释：未登录时接下来的登录本身就是一次全新认证；带 prompt=login / max_age 的请求附上
             // 重新认证标记，登录回来后不会再被要求登录第二次。
-            var returnUrl = promptValues.Contains("login", StringComparer.Ordinal) || maxAge.HasValue
+            var returnUrl = promptValues.Contains(OidcPromptValues.Login, StringComparer.Ordinal) || maxAge.HasValue
                 ? BuildCurrentReturnUrl(CreateReauthenticationMarker())
                 : Request.GetEncodedPathAndQuery();
             return Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}");
@@ -247,7 +253,7 @@ public class AuthorizeController(
         var reauthenticationMarker = Request.Query[ReauthenticationParameterName].ToString();
         var reauthenticated = IsReauthenticationSatisfied(reauthenticationMarker, authenticatedAt);
 
-        if (promptValues.Contains("login", StringComparer.Ordinal) && !reauthenticated)
+        if (promptValues.Contains(OidcPromptValues.Login, StringComparer.Ordinal) && !reauthenticated)
         {
             // 中文注释：prompt=login 要求强制用户重新登录，即使当前已经有 Cookie 会话。
             // 登录回来后携带受保护的重新认证标记，auth_time 晚于标记即放行，不会再次触发登录。
@@ -256,7 +262,7 @@ public class AuthorizeController(
 
         if (maxAge.HasValue && !reauthenticated && !IsWithinMaxAge(authenticatedAt, maxAge.Value))
         {
-            if (promptValues.Contains("none", StringComparer.Ordinal))
+            if (promptValues.Contains(OidcPromptValues.None, StringComparer.Ordinal))
             {
                 return AuthorizationError(
                     redirectUri,
@@ -288,9 +294,9 @@ public class AuthorizeController(
         var consentId = Request.Query[ConsentParameterName].ToString();
         var hasOfflineAccess = scopeValidation.NormalizedScope!
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Contains("offline_access", StringComparer.Ordinal);
+            .Contains(OidcScopes.OfflineAccess, StringComparer.Ordinal);
         var requiresConsent = clientValidation.Client?.RequireConsent == true || hasOfflineAccess;
-        var forceConsent = promptValues.Contains("consent", StringComparer.Ordinal) || hasOfflineAccess;
+        var forceConsent = promptValues.Contains(OidcPromptValues.Consent, StringComparer.Ordinal) || hasOfflineAccess;
         var originalQuery = QueryString.Create(Request.Query
             .Where(pair => !string.Equals(pair.Key, ConsentParameterName, StringComparison.Ordinal))
             .SelectMany(pair => pair.Value.Select(value => new KeyValuePair<string, string?>(pair.Key, value)))).Value ?? "";
@@ -320,7 +326,7 @@ public class AuthorizeController(
                 userId, clientId, scopeValidation.NormalizedScope!, claims, ct);
             if (!previouslyGranted)
             {
-                if (promptValues.Contains("none", StringComparer.Ordinal))
+                if (promptValues.Contains(OidcPromptValues.None, StringComparer.Ordinal))
                     return AuthorizationError(redirectUri, normalizedResponseMode, "consent_required", "User consent is required.", state);
 
                 var requestId = await consentStore.CreateRequestAsync(userId, originalQuery, ct);
@@ -463,11 +469,11 @@ public class AuthorizeController(
     private static string? ResolveResponseMode(string? responseMode)
     {
         if (string.IsNullOrWhiteSpace(responseMode)
-            || string.Equals(responseMode, "query", StringComparison.Ordinal))
-            return "query";
+            || string.Equals(responseMode, OAuthResponseModes.Query, StringComparison.Ordinal))
+            return OAuthResponseModes.Query;
 
-        return string.Equals(responseMode, "form_post", StringComparison.Ordinal)
-            ? "form_post"
+        return string.Equals(responseMode, OAuthResponseModes.FormPost, StringComparison.Ordinal)
+            ? OAuthResponseModes.FormPost
             : null;
     }
 
@@ -491,7 +497,7 @@ public class AuthorizeController(
     {
         return BuildAuthorizationResponse(
             redirectUri,
-            responseMode ?? "query",
+            responseMode ?? OAuthResponseModes.Query,
             new Dictionary<string, string?>
             {
                 ["error"] = error,
@@ -512,7 +518,7 @@ public class AuthorizeController(
         if (!string.IsNullOrWhiteSpace(jwtOptions?.Value.Issuer))
             presentParameters["iss"] = jwtOptions.Value.Issuer.TrimEnd('/');
 
-        if (!string.Equals(responseMode, "form_post", StringComparison.Ordinal))
+        if (!string.Equals(responseMode, OAuthResponseModes.FormPost, StringComparison.Ordinal))
         {
             var redirectUrl = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(
                 redirectUri,

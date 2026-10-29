@@ -13,6 +13,7 @@ using NexusAuth.Application.Services.OpenApi;
 using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -154,12 +155,12 @@ public sealed class TestOpenApiClientService : IClientService
     {
         var clients = new List<ClientDto>
         {
-            new(Guid.NewGuid(), "permission-center-api", [], OAuthClient.TokenEndpointAuthMethodClientSecretBasic, null, null, "Permission Center", "RBAC service", ["https://internal.example/callback"], [], ["sensitive:scope"], ["client_credentials"], false, true, DateTimeOffset.UtcNow),
+            new(Guid.NewGuid(), "permission-center-api", [], OAuthClientAuthenticationMethods.ClientSecretBasic, null, null, "Permission Center", "RBAC service", ["https://internal.example/callback"], [], ["sensitive:scope"], [OAuthGrantTypes.ClientCredentials], false, true, DateTimeOffset.UtcNow),
         };
         return Task.FromResult(string.IsNullOrWhiteSpace(keyword) ? clients : clients.Where(item => item.ClientId.Contains(keyword, StringComparison.OrdinalIgnoreCase)).ToList());
     }
 
-    public Task<OAuthClient> RegisterClientAsync(string clientId, string clientName, string? description = null, IEnumerable<string>? redirectUris = null, IEnumerable<string>? postLogoutRedirectUris = null, IEnumerable<string>? allowedScopes = null, IEnumerable<string>? allowedGrantTypes = null, bool requirePkce = true, string tokenEndpointAuthMethod = OAuthClient.TokenEndpointAuthMethodClientSecretBasic, IEnumerable<OAuthClientSecret>? clientSecrets = null, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<OAuthClient> RegisterClientAsync(string clientId, string clientName, string? description = null, IEnumerable<string>? redirectUris = null, IEnumerable<string>? postLogoutRedirectUris = null, IEnumerable<string>? allowedScopes = null, IEnumerable<string>? allowedGrantTypes = null, bool requirePkce = true, string tokenEndpointAuthMethod = OAuthClientAuthenticationMethods.ClientSecretBasic, IEnumerable<OAuthClientSecret>? clientSecrets = null, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<OAuthClient?> ValidateClientAsync(string clientId, string rawClientSecret, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<ClientValidationResult> ValidateClientForAuthorizationAsync(string clientId, string redirectUri, string grantType, string? codeChallenge = null, string? codeChallengeMethod = null, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<ClientValidationResult> ValidateClientRedirectUriAsync(string clientId, string redirectUri, CancellationToken ct = default) => throw new NotSupportedException();

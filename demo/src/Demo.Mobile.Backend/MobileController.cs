@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.IdentityModel.Tokens;
+using NexusAuth.Shared.OAuth;
 
 namespace Demo.Mobile.Backend;
 
@@ -30,9 +31,9 @@ public sealed partial class MobileController(MobileStore store, OidcClient oidc,
             var state = store.AddFlow(new(verifier, nonce, request.State, request.Challenge));
             var url = QueryHelpers.AddQueryString(discovery.AuthorizationEndpoint, new Dictionary<string, string?>
             {
-                ["response_type"] = "code", ["client_id"] = oidc.ClientId, ["redirect_uri"] = oidc.RedirectUri,
+                ["response_type"] = OAuthResponseTypes.Code, ["client_id"] = oidc.ClientId, ["redirect_uri"] = oidc.RedirectUri,
                 ["scope"] = oidc.Scope, ["state"] = state, ["nonce"] = nonce,
-                ["code_challenge"] = MobileStore.Challenge(verifier), ["code_challenge_method"] = "S256"
+                ["code_challenge"] = MobileStore.Challenge(verifier), ["code_challenge_method"] = PkceMethods.S256
             });
             return Ok(new { authorizationUrl = url });
         }
@@ -52,7 +53,7 @@ public sealed partial class MobileController(MobileStore store, OidcClient oidc,
             var discovery = await oidc.Discover(ct);
             var tokens = await oidc.Tokens(discovery, new()
             {
-                ["grant_type"] = "authorization_code", ["code"] = code,
+                ["grant_type"] = OAuthGrantTypes.AuthorizationCode, ["code"] = code,
                 ["redirect_uri"] = oidc.RedirectUri, ["code_verifier"] = flow.Verifier
             }, ct);
             var user = await oidc.ValidateLogin(discovery, tokens, flow.Nonce, ct);
@@ -107,7 +108,7 @@ public sealed partial class MobileController(MobileStore store, OidcClient oidc,
             {
                 if (string.IsNullOrEmpty(session.Tokens.RefreshToken)) throw new SessionRejectedException();
                 session.Tokens = await oidc.Tokens(discovery, new()
-                { ["grant_type"] = "refresh_token", ["refresh_token"] = session.Tokens.RefreshToken }, ct);
+                { ["grant_type"] = OAuthGrantTypes.RefreshToken, ["refresh_token"] = session.Tokens.RefreshToken }, ct);
                 refreshed = true;
             }
             var user = await oidc.User(discovery, session.Tokens.AccessToken, ct);
@@ -139,7 +140,11 @@ public sealed partial class MobileController(MobileStore store, OidcClient oidc,
             var discovery = await oidc.Discover(ct);
             var revoked = true;
             if (!string.IsNullOrEmpty(session.Tokens.RefreshToken))
-                revoked &= await oidc.Revoke(discovery, session.Tokens.RefreshToken, "refresh_token", ct);
+                revoked &= await oidc.Revoke(
+                    discovery,
+                    session.Tokens.RefreshToken,
+                    OAuthGrantTypes.RefreshToken,
+                    ct);
             revoked &= await oidc.Revoke(discovery, session.Tokens.AccessToken, "access_token", ct);
             return Ok(new { revoked });
         }

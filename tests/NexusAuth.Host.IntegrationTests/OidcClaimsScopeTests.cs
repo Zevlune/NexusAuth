@@ -7,16 +7,23 @@ using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Host.Controllers;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
 
 /// <summary>
-/// The OIDC claims request parameter may only select claims covered by the granted scopes
-/// (OIDC Core 5.4/5.5), both for userinfo and for the id_token.
+/// This provider conservatively requires requested claims to be covered by granted scopes,
+/// both for userinfo and for the id_token.
 /// </summary>
 public sealed class OidcClaimsScopeTests : IClassFixture<OidcClaimsScopeTests.SharedUser>
 {
+    private const string FullScope = OidcScopes.OpenId + " " + OidcScopes.Profile + " " + OidcScopes.Email + " " + OidcScopes.Phone;
+    private const string ProfileEmailScope = OidcScopes.OpenId + " " + OidcScopes.Profile + " " + OidcScopes.Email;
+    private const string EmailPhoneScope = OidcScopes.OpenId + " " + OidcScopes.Email + " " + OidcScopes.Phone;
+    private const string EmailScope = OidcScopes.OpenId + " " + OidcScopes.Email;
+    private const string ProfileScope = OidcScopes.OpenId + " " + OidcScopes.Profile;
+
     private const string AllSensitiveClaims =
         "{\"userinfo\":{\"email\":null,\"email_verified\":null,\"phone_number\":null,\"phone_number_verified\":null,\"gender\":null,\"ethnicity\":null,\"nickname\":null,\"address\":null},"
         + "\"id_token\":{\"email\":null,\"phone_number\":null,\"gender\":null,\"ethnicity\":null,\"nickname\":null}}";
@@ -33,7 +40,7 @@ public sealed class OidcClaimsScopeTests : IClassFixture<OidcClaimsScopeTests.Sh
     {
         using var harness = new InMemoryTokenServiceHarness();
         harness.Add(user);
-        var accessToken = await harness.Service.IssueAccessTokenAsync("openid-only", "openid", null, user.Id, AllSensitiveClaims);
+        var accessToken = await harness.Service.IssueAccessTokenAsync("openid-only", OidcScopes.OpenId, null, user.Id, AllSensitiveClaims);
 
         var payload = await CallUserInfoAsync(harness, accessToken);
 
@@ -48,7 +55,7 @@ public sealed class OidcClaimsScopeTests : IClassFixture<OidcClaimsScopeTests.Sh
         using var harness = new InMemoryTokenServiceHarness();
         harness.Add(user);
         var accessToken = await harness.Service.IssueAccessTokenAsync(
-            "full-client", "openid profile email phone", null, user.Id, AllSensitiveClaims);
+            "full-client", FullScope, null, user.Id, AllSensitiveClaims);
 
         var payload = await CallUserInfoAsync(harness, accessToken);
 
@@ -68,7 +75,7 @@ public sealed class OidcClaimsScopeTests : IClassFixture<OidcClaimsScopeTests.Sh
     {
         using var harness = new InMemoryTokenServiceHarness();
         harness.Add(user);
-        var accessToken = await harness.Service.IssueAccessTokenAsync("client", "openid profile email", null, user.Id);
+        var accessToken = await harness.Service.IssueAccessTokenAsync("client", ProfileEmailScope, null, user.Id);
 
         var payload = await CallUserInfoAsync(harness, accessToken);
 
@@ -81,11 +88,112 @@ public sealed class OidcClaimsScopeTests : IClassFixture<OidcClaimsScopeTests.Sh
     }
 
     [Fact]
+    public async Task Userinfo_preserves_value_and_values_request_constraints()
+    {
+        using var harness = new InMemoryTokenServiceHarness();
+        harness.Add(user);
+        const string claimsJson = """
+            {
+              "userinfo": {
+                "email": { "values": ["alice@example.com"] },
+                "phone_number": { "value": "13800000000" }
+              }
+            }
+            """;
+        var accessToken = await harness.Service.IssueAccessTokenAsync(
+            "constrained-client",
+            EmailPhoneScope,
+            null,
+            user.Id,
+            claimsJson);
+
+        var payload = await CallUserInfoAsync(harness, accessToken);
+
+        Assert.Equal("alice@example.com", payload.GetProperty("email").GetString());
+        Assert.Equal("13800000000", payload.GetProperty("phone_number").GetString());
+    }
+
+    [Fact]
+    public async Task Userinfo_preserves_boolean_request_constraints()
+    {
+        using var harness = new InMemoryTokenServiceHarness();
+        harness.Add(user);
+        const string claimsJson = """
+            {
+              "userinfo": {
+                "email_verified": { "values": [false] }
+              }
+            }
+            """;
+        var accessToken = await harness.Service.IssueAccessTokenAsync(
+            "boolean-claim-client",
+            EmailScope,
+            null,
+            user.Id,
+            claimsJson);
+
+        var payload = await CallUserInfoAsync(harness, accessToken);
+
+        Assert.False(payload.GetProperty("email_verified").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Userinfo_uses_only_the_userinfo_claim_section()
+    {
+        using var harness = new InMemoryTokenServiceHarness();
+        harness.Add(user);
+        const string claimsJson = """
+            {
+              "id_token": {
+                "email": { "value": "alice@example.com" }
+              },
+              "userinfo": {
+                "email": { "value": "different@example.com" }
+              }
+            }
+            """;
+        var accessToken = await harness.Service.IssueAccessTokenAsync(
+            "isolated-client",
+            EmailScope,
+            null,
+            user.Id,
+            claimsJson);
+
+        var payload = await CallUserInfoAsync(harness, accessToken);
+
+        Assert.False(payload.TryGetProperty("email", out _));
+    }
+
+    [Fact]
+    public async Task Userinfo_sub_is_always_the_authenticated_user()
+    {
+        using var harness = new InMemoryTokenServiceHarness();
+        harness.Add(user);
+        const string claimsJson = """
+            {
+              "userinfo": {
+                "sub": { "value": "requested-subject" }
+              }
+            }
+            """;
+        var accessToken = await harness.Service.IssueAccessTokenAsync(
+            "subject-client",
+            OidcScopes.OpenId,
+            null,
+            user.Id,
+            claimsJson);
+
+        var payload = await CallUserInfoAsync(harness, accessToken);
+
+        Assert.Equal(user.Id.ToString(), payload.GetProperty("sub").GetString());
+    }
+
+    [Fact]
     public async Task Id_token_claims_parameter_cannot_bypass_missing_scopes()
     {
         using var harness = new InMemoryTokenServiceHarness();
         harness.Add(user);
-        var accessToken = await harness.Service.IssueAccessTokenAsync("openid-only", "openid", null, user.Id, AllSensitiveClaims);
+        var accessToken = await harness.Service.IssueAccessTokenAsync("openid-only", OidcScopes.OpenId, null, user.Id, AllSensitiveClaims);
 
         var idToken = new JwtSecurityTokenHandler().ReadJwtToken(
             await harness.Service.IssueIdTokenAsync("openid-only", user.Id, "nonce-1", accessToken, AllSensitiveClaims));
@@ -101,7 +209,7 @@ public sealed class OidcClaimsScopeTests : IClassFixture<OidcClaimsScopeTests.Sh
     {
         using var harness = new InMemoryTokenServiceHarness();
         harness.Add(user);
-        var scope = "openid profile email phone";
+        var scope = FullScope;
         var accessToken = await harness.Service.IssueAccessTokenAsync("full-client", scope, null, user.Id, AllSensitiveClaims);
 
         var idToken = new JwtSecurityTokenHandler().ReadJwtToken(
@@ -121,13 +229,44 @@ public sealed class OidcClaimsScopeTests : IClassFixture<OidcClaimsScopeTests.Sh
     {
         using var harness = new InMemoryTokenServiceHarness();
         harness.Add(user);
-        var accessToken = await harness.Service.IssueAccessTokenAsync("profile-client", "openid profile", null, user.Id, AllSensitiveClaims);
+        var accessToken = await harness.Service.IssueAccessTokenAsync("profile-client", ProfileScope, null, user.Id, AllSensitiveClaims);
 
         var idToken = new JwtSecurityTokenHandler().ReadJwtToken(
             await harness.Service.IssueIdTokenAsync("profile-client", user.Id, null, accessToken, AllSensitiveClaims));
 
         Assert.DoesNotContain(idToken.Claims, claim => claim.Type is "email" or "phone_number");
         Assert.Contains(idToken.Claims, claim => claim.Type == "gender");
+    }
+
+    [Fact]
+    public async Task Userinfo_only_sensitive_claims_do_not_enter_the_id_token()
+    {
+        using var harness = new InMemoryTokenServiceHarness();
+        harness.Add(user);
+        const string claimsJson = """
+            {
+              "userinfo": {
+                "gender": null,
+                "ethnicity": null
+              }
+            }
+            """;
+        var accessToken = await harness.Service.IssueAccessTokenAsync(
+            "userinfo-client",
+            ProfileScope,
+            null,
+            user.Id,
+            claimsJson);
+
+        var idToken = new JwtSecurityTokenHandler().ReadJwtToken(
+            await harness.Service.IssueIdTokenAsync(
+                "userinfo-client",
+                user.Id,
+                null,
+                accessToken,
+                claimsJson));
+
+        Assert.DoesNotContain(idToken.Claims, claim => claim.Type is "gender" or "ethnicity");
     }
 
     private static async Task<JsonElement> CallUserInfoAsync(InMemoryTokenServiceHarness harness, string accessToken)

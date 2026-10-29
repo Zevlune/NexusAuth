@@ -5,6 +5,7 @@ using NexusAuth.Application.Services.DeviceAuthorization;
 using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -62,7 +63,7 @@ public sealed class AuthenticationDataCleanupTests
             return attempts >= 3;
         });
 
-        var result = await service.StartAsync(DeviceAuthentication(), "openid");
+        var result = await service.StartAsync(DeviceAuthentication(), OidcScopes.OpenId);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(3, attempts);
@@ -79,7 +80,7 @@ public sealed class AuthenticationDataCleanupTests
             return false;
         });
 
-        var result = await service.StartAsync(DeviceAuthentication(), "openid");
+        var result = await service.StartAsync(DeviceAuthentication(), OidcScopes.OpenId);
 
         Assert.False(result.IsSuccess);
         Assert.Equal("temporarily_unavailable", result.ErrorCode);
@@ -91,9 +92,9 @@ public sealed class AuthenticationDataCleanupTests
         var client = OAuthClient.Create(
             "device-client",
             "Device client",
-            allowedScopes: ["openid"],
-            allowedGrantTypes: ["urn:ietf:params:oauth:grant-type:device_code"],
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodClientSecretPost,
+            allowedScopes: [OidcScopes.OpenId],
+            allowedGrantTypes: [OAuthGrantTypes.DeviceCode],
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretPost,
             clientSecrets:
             [
                 NexusAuth.Domain.Entities.OAuthClientSecret.CreateSharedSecret(Guid.NewGuid(), "device-secret"),

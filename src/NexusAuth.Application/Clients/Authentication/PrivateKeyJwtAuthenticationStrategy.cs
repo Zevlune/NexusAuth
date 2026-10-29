@@ -1,8 +1,9 @@
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Clients.Authentication;
 
-[KeyedService(typeof(IClientAuthenticationStrategy), OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt)]
+[KeyedService(typeof(IClientAuthenticationStrategy), OAuthClientAuthenticationMethods.PrivateKeyJwt)]
 internal class PrivateKeyJwtAuthenticationStrategy(
     ITokenBlacklistRepository tokenBlacklistRepository)
     : ClientJwtAuthenticationStrategy(tokenBlacklistRepository)

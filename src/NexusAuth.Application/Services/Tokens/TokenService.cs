@@ -1,7 +1,9 @@
 using Luck.Logging.Serilog;
 using System.Globalization;
+using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.OIDC;
 using NexusAuth.Application.Services.Security;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Services.Tokens;
 
@@ -10,6 +12,7 @@ public class TokenService(
     ITokenBlacklistRepository tokenBlacklistRepository,
     IUserRepository userRepository,
     IApiResourceRepository apiResourceRepository,
+    IClientService clientService,
     IOptions<JwtOptions> jwtOptions,
     ITokenSigningCredentialsProvider signingCredentialsProvider,
     ILogger<TokenService> logger,
@@ -122,10 +125,20 @@ public class TokenService(
             new("at_hash", ComputeTokenHash(accessToken)),
         };
 
-        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("preferred_username", grantedScopes))
+        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("preferred_username", grantedScopes)
+            && (!requestedClaims.IdTokenClaimRequests.ContainsKey("preferred_username")
+                || OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(
+                    requestedClaims,
+                    "preferred_username",
+                    user.Username)))
             claims.Add(new("preferred_username", user.Username));
 
-        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("name", grantedScopes))
+        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("name", grantedScopes)
+            && (!requestedClaims.IdTokenClaimRequests.ContainsKey("name")
+                || OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(
+                    requestedClaims,
+                    "name",
+                    user.Nickname)))
             claims.Add(new("name", user.Nickname));
 
         if (authenticatedAt.HasValue)
@@ -144,33 +157,41 @@ public class TokenService(
 
         if (!string.IsNullOrWhiteSpace(user.Email)
             && OidcClaimEmissionPolicy.IsClaimAllowedByScopes("email", grantedScopes)
-            && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "email", user.Email)
-            && (requestedClaims.RequestsIdTokenClaim("email") || requestedClaims.RequestsIdTokenClaim("email_verified")))
+            && OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(requestedClaims, "email", user.Email))
         {
             claims.Add(new("email", user.Email));
+        }
+
+        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("email_verified", grantedScopes)
+            && OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(requestedClaims, "email_verified", "false"))
+        {
             claims.Add(new("email_verified", "false", ClaimValueTypes.Boolean));
         }
 
         if (!string.IsNullOrWhiteSpace(user.PhoneNumber)
             && OidcClaimEmissionPolicy.IsClaimAllowedByScopes("phone_number", grantedScopes)
-            && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "phone_number", user.PhoneNumber)
-            && (requestedClaims.RequestsIdTokenClaim("phone_number") || requestedClaims.RequestsIdTokenClaim("phone_number_verified")))
+            && OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(requestedClaims, "phone_number", user.PhoneNumber))
         {
             claims.Add(new("phone_number", user.PhoneNumber));
+        }
+
+        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("phone_number_verified", grantedScopes)
+            && OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(requestedClaims, "phone_number_verified", "false"))
+        {
             claims.Add(new("phone_number_verified", "false", ClaimValueTypes.Boolean));
         }
 
         if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("gender", grantedScopes)
-            && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "gender", user.Gender.ToString()))
+            && OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(requestedClaims, "gender", user.Gender.ToString()))
             claims.Add(new("gender", user.Gender.ToString()));
 
         if (!string.IsNullOrWhiteSpace(user.Ethnicity)
             && OidcClaimEmissionPolicy.IsClaimAllowedByScopes("ethnicity", grantedScopes)
-            && OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "ethnicity", user.Ethnicity))
+            && OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(requestedClaims, "ethnicity", user.Ethnicity))
             claims.Add(new("ethnicity", user.Ethnicity));
 
-        if (requestedClaims.RequestsIdTokenClaim("nickname")
-            && OidcClaimEmissionPolicy.IsClaimAllowedByScopes("nickname", grantedScopes))
+        if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes("nickname", grantedScopes)
+            && OidcClaimEmissionPolicy.ShouldEmitIdTokenClaim(requestedClaims, "nickname", user.Nickname))
             claims.Add(new("nickname", user.Nickname));
 
         if (!string.IsNullOrWhiteSpace(nonce))
@@ -200,10 +221,11 @@ public class TokenService(
         string clientId,
         Guid userId,
         string scope,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? claimsJson = null)
     {
         var refreshLifetime = TimeSpan.FromMinutes(_jwtOptions.RefreshTokenLifetimeMinutes);
-        var refreshToken = RefreshToken.Create(clientId, userId, scope, refreshLifetime);
+        var refreshToken = RefreshToken.Create(clientId, userId, scope, refreshLifetime, claimsJson);
         await refreshTokenRepository.AddAsync(refreshToken.Entity, ct);
 
         logger.LogLuckInformation(
@@ -223,37 +245,100 @@ public class TokenService(
     public async Task<RefreshResult> RefreshAsync(
         string refreshTokenString,
         string? clientId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? scope = null)
     {
         var existingToken = await refreshTokenRepository.FindByTokenAsync(refreshTokenString, ct);
 
         if (existingToken is null)
             return RefreshFailure(clientId, "RefreshTokenNotFound", "Invalid refresh token.");
 
-        if (existingToken.IsRevoked)
-        {
-            await RevokeFamilyOnReuseAsync(existingToken, ct);
-            return RefreshFailure(clientId ?? existingToken.ClientId, "RefreshTokenRevoked", "Refresh token has been revoked.");
-        }
-
-        if (existingToken.ExpiresAt <= DateTimeOffset.UtcNow)
-            return RefreshFailure(clientId ?? existingToken.ClientId, "RefreshTokenExpired", "Refresh token has expired.");
-
-        var user = await userRepository.FindByIdAsync(existingToken.UserId, ct);
-        if (user is null || !user.IsActive)
-            return RefreshFailure(clientId ?? existingToken.ClientId, "UserInactive", "The user account is no longer active.");
-
-        if (securityPolicyService is not null && !securityPolicyService.CheckUser(user).IsSuccess)
-            return RefreshFailure(clientId ?? existingToken.ClientId, "UserPolicyRejected", "The user account is not allowed by security policy.");
-
-        if (user.TokenInvalidBefore.HasValue && existingToken.CreatedAt <= user.TokenInvalidBefore.Value)
-            return RefreshFailure(clientId ?? existingToken.ClientId, "RefreshTokenRevoked", "Refresh token has been revoked.");
-
-        if (!string.IsNullOrWhiteSpace(clientId)
-            && !string.Equals(existingToken.ClientId, clientId, StringComparison.Ordinal))
+        // Client binding must be checked before interpreting a revoked token as a
+        // reuse signal. Otherwise any authenticated client presenting another
+        // client's rotated token could revoke the victim's token family.
+        if (string.IsNullOrWhiteSpace(clientId)
+            || !string.Equals(existingToken.ClientId, clientId, StringComparison.Ordinal))
         {
             return RefreshFailure(clientId, "ClientMismatch", "Refresh token does not belong to the authenticated client.");
         }
+
+        if (existingToken.IsRevoked)
+        {
+            await RevokeFamilyOnReuseAsync(existingToken, ct);
+            return RefreshFailure(existingToken.ClientId, "RefreshTokenRevoked", "Refresh token has been revoked.");
+        }
+
+        if (existingToken.ExpiresAt <= DateTimeOffset.UtcNow)
+            return RefreshFailure(existingToken.ClientId, "RefreshTokenExpired", "Refresh token has expired.");
+
+        var user = await userRepository.FindByIdAsync(existingToken.UserId, ct);
+        if (user is null || !user.IsActive)
+            return RefreshFailure(existingToken.ClientId, "UserInactive", "The user account is no longer active.");
+
+        if (securityPolicyService is not null && !securityPolicyService.CheckUser(user).IsSuccess)
+            return RefreshFailure(existingToken.ClientId, "UserPolicyRejected", "The user account is not allowed by security policy.");
+
+        if (user.TokenInvalidBefore.HasValue && existingToken.CreatedAt <= user.TokenInvalidBefore.Value)
+            return RefreshFailure(existingToken.ClientId, "RefreshTokenRevoked", "Refresh token has been revoked.");
+
+        var effectiveScope = existingToken.Scope;
+        if (scope is not null)
+        {
+            if (!OAuthScopeSyntax.IsValid(scope))
+                return RefreshFailure(existingToken.ClientId, "InvalidScope", "scope contains invalid syntax.", "invalid_scope");
+
+            var requestedScopes = ParseScopeList(scope);
+            if (requestedScopes.Length == 0)
+                return RefreshFailure(existingToken.ClientId, "InvalidScope", "scope must not be empty.", "invalid_scope");
+
+            var grantedScopes = ParseScopes(existingToken.Scope);
+            if (requestedScopes.Any(requestedScope => !grantedScopes.Contains(requestedScope)))
+            {
+                return RefreshFailure(
+                    existingToken.ClientId,
+                    "InvalidScope",
+                    "scope exceeds the original refresh token grant.",
+                    "invalid_scope");
+            }
+
+            effectiveScope = string.Join(' ', requestedScopes);
+        }
+
+        // Revalidate both the access-token scope and the retained refresh-token
+        // grant so client deactivation, scope removal, and resource deactivation
+        // cannot be bypassed by refreshing.
+        var effectiveScopeValidation = await clientService.ValidateScopesAsync(
+            existingToken.ClientId,
+            effectiveScope,
+            allowIdentityScopes: true,
+            ct);
+        if (!effectiveScopeValidation.IsSuccess)
+        {
+            return RefreshFailure(
+                existingToken.ClientId,
+                effectiveScopeValidation.ErrorCode ?? "ScopeValidationFailed",
+                effectiveScopeValidation.Error ?? "The refresh token scope is no longer valid.",
+                "invalid_grant");
+        }
+
+        if (!string.Equals(effectiveScope, existingToken.Scope, StringComparison.Ordinal))
+        {
+            var grantScopeValidation = await clientService.ValidateScopesAsync(
+                existingToken.ClientId,
+                existingToken.Scope,
+                allowIdentityScopes: true,
+                ct);
+            if (!grantScopeValidation.IsSuccess)
+            {
+                return RefreshFailure(
+                    existingToken.ClientId,
+                    grantScopeValidation.ErrorCode ?? "ScopeValidationFailed",
+                    grantScopeValidation.Error ?? "The refresh token scope is no longer valid.",
+                    "invalid_grant");
+            }
+        }
+
+        effectiveScope = effectiveScopeValidation.NormalizedScope!;
 
         // 中文注释：access token 是无状态 JWT，先签发它；若因用户状态或资源 audience 变化而失败，
         // 旧 refresh token 尚未被轮换，客户端不会因此丢失会话，并返回 invalid_grant 而不是 500。
@@ -262,10 +347,10 @@ public class TokenService(
         {
             accessToken = await IssueAccessTokenAsync(
                 existingToken.ClientId,
-                existingToken.Scope,
+                effectiveScope,
                 null,
                 existingToken.UserId,
-                null,
+                existingToken.ClaimsJson,
                 ct);
         }
         catch (InvalidOperationException)
@@ -280,7 +365,8 @@ public class TokenService(
             existingToken.ClientId,
             existingToken.UserId,
             existingToken.Scope,
-            TimeSpan.FromMinutes(_jwtOptions.RefreshTokenLifetimeMinutes));
+            TimeSpan.FromMinutes(_jwtOptions.RefreshTokenLifetimeMinutes),
+            existingToken.ClaimsJson);
         var rotatedToken = await refreshTokenRepository.RotateAsync(
             RefreshToken.Hash(refreshTokenString),
             existingToken.ClientId,
@@ -295,7 +381,7 @@ public class TokenService(
             "Refresh token rotation succeeded. ClientId={ClientId} UserId={UserId} Outcome={Outcome}",
             [existingToken.ClientId, existingToken.UserId, "RefreshTokenRotated"]);
 
-        return RefreshResult.Success(accessToken, newRefreshToken.RawToken);
+        return RefreshResult.Success(accessToken, newRefreshToken.RawToken, effectiveScope);
     }
 
     /// <summary>
@@ -402,13 +488,30 @@ public class TokenService(
                 return TokenIntrospectionResult.Inactive();
 
             var tokenClientId = principal.FindFirst("client_id")?.Value;
+            if (string.IsNullOrWhiteSpace(tokenClientId))
+                return TokenIntrospectionResult.Inactive();
+
             if (!string.IsNullOrWhiteSpace(clientId)
                 && !string.Equals(tokenClientId, clientId, StringComparison.Ordinal))
             {
                 return TokenIntrospectionResult.Inactive();
             }
 
+            if (securityPolicyService is not null
+                && !securityPolicyService.CheckClient(tokenClientId).IsSuccess)
+            {
+                return TokenIntrospectionResult.Inactive();
+            }
+
             var subject = GetClaimValue(principal, JwtRegisteredClaimNames.Sub, ClaimTypes.NameIdentifier);
+            if (Guid.TryParse(subject, out var userId)
+                && await userRepository.FindByIdAsync(userId, ct) is { } user
+                && securityPolicyService is not null
+                && !securityPolicyService.CheckUser(user).IsSuccess)
+            {
+                return TokenIntrospectionResult.Inactive();
+            }
+
             return TokenIntrospectionResult.Success(
                 subject,
                 tokenClientId,
@@ -570,13 +673,14 @@ public class TokenService(
     private RefreshResult RefreshFailure(
         string? clientId,
         string reasonCode,
-        string error)
+        string error,
+        string? errorCode = "invalid_grant")
     {
         logger.LogLuckWarning(
             "Refresh token operation failed. Reason={ReasonCode} Outcome={Outcome}",
             [reasonCode, reasonCode]);
 
-        return RefreshResult.Failure(error);
+        return RefreshResult.Failure(error, errorCode);
     }
 
     private static string ComputeTokenHash(string token)
@@ -585,6 +689,15 @@ public class TokenService(
         var leftHalf = hash[..(hash.Length / 2)];
         return Base64UrlEncoder.Encode(leftHalf);
     }
+
+    private static HashSet<string> ParseScopes(string scope) =>
+        ParseScopeList(scope).ToHashSet(StringComparer.Ordinal);
+
+    private static string[] ParseScopeList(string scope) =>
+        scope
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
     private static string? GetClaimValue(ClaimsPrincipal principal, params string[] claimTypes)
     {
@@ -609,7 +722,7 @@ public class TokenService(
             .ToArray();
 
         var resourceScopeNames = scopes
-            .Where(scopeName => !IsIdentityScope(scopeName))
+            .Where(scopeName => !OidcScopes.IsStandard(scopeName))
             .ToArray();
 
         var resources = await apiResourceRepository.FindByAudiencesAsync(resourceScopeNames, ct);
@@ -637,16 +750,6 @@ public class TokenService(
         return resolved ?? _jwtOptions.DefaultAudience;
     }
 
-    private static bool IsIdentityScope(string scope)
-    {
-        return string.Equals(scope, "openid", StringComparison.Ordinal)
-            || string.Equals(scope, "profile", StringComparison.Ordinal)
-            || string.Equals(scope, "email", StringComparison.Ordinal)
-            || string.Equals(scope, "phone", StringComparison.Ordinal)
-            || string.Equals(scope, "address", StringComparison.Ordinal)
-            || string.Equals(scope, "offline_access", StringComparison.Ordinal);
-    }
-
 }
 
 public record TokenIssueResult(string AccessToken, string Jti, DateTime ExpiresAtUtc);
@@ -655,13 +758,15 @@ public record RefreshResult(
     bool IsSuccess,
     string? AccessToken,
     string? RefreshToken,
-    string? Error)
+    string? Error,
+    string? Scope,
+    string? ErrorCode)
 {
-    public static RefreshResult Success(string accessToken, string refreshToken)
-        => new(true, accessToken, refreshToken, null);
+    public static RefreshResult Success(string accessToken, string refreshToken, string? scope = null)
+        => new(true, accessToken, refreshToken, null, scope, null);
 
-    public static RefreshResult Failure(string error)
-        => new(false, null, null, error);
+    public static RefreshResult Failure(string error, string? errorCode = null)
+        => new(false, null, null, error, null, errorCode);
 }
 
 public record TokenIntrospectionResult(

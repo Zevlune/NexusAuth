@@ -2,6 +2,7 @@ using Demo.Bff.Options;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using NexusAuth.Shared.OAuth;
 
 namespace Demo.Bff.Controllers;
 
@@ -18,7 +19,7 @@ public class MachineProfileController : ControllerBase
             clientId = User.FindFirst("client_id")?.Value,
             subject = User.FindFirst("sub")?.Value,
             scope = User.FindFirst("scope")?.Value,
-            tokenUse = User.FindFirst("token_use")?.Value ?? "client_credentials",
+            tokenUse = User.FindFirst("token_use")?.Value ?? OAuthGrantTypes.ClientCredentials,
         });
     }
 }

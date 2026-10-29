@@ -1,5 +1,6 @@
 @page "/consent"
 @model NexusAuth.Host.Pages.ConsentModel
+@using NexusAuth.Shared.OAuth
 @{
     Layout = null;
 }
@@ -50,7 +51,7 @@
                 <ul>
                     @foreach (var item in Model.ScopeItems)
                     {
-                        <li>@item@if (item == "offline_access") { <span>（允许应用在你不在线时继续访问）</span> }</li>
+                        <li>@item@if (item == OidcScopes.OfflineAccess) { <span>（允许应用在你不在线时继续访问）</span> }</li>
                     }
                 </ul>
             </div>

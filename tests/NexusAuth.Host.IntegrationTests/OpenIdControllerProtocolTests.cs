@@ -9,6 +9,7 @@ using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Host.Controllers;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -33,7 +34,9 @@ public sealed class OpenIdControllerProtocolTests
         var grantTypes = ReadStringArray(discovery, "grant_types_supported");
         var authenticationMethods = ReadStringArray(discovery, "token_endpoint_auth_methods_supported");
 
-        Assert.Equal(expectPublicClientAuthentication, grantTypes.Contains(WeChatMiniProgramGrantTypes.GrantType));
+        Assert.Equal(
+            expectPublicClientAuthentication,
+            grantTypes.Contains("urn:nexusauth:grant-type:wechat_miniprogram"));
         Assert.Equal(expectPublicClientAuthentication, authenticationMethods.Contains("none"));
     }
 
@@ -45,7 +48,15 @@ public sealed class OpenIdControllerProtocolTests
         var result = Assert.IsType<OkObjectResult>(controller.Discovery());
         var discovery = JsonSerializer.SerializeToElement(result.Value);
 
-        Assert.DoesNotContain("address", ReadStringArray(discovery, "scopes_supported"));
+        Assert.Equal(
+            [
+                OidcScopes.OpenId,
+                OidcScopes.Profile,
+                OidcScopes.Email,
+                OidcScopes.Phone,
+                OidcScopes.OfflineAccess,
+            ],
+            ReadStringArray(discovery, "scopes_supported"));
         Assert.DoesNotContain("address", ReadStringArray(discovery, "claims_supported"));
     }
 
@@ -71,6 +82,8 @@ public sealed class OpenIdControllerProtocolTests
 
         var unauthorized = Assert.IsType<UnauthorizedObjectResult>(result);
         Assert.Equal("Bearer", controller.Response.Headers.WWWAuthenticate.ToString());
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
+        Assert.Equal("no-cache", controller.Response.Headers.Pragma.ToString());
         Assert.Equal("invalid_token", JsonSerializer.SerializeToElement(unauthorized.Value).GetProperty("error").GetString());
     }
 
@@ -98,7 +111,7 @@ public sealed class OpenIdControllerProtocolTests
         harness.Add(user);
         var accessToken = await harness.Service.IssueAccessTokenAsync(
             "profile-only-client",
-            "profile email",
+            OidcScopes.Profile + " " + OidcScopes.Email,
             userId: user.Id);
         var controller = CreateUserInfoController(harness, user);
         controller.Request.Headers.Authorization = $"Bearer {accessToken}";
@@ -108,9 +121,13 @@ public sealed class OpenIdControllerProtocolTests
         var forbidden = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
         Assert.Equal(
-            "Bearer error=\"insufficient_scope\", scope=\"openid\"",
+            $"Bearer error=\"insufficient_scope\", scope=\"{OidcScopes.OpenId}\"",
             controller.Response.Headers.WWWAuthenticate.ToString());
-        Assert.Equal("insufficient_scope", JsonSerializer.SerializeToElement(forbidden.Value).GetProperty("error").GetString());
+        var error = JsonSerializer.SerializeToElement(forbidden.Value);
+        Assert.Equal("insufficient_scope", error.GetProperty("error").GetString());
+        Assert.Equal(OidcScopes.OpenId, error.GetProperty("scope").GetString());
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
+        Assert.Equal("no-cache", controller.Response.Headers.Pragma.ToString());
     }
 
     [Fact]
@@ -121,7 +138,7 @@ public sealed class OpenIdControllerProtocolTests
         harness.Add(user);
         var accessToken = await harness.Service.IssueAccessTokenAsync(
             "address-client",
-            "openid address",
+            OidcScopes.OpenId + " " + OidcScopes.Address,
             userId: user.Id,
             claimsJson: AddressClaims);
         var controller = CreateUserInfoController(harness, user);
@@ -132,6 +149,8 @@ public sealed class OpenIdControllerProtocolTests
         var ok = Assert.IsType<OkObjectResult>(result);
         var payload = JsonSerializer.SerializeToElement(ok.Value);
         Assert.False(payload.TryGetProperty("address", out _));
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
+        Assert.Equal("no-cache", controller.Response.Headers.Pragma.ToString());
     }
 
     private static OpenIdController CreateOpenIdController(bool weChatEnabled = false)

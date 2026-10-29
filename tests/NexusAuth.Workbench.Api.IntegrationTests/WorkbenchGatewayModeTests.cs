@@ -15,6 +15,7 @@ using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -24,6 +25,7 @@ public sealed class WorkbenchGatewayModeTests
     private const string Authority = "https://issuer.example.test";
     private const string Audience = "nexusauth.workbench.api";
     private const string ClientId = "nexusauth.workbench";
+    private const string WorkbenchScope = OidcScopes.OpenId + " " + OidcScopes.Profile + " " + Audience;
 
     [Fact]
     public async Task Gateway_registers_only_bearer_and_no_interactive_login_services()
@@ -265,7 +267,7 @@ public sealed class WorkbenchGatewayModeTests
                 .UseSetting("Auth:ClientSecret", "test-only-secret")
                 .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
                 .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")
-                .UseSetting("Auth:Scope", "openid profile nexusauth.workbench.api");
+                .UseSetting("Auth:Scope", WorkbenchScope);
             // Pin discovery and signing keys locally so authentication tests never contact a provider.
             builder.ConfigureServices(services => services.PostConfigure<JwtBearerOptions>(
                 WorkbenchAuthenticationDefaults.BearerScheme, options =>

@@ -1,10 +1,11 @@
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Clients.Authentication;
 
-[KeyedService(typeof(IClientAuthenticationStrategy), OAuthClient.TokenEndpointAuthMethodClientSecretPost)]
+[KeyedService(typeof(IClientAuthenticationStrategy), OAuthClientAuthenticationMethods.ClientSecretPost)]
 internal class ClientSecretPostAuthenticationStrategy()
     : ClientSecretAuthenticationStrategy(
-        OAuthClient.TokenEndpointAuthMethodClientSecretPost,
+        OAuthClientAuthenticationMethods.ClientSecretPost,
         "Client must authenticate with client_secret_post.",
         "AuthenticatedClientSecret");

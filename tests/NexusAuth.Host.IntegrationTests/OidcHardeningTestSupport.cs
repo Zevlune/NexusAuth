@@ -14,6 +14,7 @@ using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Host.IntegrationTests;
 
@@ -123,6 +124,8 @@ public sealed class InMemoryTokenServiceHarness : IDisposable
     private readonly Dictionary<string, RefreshToken> refreshTokensByHash = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TokenBlacklistEntry> blacklist = new(StringComparer.Ordinal);
     private readonly List<ApiResource> resources = [];
+    private readonly HashSet<string> unavailableClientScopes = new(StringComparer.Ordinal);
+    private bool clientIsActive = true;
 
     public InMemoryTokenServiceHarness(TestSecurityPolicy? policy = null)
     {
@@ -189,12 +192,51 @@ public sealed class InMemoryTokenServiceHarness : IDisposable
             var audiences = ((IEnumerable<string>)args![0]!).ToHashSet(StringComparer.Ordinal);
             return (IReadOnlyList<ApiResource>)[.. resources.Where(resource => audiences.Contains(resource.Audience))];
         });
+        var clientService = HardeningProxy.Create<IClientService>((method, args) =>
+        {
+            if (method.Name != nameof(IClientService.ValidateScopesAsync))
+                return null;
+
+            ScopeValidationCalls++;
+            if (!clientIsActive)
+                return ScopeValidationResult.Failure("invalid_client", "Client not found or inactive.");
+
+            var requestedScopes = ((string)args![1]!)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            var unavailableScope = requestedScopes.FirstOrDefault(unavailableClientScopes.Contains);
+            if (unavailableScope is not null)
+                return ScopeValidationResult.Failure("invalid_scope", $"Scope '{unavailableScope}' is no longer allowed.");
+
+            var resourceScopes = requestedScopes.Where(scope => !OidcScopes.IsStandard(scope)).ToArray();
+            foreach (var resourceScope in resourceScopes)
+            {
+                if (!resources.Any(resource => resource.IsActive
+                    && string.Equals(resource.Audience, resourceScope, StringComparison.Ordinal)))
+                {
+                    return ScopeValidationResult.Failure(
+                        "invalid_scope",
+                        $"Scope '{resourceScope}' does not correspond to an active resource.");
+                }
+            }
+
+            if (resourceScopes.Length > 1)
+            {
+                return ScopeValidationResult.Failure(
+                    "invalid_scope",
+                    "Requested scopes span multiple audiences. Please request one resource audience per token.");
+            }
+
+            return ScopeValidationResult.Success(string.Join(' ', requestedScopes));
+        });
 
         Service = new TokenService(
             refreshTokenRepository,
             blacklistRepository,
             userRepository,
             apiResources,
+            clientService,
             Options.Create(new JwtOptions
             {
                 Issuer = Issuer,
@@ -213,14 +255,21 @@ public sealed class InMemoryTokenServiceHarness : IDisposable
 
     public int FamilyRevocations { get; private set; }
 
+    public int ScopeValidationCalls { get; private set; }
+
     public void Add(User user) => users[user.Id] = user;
 
     public User? FindUser(Guid id) => users.GetValueOrDefault(id);
 
     public void AddResource(ApiResource resource) => resources.Add(resource);
 
+    public void RevokeClientScope(string scope) => unavailableClientScopes.Add(scope);
+
     public bool IsRefreshTokenRevoked(string rawToken) =>
         refreshTokensByHash.TryGetValue(RefreshToken.Hash(rawToken), out var token) && token.IsRevoked;
+
+    public RefreshToken GetRefreshToken(string rawToken) =>
+        refreshTokensByHash[RefreshToken.Hash(rawToken)];
 
     public void Dispose() => rsa.Dispose();
 }

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Host.TokenEndpoint;
 
@@ -19,7 +20,7 @@ public static class TokenGrantHelper
 
     public static bool ShouldIssueRefreshToken(string scope) =>
         scope.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Contains("offline_access", StringComparer.Ordinal);
+            .Contains(OidcScopes.OfflineAccess, StringComparer.Ordinal);
 
     public static IActionResult InvalidClient(HttpContext context)
     {

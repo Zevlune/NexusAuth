@@ -1,4 +1,5 @@
 using NexusAuth.Domain.Entities;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Domain.Tests;
@@ -11,7 +12,7 @@ public sealed class ConsentStoreDomainTests
         var userId = Guid.NewGuid();
         var createdAt = new DateTimeOffset(2030, 1, 2, 3, 4, 5, TimeSpan.FromHours(8));
 
-        var result = ConsentRequest.Create(userId, "client_id=client&scope=openid", createdAt);
+        var result = ConsentRequest.Create(userId, "client_id=client&scope=" + OidcScopes.OpenId, createdAt);
 
         Assert.Equal(43, result.RawRequestId.Length);
         Assert.Equal(ConsentRequest.HashRequestId(result.RawRequestId), result.Entity.RequestIdHash);
@@ -29,10 +30,11 @@ public sealed class ConsentStoreDomainTests
     {
         Assert.Equal(
             "openid profile read",
-            ConsentGrant.NormalizeScope(" profile  read openid profile "));
+            ConsentGrant.NormalizeScope(
+                " " + OidcScopes.OpenId + "  read " + OidcScopes.OpenId + " " + OidcScopes.Profile + " "));
         Assert.NotEqual(
-            ConsentGrant.NormalizeScope("openid profile"),
-            ConsentGrant.NormalizeScope("OpenID profile"));
+            ConsentGrant.NormalizeScope(OidcScopes.OpenId + " " + OidcScopes.Profile),
+            ConsentGrant.NormalizeScope("OpenID " + OidcScopes.Profile));
     }
 
     [Fact]

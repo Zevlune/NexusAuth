@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Services;
 using NexusAuth.Application.Services.ExternalIdentity;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Host.Controllers;
 
@@ -64,32 +65,52 @@ public class OpenIdController(
             introspection_endpoint = $"{issuer}/connect/introspect",
             device_authorization_endpoint = $"{issuer}/connect/deviceauthorization",
             end_session_endpoint = $"{issuer}/connect/endsession",
-            scopes_supported = new[] { "openid", "profile", "email", "phone", "offline_access" },
-            response_types_supported = new[] { "code" },
-            response_modes_supported = new[] { "query", "form_post" },
+            scopes_supported = new[]
+            {
+                OidcScopes.OpenId,
+                OidcScopes.Profile,
+                OidcScopes.Email,
+                OidcScopes.Phone,
+                OidcScopes.OfflineAccess,
+            },
+            response_types_supported = new[] { OAuthResponseTypes.Code },
+            response_modes_supported = new[] { OAuthResponseModes.Query, OAuthResponseModes.FormPost },
             authorization_response_iss_parameter_supported = true,
             grant_types_supported = new[]
             {
-                "authorization_code",
-                "client_credentials",
-                "refresh_token",
-                "urn:ietf:params:oauth:grant-type:device_code",
-            }.Concat(weChatOptions?.Value.Enabled == true ? [WeChatMiniProgramGrantTypes.GrantType] : Array.Empty<string>()),
+                OAuthGrantTypes.AuthorizationCode,
+                OAuthGrantTypes.ClientCredentials,
+                OAuthGrantTypes.RefreshToken,
+                OAuthGrantTypes.DeviceCode,
+            }.Concat(weChatOptions?.Value.Enabled == true ? [OAuthGrantTypes.WeChatMiniProgram] : Array.Empty<string>()),
             subject_types_supported = new[] { "public" },
             id_token_signing_alg_values_supported = new[] { _signingCredentialsProvider.Algorithm },
-            token_endpoint_auth_methods_supported = new[] { "client_secret_post", "client_secret_basic", "client_secret_jwt", "private_key_jwt" }
-                .Concat(weChatOptions?.Value.Enabled == true ? ["none"] : Array.Empty<string>()),
+            token_endpoint_auth_methods_supported = new[]
+            {
+                OAuthClientAuthenticationMethods.ClientSecretPost,
+                OAuthClientAuthenticationMethods.ClientSecretBasic,
+                OAuthClientAuthenticationMethods.ClientSecretJwt,
+                OAuthClientAuthenticationMethods.PrivateKeyJwt,
+            }
+                .Concat(weChatOptions?.Value.Enabled == true
+                    ? [OAuthClientAuthenticationMethods.None]
+                    : Array.Empty<string>()),
             token_endpoint_auth_signing_alg_values_supported = new[] { "HS256", "RS256" },
             claims_supported = new[]
             {
                 "sub", "preferred_username", "name", "nickname", "email", "phone_number", "email_verified",
                 "phone_number_verified", "gender", "ethnicity", "nonce", "at_hash", "auth_time", "acr", "amr"
             },
-            code_challenge_methods_supported = new[] { "S256" },
+            code_challenge_methods_supported = new[] { PkceMethods.S256 },
             claims_parameter_supported = true,
             request_parameter_supported = false,
             request_uri_parameter_supported = false,
-            prompt_values_supported = new[] { "none", "login", "consent" },
+            prompt_values_supported = new[]
+            {
+                OidcPromptValues.None,
+                OidcPromptValues.Login,
+                OidcPromptValues.Consent,
+            },
         });
     }
 
@@ -113,6 +134,9 @@ public class OpenIdController(
     [HttpPost("/connect/userinfo")]
     public async Task<IActionResult> UserInfo(CancellationToken ct)
     {
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.Pragma = "no-cache";
+
         var authorization = Request.Headers.Authorization.ToString();
         var bearerToken = authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             ? authorization[7..]
@@ -128,16 +152,17 @@ public class OpenIdController(
         if (!string.Equals(introspection.TokenUse, "access_token", StringComparison.Ordinal))
             return UserInfoUnauthorized("Only access tokens can call userinfo.", tokenWasSupplied: true);
 
-        if (!OidcClaimEmissionPolicy.ParseScopes(introspection.Scope).Contains("openid"))
+        if (!OidcClaimEmissionPolicy.ParseScopes(introspection.Scope).Contains(OidcScopes.OpenId))
         {
-            Response.Headers.WWWAuthenticate = "Bearer error=\"insufficient_scope\", scope=\"openid\"";
+            Response.Headers.WWWAuthenticate =
+                $"Bearer error=\"insufficient_scope\", scope=\"{OidcScopes.OpenId}\"";
             return StatusCode(
                 StatusCodes.Status403Forbidden,
                 new
                 {
                     error = "insufficient_scope",
-                    error_description = "The access token must include the 'openid' scope.",
-                    scope = "openid",
+                    error_description = $"The access token must include the '{OidcScopes.OpenId}' scope.",
+                    scope = OidcScopes.OpenId,
                 });
         }
 
@@ -299,7 +324,7 @@ public class OpenIdController(
         if (!string.IsNullOrWhiteSpace(token))
         {
             // 中文注释：token_type_hint 只是查找提示；按提示找不到时必须继续尝试其他 token 类型（RFC 7009 §2.1）。
-            if (string.Equals(tokenTypeHint, "refresh_token", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(tokenTypeHint, OAuthGrantTypes.RefreshToken, StringComparison.OrdinalIgnoreCase))
             {
                 if (!await RevokeRefreshTokenForClientAsync(token, authenticationInput.ClientId, ct))
                     await _tokenService.RevokeAccessTokenAsync(token, authenticationInput.ClientId, ct);
@@ -324,7 +349,10 @@ public class OpenIdController(
         if (!lookup.IsSuccess || lookup.Client is null)
             return false;
 
-        if (string.Equals(lookup.Client.TokenEndpointAuthMethod, Domain.AggregateRoots.OAuthClients.OAuthClient.TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+        if (string.Equals(
+                lookup.Client.TokenEndpointAuthMethod,
+                OAuthClientAuthenticationMethods.None,
+                StringComparison.Ordinal))
         {
             return input.ClientSecret is null
                 && input.ClientAssertion is null
@@ -500,21 +528,21 @@ public class OpenIdController(
 
     private static OidcRequestedClaims ResolveRequestedClaims(string? scope, string? claimsJson)
     {
-        // 中文注释：先按已授予的 scope 得到基础 claim，再合并 claims 参数显式请求的 userinfo claim；
-        // 两者都必须被已授予的 scope 覆盖（OIDC Core §5.4 / §5.5），claims 参数不能绕过 scope。
+        // 中文注释：先按已授予的 scope 得到基础 claim，再合并 claims 参数显式请求的 userinfo claim。
+        // 本项目保守策略要求显式 claim 也受 scope 限制；只读取 userinfo section，并保留 value / values 约束。
         var requestedClaims = OidcRequestedClaims.Parse(claimsJson);
         var grantedScopes = OidcClaimEmissionPolicy.ParseScopes(scope);
         var userInfoClaims = BaseUserInfoClaims
             .Where(claim => OidcClaimEmissionPolicy.IsClaimAllowedByScopes(claim, grantedScopes))
-            .ToHashSet(StringComparer.Ordinal);
+            .ToDictionary(claim => claim, _ => OidcClaimRequest.Empty, StringComparer.Ordinal);
 
-        if (requestedClaims.HasExplicitRequests)
+        foreach (var (claimName, claimRequest) in requestedClaims.UserInfoClaimRequests)
         {
-            userInfoClaims.UnionWith(requestedClaims.UserInfoClaims
-                .Where(claim => OidcClaimEmissionPolicy.IsClaimAllowedByScopes(claim, grantedScopes)));
+            if (OidcClaimEmissionPolicy.IsClaimAllowedByScopes(claimName, grantedScopes))
+                userInfoClaims[claimName] = claimRequest;
         }
 
-        return OidcRequestedClaims.Create(userInfoClaims: userInfoClaims);
+        return OidcRequestedClaims.CreateRequests(userInfoClaims: userInfoClaims);
     }
 
     private static object BuildUserInfoPayload(Domain.AggregateRoots.Users.User user, OidcRequestedClaims requestedClaims)
@@ -524,31 +552,46 @@ public class OpenIdController(
             ["sub"] = user.Id.ToString(),
         };
 
-        if (requestedClaims.RequestsUserInfoClaim("preferred_username"))
+        if (!string.IsNullOrWhiteSpace(user.Username)
+            && OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(
+                requestedClaims,
+                "preferred_username",
+                user.Username))
             payload["preferred_username"] = user.Username;
 
-        if (requestedClaims.RequestsUserInfoClaim("name"))
+        if (!string.IsNullOrWhiteSpace(user.Nickname)
+            && OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(requestedClaims, "name", user.Nickname))
             payload["name"] = user.Nickname;
 
-        if (requestedClaims.RequestsUserInfoClaim("nickname"))
+        if (!string.IsNullOrWhiteSpace(user.Nickname)
+            && OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(requestedClaims, "nickname", user.Nickname))
             payload["nickname"] = user.Nickname;
 
-        if (OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "email", user.Email))
+        if (!string.IsNullOrWhiteSpace(user.Email)
+            && OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(requestedClaims, "email", user.Email))
             payload["email"] = user.Email;
 
-        if (requestedClaims.RequestsUserInfoClaim("email_verified"))
+        if (OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(requestedClaims, "email_verified", "false"))
             payload["email_verified"] = false;
 
-        if (OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "phone_number", user.PhoneNumber))
+        if (!string.IsNullOrWhiteSpace(user.PhoneNumber)
+            && OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(requestedClaims, "phone_number", user.PhoneNumber))
             payload["phone_number"] = user.PhoneNumber;
 
-        if (requestedClaims.RequestsUserInfoClaim("phone_number_verified"))
+        if (OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(requestedClaims, "phone_number_verified", "false"))
             payload["phone_number_verified"] = false;
 
-        if (OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "gender", user.Gender.ToString()))
+        if (OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(
+                requestedClaims,
+                "gender",
+                user.Gender.ToString()))
             payload["gender"] = user.Gender.ToString();
 
-        if (OidcClaimEmissionPolicy.ShouldEmitRequestedClaim(requestedClaims, "ethnicity", user.Ethnicity))
+        if (!string.IsNullOrWhiteSpace(user.Ethnicity)
+            && OidcClaimEmissionPolicy.ShouldEmitUserInfoClaim(
+                requestedClaims,
+                "ethnicity",
+                user.Ethnicity))
             payload["ethnicity"] = user.Ethnicity;
 
         return payload;

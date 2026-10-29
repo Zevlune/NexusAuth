@@ -16,6 +16,7 @@ using NexusAuth.Application.Services.Sessions;
 using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -126,7 +127,8 @@ public sealed class WorkbenchTokenRevocationTests
                     .UseSetting("Auth:ClientSecret", "test-only-secret")
                     .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
                     .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")
-                    .UseSetting("Auth:Scope", "openid profile offline_access nexusauth.workbench.api");
+                    .UseSetting("Auth:Scope", OidcScopes.OpenId + " " + OidcScopes.Profile
+                        + " " + OidcScopes.OfflineAccess + " nexusauth.workbench.api");
                 builder.ConfigureServices(services =>
                 {
                     services.RemoveAll<IUserRepository>();

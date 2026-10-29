@@ -22,6 +22,8 @@ public class RefreshToken : EntityWithIdentity<Guid>
 
     public string Scope { get; private set; } = default!;
 
+    public string? ClaimsJson { get; private set; }
+
     public bool IsRevoked { get; private set; }
 
     public DateTimeOffset ExpiresAt { get; private set; }
@@ -39,7 +41,8 @@ public class RefreshToken : EntityWithIdentity<Guid>
         string clientId,
         Guid userId,
         string scope,
-        TimeSpan? lifetime = null)
+        TimeSpan? lifetime = null,
+        string? claimsJson = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
         ArgumentException.ThrowIfNullOrWhiteSpace(scope);
@@ -53,6 +56,7 @@ public class RefreshToken : EntityWithIdentity<Guid>
             ClientId = clientId,
             UserId = userId,
             Scope = scope,
+            ClaimsJson = claimsJson,
             IsRevoked = false,
             ExpiresAt = now.Add(lifetime ?? TimeSpan.FromDays(30)),
             CreatedAt = now,

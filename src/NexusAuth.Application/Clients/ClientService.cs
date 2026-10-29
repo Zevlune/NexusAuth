@@ -1,6 +1,7 @@
 using Luck.Logging.Serilog;
 using Microsoft.Extensions.DependencyInjection;
 using NexusAuth.Application.Clients.Authentication;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Clients;
 
@@ -32,7 +33,7 @@ public class ClientService(
         IEnumerable<string>? allowedScopes = null,
         IEnumerable<string>? allowedGrantTypes = null,
         bool requirePkce = true,
-        string tokenEndpointAuthMethod = OAuthClient.TokenEndpointAuthMethodClientSecretBasic,
+        string tokenEndpointAuthMethod = OAuthClientAuthenticationMethods.ClientSecretBasic,
         IEnumerable<OAuthClientSecret>? clientSecrets = null,
         CancellationToken ct = default)
     {
@@ -95,11 +96,11 @@ public class ClientService(
         // Preserve the PR's shared-secret fallback for legacy authentication methods.
         var strategyKey = client.TokenEndpointAuthMethod switch
         {
-            OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt
-                or OAuthClient.TokenEndpointAuthMethodClientSecretJwt
-                or OAuthClient.TokenEndpointAuthMethodClientSecretBasic
-                or OAuthClient.TokenEndpointAuthMethodClientSecretPost => client.TokenEndpointAuthMethod,
-            _ => OAuthClient.TokenEndpointAuthMethodNone,
+            OAuthClientAuthenticationMethods.PrivateKeyJwt
+                or OAuthClientAuthenticationMethods.ClientSecretJwt
+                or OAuthClientAuthenticationMethods.ClientSecretBasic
+                or OAuthClientAuthenticationMethods.ClientSecretPost => client.TokenEndpointAuthMethod,
+            _ => OAuthClientAuthenticationMethods.None,
         };
         var authenticationStrategy = serviceProvider.GetRequiredKeyedService<IClientAuthenticationStrategy>(strategyKey);
 
@@ -131,13 +132,13 @@ public class ClientService(
                 $"Client is not allowed to use {grantType} grant type.",
                 redirectUriValidated: true);
 
-        if (string.Equals(grantType, "authorization_code", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(grantType, OAuthGrantTypes.AuthorizationCode, StringComparison.OrdinalIgnoreCase))
         {
             if (client.RequirePkce && string.IsNullOrWhiteSpace(codeChallenge))
                 return ClientValidationResult.Failure("invalid_request", "code_challenge is required for this client.", redirectUriValidated: true);
 
             if (!string.IsNullOrWhiteSpace(codeChallenge)
-                && !string.Equals(codeChallengeMethod, "S256", StringComparison.Ordinal))
+                && !string.Equals(codeChallengeMethod, PkceMethods.S256, StringComparison.Ordinal))
             {
                 return ClientValidationResult.Failure("invalid_request", "code_challenge_method must be S256.", redirectUriValidated: true);
             }
@@ -187,7 +188,7 @@ public class ClientService(
             null,
             null,
             null,
-            OAuthClient.TokenEndpointAuthMethodClientSecretPost);
+            OAuthClientAuthenticationMethods.ClientSecretPost);
         return await AuthenticateClientAsync(input, requireSecret, ct);
     }
 
@@ -215,8 +216,14 @@ public class ClientService(
         bool allowIdentityScopes,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(scope))
-            return ScopeValidationResult.Failure("invalid_scope", "scope is required.");
+        if (!OAuthScopeSyntax.IsValid(scope))
+        {
+            return ScopeValidationResult.Failure(
+                "invalid_scope",
+                string.IsNullOrWhiteSpace(scope)
+                    ? "scope is required."
+                    : "scope contains invalid characters.");
+        }
 
         var client = await clientRepository.FindByClientIdAsync(clientId, ct);
         if (client is null || !client.IsActive)
@@ -232,7 +239,7 @@ public class ClientService(
             if (!client.AllowedScopes.Contains(requestedScope, StringComparer.Ordinal))
                 return ScopeValidationResult.Failure("invalid_scope", $"Scope '{requestedScope}' is not allowed for this client.");
 
-            if (allowIdentityScopes && IsIdentityScope(requestedScope))
+            if (allowIdentityScopes && OidcScopes.IsStandard(requestedScope))
                 continue;
 
             var resource = await apiResourceRepository.FindByAudienceAsync(requestedScope, ct);
@@ -242,7 +249,7 @@ public class ClientService(
 
         // 中文注释：access token 只能携带一个资源 audience（TokenService.ResolveAudienceAsync 的规则）。
         // 在授权端 / token 端校验 scope 时就拒绝，避免授权码被消费后才在签发阶段抛出 500。
-        if (requestedScopes.Count(requestedScope => !IsIdentityScope(requestedScope)) > 1)
+        if (requestedScopes.Count(requestedScope => !OidcScopes.IsStandard(requestedScope)) > 1)
             return ScopeValidationResult.Failure("invalid_scope", MultipleAudiencesError);
 
         return ScopeValidationResult.Success(string.Join(' ', requestedScopes));
@@ -285,7 +292,7 @@ public class ClientService(
         var allowedScopes = await MergeAllowedScopesAsync(request.AllowedScopes, apiResourceIds, ct);
         var tokenEndpointAuthMethod = ResolveTokenEndpointAuthMethod(request.TokenEndpointAuthMethod);
         GeneratedCredential? generatedCredential = null;
-        var requiresGeneratedJwks = string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal)
+        var requiresGeneratedJwks = string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal)
             && request.AutoGenerateJwks == true;
 
         var initialJwks = requiresGeneratedJwks ? null : request.Jwks;
@@ -306,9 +313,9 @@ public class ClientService(
             requireConsent: request.RequireConsent);
 
         if (requiresGeneratedJwks
-            || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodClientSecretBasic, StringComparison.Ordinal)
-            || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodClientSecretPost, StringComparison.Ordinal)
-            || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodClientSecretJwt, StringComparison.Ordinal))
+            || string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretBasic, StringComparison.Ordinal)
+            || string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretPost, StringComparison.Ordinal)
+            || string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretJwt, StringComparison.Ordinal))
         {
             generatedCredential = GenerateCredential(client.Id, tokenEndpointAuthMethod, request.AutoGenerateJwks, request.Description);
 
@@ -431,7 +438,7 @@ public class ClientService(
         var tokenEndpointAuthMethod = ResolveCredentialAuthMethod(client, request.TokenEndpointAuthMethod);
         EnsureCredentialGenerationSupported(tokenEndpointAuthMethod);
 
-        if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal))
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal))
             throw new InvalidOperationException("private_key_jwt does not use shared secret reset. Update the registered JWKS instead.");
 
         foreach (var secret in client.ClientSecrets.Where(secret => secret.IsActive && string.Equals(secret.Type, OAuthClientSecret.TypeSharedSecret, StringComparison.Ordinal)))
@@ -503,16 +510,6 @@ public class ClientService(
         return ClientAuthenticationResult.Failure("invalid_client", error);
     }
 
-    private static bool IsIdentityScope(string scope)
-    {
-        return string.Equals(scope, "openid", StringComparison.Ordinal)
-            || string.Equals(scope, "profile", StringComparison.Ordinal)
-            || string.Equals(scope, "email", StringComparison.Ordinal)
-            || string.Equals(scope, "phone", StringComparison.Ordinal)
-            || string.Equals(scope, "address", StringComparison.Ordinal)
-            || string.Equals(scope, "offline_access", StringComparison.Ordinal);
-    }
-
     private static bool IsWellFormedCodeChallenge(string codeChallenge)
     {
         // 中文注释：仅支持 S256，code_challenge = BASE64URL(SHA256(verifier))，长度与字符集按 RFC 7636 §4.2 校验。
@@ -522,8 +519,8 @@ public class ClientService(
 
     private static void EnsureSharedSecretCapacity(OAuthClient client, string tokenEndpointAuthMethod)
     {
-        if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal)
-            || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal)
+            || string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.None, StringComparison.Ordinal))
             return;
 
         var activeSharedSecrets = client.ClientSecrets.Count(secret =>
@@ -539,7 +536,7 @@ public class ClientService(
     {
         EnsureCredentialGenerationSupported(tokenEndpointAuthMethod);
 
-        if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal))
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal))
         {
             if (autoGenerateJwks is false)
                 throw new InvalidOperationException("private_key_jwt credential generation only supports automatic JWKS generation.");
@@ -574,16 +571,16 @@ public class ClientService(
             return new GeneratedCredential(null, dto, jwks);
         }
 
-        if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodClientSecretBasic, StringComparison.Ordinal)
-            || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodClientSecretPost, StringComparison.Ordinal)
-            || string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodClientSecretJwt, StringComparison.Ordinal))
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretBasic, StringComparison.Ordinal)
+            || string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretPost, StringComparison.Ordinal)
+            || string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretJwt, StringComparison.Ordinal))
         {
             var secretValue = GenerateSecretValue();
             var secret = OAuthClientSecret.CreateSharedSecret(
                 clientId,
                 secretValue,
                 description,
-                persistPlainValue: string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodClientSecretJwt, StringComparison.Ordinal));
+                persistPlainValue: string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretJwt, StringComparison.Ordinal));
             var dto = new GeneratedClientCredentialDto(
                 OAuthClientSecret.TypeSharedSecret,
                 secretValue,
@@ -599,7 +596,7 @@ public class ClientService(
 
     private static void EnsureCredentialGenerationSupported(string tokenEndpointAuthMethod)
     {
-        if (string.Equals(tokenEndpointAuthMethod, OAuthClient.TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.None, StringComparison.Ordinal))
             throw new InvalidOperationException("token_endpoint_auth_method 'none' does not use client credentials.");
     }
 
@@ -627,7 +624,7 @@ public class ClientService(
     private static string ResolveTokenEndpointAuthMethod(string? tokenEndpointAuthMethod)
     {
         return string.IsNullOrWhiteSpace(tokenEndpointAuthMethod)
-            ? OAuthClient.TokenEndpointAuthMethodClientSecretBasic
+            ? OAuthClientAuthenticationMethods.ClientSecretBasic
             : tokenEndpointAuthMethod.Trim();
     }
 

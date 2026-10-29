@@ -33,12 +33,14 @@ public interface ITokenService : IScopedDependency
         string clientId,
         Guid userId,
         string scope,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? claimsJson = null);
 
     Task<RefreshResult> RefreshAsync(
         string refreshTokenString,
         string? clientId = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? scope = null);
 
     Task RevokeRefreshTokenAsync(
         string refreshTokenString,

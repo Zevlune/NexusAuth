@@ -1,4 +1,5 @@
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Domain.Tests;
@@ -58,14 +59,14 @@ public sealed class OAuthClientRegistrationValidationTests
         var exception = Assert.Throws<ArgumentException>(() => OAuthClient.Create(
             "pk-client",
             "Private key client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.PrivateKeyJwt,
             jwksUri: "https://client.example/jwks.json"));
         Assert.Contains("jwks_uri is not supported yet; provide jwks", exception.Message);
 
         var client = OAuthClient.Create(
             "pk-client",
             "Private key client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.PrivateKeyJwt,
             jwks: PublicRsaJwks);
         Assert.Throws<ArgumentException>(() => client.Update(jwks: string.Empty, jwksUri: "https://client.example/jwks.json"));
         Assert.Throws<ArgumentException>(() => client.SetJwks(null, "https://client.example/jwks.json"));
@@ -89,13 +90,13 @@ public sealed class OAuthClientRegistrationValidationTests
         Assert.Throws<ArgumentException>(() => OAuthClient.Create(
             "pk-client",
             "Private key client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.PrivateKeyJwt,
             jwks: jwks));
 
         var client = OAuthClient.Create(
             "pk-client",
             "Private key client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.PrivateKeyJwt,
             jwks: PublicRsaJwks);
         Assert.Throws<ArgumentException>(() => client.Update(jwks: jwks));
         Assert.Throws<ArgumentException>(() => client.SetJwks(jwks));
@@ -108,7 +109,7 @@ public sealed class OAuthClientRegistrationValidationTests
         var client = OAuthClient.Create(
             "pk-client",
             "Private key client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.PrivateKeyJwt,
             jwks: PublicRsaJwks);
 
         Assert.Equal(PublicRsaJwks, client.Jwks);

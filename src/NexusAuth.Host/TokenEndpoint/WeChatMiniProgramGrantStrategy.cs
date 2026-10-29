@@ -4,11 +4,12 @@ using NexusAuth.Application.Services.ExternalIdentity;
 using NexusAuth.Domain.Repositories;
 using System.Text;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 using static NexusAuth.Host.TokenEndpoint.TokenGrantHelper;
 
 namespace NexusAuth.Host.TokenEndpoint;
 
-[KeyedService(typeof(ITokenGrantStrategy), WeChatMiniProgramGrantTypes.GrantType)]
+[KeyedService(typeof(ITokenGrantStrategy), OAuthGrantTypes.WeChatMiniProgram)]
 public class WeChatMiniProgramGrantStrategy(
     IClientService clientService,
     ITokenService tokenService,
@@ -51,13 +52,16 @@ public class WeChatMiniProgramGrantStrategy(
         if (!clientAuthentication.IsSuccess || clientAuthentication.Client is null)
             return InvalidClient(context.HttpContext);
 
-        if (!string.Equals(clientAuthentication.Client.TokenEndpointAuthMethod, "none", StringComparison.Ordinal))
+        if (!string.Equals(
+                clientAuthentication.Client.TokenEndpointAuthMethod,
+                OAuthClientAuthenticationMethods.None,
+                StringComparison.Ordinal))
             return InvalidClient(context.HttpContext);
 
         if (!securityPolicyService.CheckClient(clientId).IsSuccess)
             return new BadRequestObjectResult(new { error = "unauthorized_client", error_description = "Client is blocked by security policy." });
 
-        if (!clientAuthentication.Client.IsGrantTypeAllowed(WeChatMiniProgramGrantTypes.GrantType))
+        if (!clientAuthentication.Client.IsGrantTypeAllowed(OAuthGrantTypes.WeChatMiniProgram))
         {
             return new BadRequestObjectResult(new
             {
@@ -83,8 +87,8 @@ public class WeChatMiniProgramGrantStrategy(
         }
 
         if (scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Contains("offline_access", StringComparer.Ordinal)
-            && !clientAuthentication.Client.IsGrantTypeAllowed("refresh_token"))
+            .Contains(OidcScopes.OfflineAccess, StringComparer.Ordinal)
+            && !clientAuthentication.Client.IsGrantTypeAllowed(OAuthGrantTypes.RefreshToken))
         {
             return new BadRequestObjectResult(new
             {
@@ -100,7 +104,7 @@ public class WeChatMiniProgramGrantStrategy(
                 return new BadRequestObjectResult(new { error = "invalid_request", error_description = "Nickname must contain between 1 and 100 characters." });
 
             if (!scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Contains("profile", StringComparer.Ordinal))
+                .Contains(OidcScopes.Profile, StringComparer.Ordinal))
                 return new BadRequestObjectResult(new { error = "invalid_scope", error_description = "The profile scope is required to set a nickname." });
         }
 
@@ -146,7 +150,7 @@ public class WeChatMiniProgramGrantStrategy(
                 ? await tokenService.IssueRefreshTokenAsync(clientId, login.User.Id, scopeValidation.NormalizedScope!, ct)
                 : null;
             var includeIdToken = scopeValidation.NormalizedScope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Contains("openid", StringComparer.Ordinal);
+                .Contains(OidcScopes.OpenId, StringComparer.Ordinal);
             if (includeIdToken)
             {
                 idToken = await tokenService.IssueIdTokenAsync(

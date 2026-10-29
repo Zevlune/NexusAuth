@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using NexusAuth.Shared.OAuth;
 
 namespace Demo.Bff.Controllers;
 
@@ -72,14 +73,14 @@ public class AuthController : ControllerBase
         Response.Cookies.Append(_sessionOptions.StateCookieName, state, CreateStateCookieOptions(expiresAtUtc));
 
         var authorizeUrl = discovery.AuthorizationEndpoint +
-                           $"?response_type=code" +
+                           $"?response_type={OAuthResponseTypes.Code}" +
                            $"&client_id={Uri.EscapeDataString(_oidcBffService.ClientId)}" +
                            $"&redirect_uri={Uri.EscapeDataString(_oidcBffService.RedirectUri)}" +
                            $"&scope={Uri.EscapeDataString(_oidcBffService.Scope)}" +
                            $"&state={Uri.EscapeDataString(state)}" +
                            $"&nonce={Uri.EscapeDataString(nonce)}" +
                            $"&code_challenge={Uri.EscapeDataString(pkce.CodeChallenge)}" +
-                           $"&code_challenge_method=S256";
+                           $"&code_challenge_method={PkceMethods.S256}";
 
         return Ok(new { authorizeUrl });
     }
@@ -112,7 +113,7 @@ public class AuthController : ControllerBase
         await _oidcBffService.ApplyClientAuthenticationAsync(httpClient);
         var tokenForm = new Dictionary<string, string>
         {
-            ["grant_type"] = "authorization_code",
+            ["grant_type"] = OAuthGrantTypes.AuthorizationCode,
             ["code"] = code,
             ["redirect_uri"] = _oidcBffService.RedirectUri,
             ["code_verifier"] = flow.CodeVerifier,
@@ -203,7 +204,11 @@ public class AuthController : ControllerBase
             {
                 var discovery = await _oidcBffService.FetchDiscoveryAsync(ct);
                 await _oidcBffService.RevokeIfPresentAsync(discovery.RevocationEndpoint, session.AccessToken, "access_token", ct);
-                await _oidcBffService.RevokeIfPresentAsync(discovery.RevocationEndpoint, session.RefreshToken, "refresh_token", ct);
+                await _oidcBffService.RevokeIfPresentAsync(
+                    discovery.RevocationEndpoint,
+                    session.RefreshToken,
+                    OAuthGrantTypes.RefreshToken,
+                    ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {

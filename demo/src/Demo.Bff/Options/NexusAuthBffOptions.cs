@@ -1,3 +1,5 @@
+using NexusAuth.Shared.OAuth;
+
 namespace Demo.Bff.Options;
 
 public class NexusAuthBffOptions
@@ -8,7 +10,7 @@ public class NexusAuthBffOptions
 
     public string? ClientSecret { get; set; }
 
-    public string TokenEndpointAuthMethod { get; set; } = "client_secret_basic";
+    public string TokenEndpointAuthMethod { get; set; } = OAuthClientAuthenticationMethods.ClientSecretBasic;
 
     public string? ClientAssertionPrivateKeyPem { get; set; }
 

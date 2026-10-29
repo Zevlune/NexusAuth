@@ -269,6 +269,7 @@ CREATE TABLE nexusauth.refresh_tokens (
     client_id   varchar(128)    NOT NULL,
     user_id     uuid            NOT NULL,
     scope       varchar(512)    NOT NULL,
+    claims_json text,
     is_revoked  boolean         NOT NULL DEFAULT false,
     expires_at  timestamptz     NOT NULL,
     created_at  timestamptz     NOT NULL,

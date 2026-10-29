@@ -14,7 +14,7 @@ Provider 默认地址为 `http://localhost:5100`；生产环境应使用 HTTPS I
 | GET | `/.well-known/jwks.json` | Provider 签名公钥 | 否 |
 | GET | `/connect/authorize` | Authorization Code 授权请求 | 否，用户在 Provider 会话中登录 |
 | POST | `/connect/token` | 授权码、client credentials、device code、refresh token 换取令牌 | 是 |
-| GET | `/connect/userinfo` | 使用 Bearer access token 读取用户信息 | Bearer token |
+| GET/POST | `/connect/userinfo` | 使用 Bearer access token 读取用户信息 | Bearer token |
 | POST | `/connect/deviceauthorization` | 创建设备授权请求 | 是 |
 | POST | `/connect/introspect` | 检查 access token 或 ID token 状态 | 是 |
 | POST | `/connect/revocation` | 撤销 access token 或 refresh token | 是 |
@@ -22,7 +22,24 @@ Provider 默认地址为 `http://localhost:5100`；生产环境应使用 HTTPS I
 | GET/POST | `/device` | 用户输入设备码并批准/拒绝 | Provider Cookie |
 | GET/POST | `/account/login` | Provider 用户登录 | Provider Cookie |
 
-Discovery 的 `scopes_supported` 只列标准身份 scope：`openid`、`profile`、`email`、`phone`、`address` 和 `offline_access`。业务 API scope 由客户端与 API resource 的登记关系决定，不应假设所有业务 scope 都会出现在 Discovery 中。
+标准 Scope 字符串集中声明在 `src/NexusAuth.Shared/OAuth/OidcScopes.cs` 的 `NexusAuth.Shared.OAuth.OidcScopes`，由后端复用 `openid`、`profile`、`email`、`phone`、`address`、`offline_access` 六个 `const`。Discovery 的 `scopes_supported` 当前只列 `openid`、`profile`、`email`、`phone` 和 `offline_access`，不列 `address`，因为 NexusAuth 当前没有可发布的地址数据。业务 API scope 由客户端与 API resource 的登记关系决定，不应假设所有业务 scope 都会出现在 Discovery 中。
+
+### 协议值的代码定义
+
+除 Scope 外，以下协议值也集中定义在 `src/NexusAuth.Shared/OAuth/`，命名空间为 `NexusAuth.Shared.OAuth`：
+
+| 常量类型 | 使用场景 |
+|---|---|
+| `OAuthClientAuthenticationMethods` | 客户端认证方式，如 `ClientSecretBasic`、`PrivateKeyJwt` |
+| `OAuthGrantTypes` | grant 校验、Token Endpoint 策略注册和客户端请求 |
+| `OAuthClientAssertionTypes` | `client_assertion_type` 的 JWT Bearer 值 |
+| `OAuthResponseTypes` / `OAuthResponseModes` | 授权响应类型和响应模式 |
+| `PkceMethods` | PKCE challenge 方法 |
+| `OidcPromptValues` | 授权请求的 prompt 值 |
+
+这些定义使用 `const string`，可直接用于默认参数和策略注册 Attribute，例如 `[KeyedService(typeof(ITokenGrantStrategy), OAuthGrantTypes.AuthorizationCode)]`。`OAuthClient` 及 `WeChatMiniProgramGrantTypes` 原有公开常量保留为兼容别名，值引用共享定义；新代码直接引用共享类型。`OAuthGrantTypes.WeChatMiniProgram` 是 NexusAuth 自定义扩展，不是标准 OAuth grant。
+
+工作台前端在 `admin/src/NexusAuth.Workbench.Dashboard/src/constants/oauth.ts` 集中定义客户端认证方式和 grant 值，并从常量对象推导认证方式类型；下拉选项从后端元数据接口取得。协议 JSON/表单字段名、外部配置示例和响应断言中的协议字面量按各自用途保留，不能仅因拼写相同就替换成其他语义的常量。常量定义不代表额外启用了某个授权方式，实际支持集合由现有校验和策略注册决定。
 
 ## 1. 设计目标
 
@@ -92,7 +109,7 @@ state=<original state, when supplied>
 | 授权请求 | `unsupported_response_type` | `response_type` 不是 `code` | 已安全确认时回跳，否则本地返回 |
 | 静默登录 | `login_required` | `prompt=none` 但没有有效登录或 `max_age` 已过期 | 安全回跳 |
 | token endpoint | `invalid_client` | 客户端不存在、凭据错误、认证方式不匹配或认证冲突 | HTTP 401，不使用授权回调 |
-| token endpoint | `invalid_grant` | 授权码已使用/过期、回调地址不一致、PKCE verifier 错误 | HTTP 400 |
+| token endpoint | `invalid_grant` | 授权码已使用/过期、回调地址不一致、PKCE verifier 错误，或兑换前客户端/scope/resource 重验失败 | HTTP 400 |
 | token endpoint | `invalid_request` | 缺少 `grant_type`、`code` 或 `refresh_token` | HTTP 400 |
 | token endpoint | `unauthorized_client` | 客户端未允许当前 grant | HTTP 400 |
 
@@ -132,7 +149,11 @@ PKCE 策略属于客户端元数据。Provider 不应把所有客户端都硬编
 
 请求至少包含 `grant_type=authorization_code`、`code` 和与授权请求完全一致的 `redirect_uri`。授权码在数据库中只保存 SHA-256 哈希，绑定客户端、用户、scope、回调地址、PKCE challenge 和 OIDC 上下文，默认有效期为 10 分钟，并且只能成功消费一次。
 
+兑换时，Provider 在消费授权码前重新检查当前客户端仍允许 `authorization_code`、授权码中的 `redirect_uri` 仍在当前客户端登记、当前 PKCE 配置仍满足原 challenge 约束，并重新验证已授予 scope 仍属于客户端且对应 API resource 仍处于启用状态。上述重验失败时返回 `invalid_grant`，并在消费一步之前退出，因此不会消费该授权码。
+
 如果授权请求包含 `openid`，响应会包含 ID Token；如果 scope 包含 `offline_access` 且客户端允许 `refresh_token`，响应会包含 refresh token。缺少或错误的 `code_verifier`、授权码已使用、过期、客户端不匹配或回调地址不一致，通常返回 `invalid_grant`。
+
+当授权码兑换同时签发 refresh token 时，授权码中保存的 `ClaimsJson` 会随 refresh token 一并持久化。后续 refresh token 兑换出的 access token 继续携带该 claims 请求，轮换产生的新 refresh token 也保留同一值，从而让授权时声明的 `userinfo` claims 及其 `value`/`values` 约束在后续刷新中继续生效。
 
 ### client_credentials
 
@@ -140,7 +161,13 @@ PKCE 策略属于客户端元数据。Provider 不应把所有客户端都硬编
 
 ### refresh_token
 
-请求包含 `grant_type=refresh_token` 和 `refresh_token`，客户端必须重新认证。Provider 会检查 refresh token 的客户端归属、用户状态和绝对过期时间，然后在数据库事务中撤销旧 token、写入新 token 并签发新的 access token。客户端必须原子地保存新 refresh token，旧值再次使用会失败。
+请求包含 `grant_type=refresh_token` 和 `refresh_token`，`scope` 可选，客户端必须重新认证。省略 `scope` 时，新 access token 沿用 refresh token 保存的原 grant scope；提供 `scope` 时只能请求原 grant scope 的子集，用于缩小本次 access token scope，不能扩大权限。响应中的 `scope` 表示本次 access token 实际获得的范围。
+
+Provider 先核对 refresh token 与当前认证客户端的绑定，再处理 revoked token 的重放语义；其他客户端不能通过出示该 token 触发原 token family 的撤销。随后检查用户状态、绝对过期时间，并要求整个原 grant 在当前客户端配置和活动 API resource 下仍然有效。客户端、grant、scope 或资源权限已被移除时，刷新失败，不能借助原 refresh token 绕过权限变更；这种情况需要重新授权。轮换得到的新 refresh token 保留原 grant scope，而不是本次缩小后的 access token scope。
+
+refresh token 的 claims 请求保存在 `refresh_tokens.claims_json`，数据库列类型为 nullable `text`。刷新时该值写入新 access token，原子轮换写入的新 refresh token 继续继承该值。现有数据库必须先执行根目录的 `refresh-token-claims-upgrade.sql`；升级前已经签发的 refresh token 没有原始 claims 快照，迁移后也无法恢复或推断，需要重新授权才能重建原始 `value`/`values` 约束。
+
+旧 token 在新 token 原子写入时撤销，客户端必须原子地保存轮换结果，旧值再次使用会失败。
 
 ### device_code
 
@@ -151,6 +178,8 @@ PKCE 策略属于客户端元数据。Provider 不应把所有客户端都硬编
 - `expired_token`：设备码超过生命周期；
 - `access_denied`：用户拒绝授权；
 - 成功后设备码被一次性消费，不能再次兑换。
+
+每次有效轮询在消费已批准的设备码前，都会按当前客户端配置重新验证 device code grant、持久化 scope 以及对应 API resource 是否仍处于启用状态。重验失败时返回 `invalid_grant`，且不消费该一次性设备码。
 
 Provider 默认设备码有效期为 15 分钟，实际值由 `Jwt:DeviceCodeLifetimeMinutes` 决定。设备客户端应使用响应中的 `interval`，并遵循 `Retry-After`，不要固定高频请求。
 
@@ -203,7 +232,11 @@ OIDC Discovery 通过 `/.well-known/openid-configuration` 发布授权、token�
 
 授权码兑换只有在授权请求包含 `openid` scope 时才签发 ID Token。ID Token 使用 RS256，`aud` 是客户端 ID；授权请求中的 `nonce` 会绑定到授权码并写入 ID Token，客户端必须验证 issuer、audience、签名、有效期和 nonce。ID Token 的有效期跟随 access token 生命周期。
 
-`GET /connect/userinfo` 只接受有效的 Bearer access token，不接受 ID Token 或 refresh token。基础响应包含 `sub`、`preferred_username` 和 `name`；`email`、`phone_number` 等字段受 scope 控制，`claims` 请求可进一步请求已支持的字段。token 无效、已撤销、不是 access token 或对应用户已停用时返回 `401 invalid_token`。
+`claims` 参数中的 `id_token` 与 `userinfo` 是两个独立 section：ID Token 只读取 `id_token` section，UserInfo 只读取 `userinfo` section，两者不会互相串用。每个 section 内的 `value`、`values` 等匹配约束继续生效；显式 claim 请求还必须落在已授予 scope 覆盖的用户 claim 范围内。这里的 scope gate 是 NexusAuth 的保守权限策略，不应表述为 OIDC 强制要求所有单项 claim 都必须请求同名 scope。
+
+UserInfo 从 access token 中携带的 claims 请求恢复 `userinfo` section 及其值约束，因此授权码签发 refresh token、refresh 换发 access token 和 refresh token 轮换都必须保留 `ClaimsJson`。旧的、升级前签发且 `claims_json` 为 `NULL` 的 refresh token 不具备这一上下文，不能恢复当时的原始 claims 请求。
+
+`GET /connect/userinfo` 和 `POST /connect/userinfo` 都只接受有效的用户 access token，不接受 ID Token、refresh token 或客户端凭据 token。access token 必须包含 `openid` scope；缺少 `openid` 时返回 `403 insufficient_scope`。仅包含 `openid` 时，响应至少有 `sub`；增加 `profile` 后才可返回 `name`、`preferred_username` 等资料 claim，`email` 和 `phone` 相关 claim 分别要求对应 scope。token 无效、已撤销、不是 access token 或对应用户已停用时返回 `401 invalid_token`。UserInfo 响应始终设置 `Cache-Control: no-store`。
 
 ### RP-Initiated Logout
 
