@@ -2,7 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using CookieSecurePolicyValue = Microsoft.AspNetCore.Http.CookieSecurePolicy;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Options;
 
 public sealed class WorkbenchSecurityOptions
 {

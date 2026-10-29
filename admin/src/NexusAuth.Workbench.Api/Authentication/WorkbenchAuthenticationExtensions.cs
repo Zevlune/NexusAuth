@@ -5,8 +5,11 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
+using NexusAuth.Workbench.Api.Authentication.Events;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Workbench.Api.Options;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Authentication;
 
 /// <summary>组装 Workbench 的 Cookie 会话、标准 OIDC 登录与 BFF 会话服务。</summary>
 public static class WorkbenchAuthenticationExtensions

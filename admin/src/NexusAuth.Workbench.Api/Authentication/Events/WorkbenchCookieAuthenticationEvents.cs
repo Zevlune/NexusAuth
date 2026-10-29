@@ -3,8 +3,11 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Options;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Authentication.Events;
 
 /// <summary>
 /// 校验 Workbench 会话有效性，并在令牌临近过期时刷新受保护票据中的令牌。

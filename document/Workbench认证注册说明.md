@@ -1,6 +1,8 @@
 # Workbench 认证注册与复用边界
 
-`AddWorkbenchAuthentication` 是本应用的组装入口。它依次绑定配置、注册 BFF 会话服务、连接 Cookie/OIDC 中间件，以及启用可选的启动预热。具体协议行为仍配置在标准 `OpenIdConnectOptions` 上，没有另外一套 SDK 认证参数。
+[`AddWorkbenchAuthentication`](../admin/src/NexusAuth.Workbench.Api/Authentication/WorkbenchAuthenticationExtensions.cs) 是本应用的组装入口。它依次绑定配置、注册 BFF 会话服务、连接 Cookie/OIDC 中间件，以及启用可选的启动预热。具体协议行为仍配置在标准 `OpenIdConnectOptions` 上，没有另外一套 SDK 认证参数。
+
+认证与业务配置统一来自 `appsettings.json` 和 `appsettings.{Environment}.json`，消费者继续通过 `IOptions<T>` 获取。项目不再注册 `NEXUSAUTH_WORKBENCH_*` 单下划线别名；ASP.NET Core 原生环境变量与命令行覆盖仍然存在，但不作为主要部署流程。
 
 ## 哪些代码可以复用
 
@@ -19,11 +21,13 @@ Extension 不依赖 `NexusAuth.Shared`、Workbench 或 Luck，也没有引入 `I
 
 ## 注册顺序与生命周期
 
-`AddAuthenticationOptions` 绑定 `Auth` 和流程存储配置，通过 Options 规范化并启动校验。不会把 `WorkbenchAuthenticationOptions` 对象直接作为单例注册。
+`AddAuthenticationOptions` 绑定 `Auth` 和流程存储配置，通过 Options 规范化并启动校验。不会把 [`WorkbenchAuthenticationOptions`](../admin/src/NexusAuth.Workbench.Api/Options/WorkbenchAuthenticationOptions.cs) 对象直接作为单例注册。
 
-`AddSessionServices` 注册请求范围内的 Cookie/OIDC 事件和令牌客户端。刷新协调器通过接口注册为单例，以便合并来自不同请求的同一 refresh token 刷新；实际令牌请求通过它创建的 scope 执行。Basic handler 由 HttpClientFactory 创建和回收，不需要应用再注册实现类或手工释放共享实例。
+`AddSessionServices` 注册请求范围内的 Cookie/OIDC 事件和令牌客户端。Cookie 验证事件位于 [`Authentication/Events`](../admin/src/NexusAuth.Workbench.Api/Authentication/Events)，令牌接口与实现位于 [`Authentication/Tokens`](../admin/src/NexusAuth.Workbench.Api/Authentication/Tokens)。刷新协调器通过接口注册为单例，以便合并来自不同请求的同一 refresh token 刷新；实际令牌请求通过它创建的 scope 执行。Basic handler 由 HttpClientFactory 创建和回收，不需要应用再注册实现类或手工释放共享实例。
 
 `AddAuthenticationHandlers` 连接本应用 Cookie 和标准 OIDC 方案。对 `OpenIdConnectOptions` 的配置依赖 `IOptions<T>` 和 `IHttpClientFactory`，没有提前构造 ServiceProvider。Basic 适配器到发送请求时才读取原生 Options，避免在构建 Backchannel 时递归构造同一认证方案。
+
+本应用的配置类集中在 [`Options`](../admin/src/NexusAuth.Workbench.Api/Options)：认证与校验、Security、Swagger 和 Bootstrap 分别维护；自身客户端登记服务位于 [`Bootstrap`](../admin/src/NexusAuth.Workbench.Api/Bootstrap)。完整目录职责见 [Workbench API README](../admin/src/NexusAuth.Workbench.Api/README.md)。
 
 `AddOpenIdConnectMetadataWarmup` 是可选优化。框架本身已经负责发现文档和签名密钥缓存；预热只提前触发读取，成功后不再额外轮询。各方案失败后独立重试，应用关闭可取消等待。
 

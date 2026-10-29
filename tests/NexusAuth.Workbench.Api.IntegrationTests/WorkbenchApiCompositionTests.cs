@@ -1,3 +1,5 @@
+using NexusAuth.Workbench.Api.Bootstrap;
+using NexusAuth.Workbench.Api.Options;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Authorization;

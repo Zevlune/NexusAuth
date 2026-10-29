@@ -5,7 +5,10 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Services.Email;
 using NexusAuth.Persistence;
+using NexusAuth.Workbench.Api.Authentication;
 using NexusAuth.Workbench.Api.Authorization;
+using NexusAuth.Workbench.Api.Bootstrap;
+using NexusAuth.Workbench.Api.Options;
 
 namespace NexusAuth.Workbench.Api;
 

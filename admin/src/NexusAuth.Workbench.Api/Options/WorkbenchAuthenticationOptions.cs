@@ -1,4 +1,4 @@
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Options;
 
 /// <summary>Configuration shared by the standard OIDC handler and BFF session services.</summary>
 public sealed class WorkbenchAuthenticationOptions

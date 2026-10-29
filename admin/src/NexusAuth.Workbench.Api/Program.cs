@@ -1,3 +1,4 @@
+using NexusAuth.Workbench.Api.Options;
 using Luck.AutoDependencyInjection;
 using Luck.AspNetCore.Extensions;
 using Luck.Logging.Serilog;
@@ -8,7 +9,6 @@ using NexusAuth.Workbench.Api;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Configuration.AddWorkbenchEnvironmentVariables();
 
 try
 {

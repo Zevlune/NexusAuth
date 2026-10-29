@@ -19,7 +19,7 @@
 | 回调 | `/signin-oidc` | 服务端实际处理回调的公开 URL |
 | 登出回调 | Dashboard 根地址 | 已登记且逐字符匹配的 URL |
 
-Workbench API 从 `Auth:Authority` 读取 Provider 公开 Issuer，必须与 Discovery 和 ID Token 的 `iss` 一致。`Auth:ClientSecret` 只放服务端配置或 Secret。`Auth:Audience` 同时用于请求 API resource scope 和 Bootstrap resource audience。根目录 Compose 将 `WORKBENCH_CLIENT_SECRET` 注入 API；独立部署可使用 `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET` 等单下划线变量，完整清单见 [Workbench 使用手册](Workbench使用手册.md)。
+Workbench API 从 `Auth:Authority` 读取 Provider 公开 Issuer，必须与 Discovery 和 ID Token 的 `iss` 一致。`Auth:ClientSecret` 只放在服务端的私有 `appsettings.{Environment}.json` 中。`Auth:Audience` 同时用于请求 API resource scope 和 Bootstrap resource audience。Compose 和独立部署都通过挂载 JSON 提供业务配置，`NEXUSAUTH_WORKBENCH_APPSETTINGS_FILE` 仅选择 Compose 使用的文件路径；完整配置见 [Workbench 使用手册](Workbench使用手册.md#5-workbench-api-配置)。
 
 ## 登录链路
 
@@ -30,7 +30,7 @@ Workbench API 从 `Auth:Authority` 读取 Provider 公开 Issuer，必须与 Dis
 
 Workbench 为 OIDC 后通道配置专用 `HttpClient` delegating handler。该 handler 只把 token 请求中的客户端凭据改为 `Authorization: Basic ...` 请求头，以匹配 Bootstrap 登记的 `client_secret_basic`。它不调用 `HandleCodeRedemption`，也不重复执行 `ProtocolValidator`。
 
-内部 [`IWorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/IWorkbenchTokenClient.cs) 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。它不负责登录端点、PKCE 或 ID Token 校验。
+内部 [`IWorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/Authentication/Tokens/IWorkbenchTokenClient.cs) 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。它不负责登录端点、PKCE 或 ID Token 校验。
 
 ## 流程状态
 
@@ -56,7 +56,7 @@ services.AddOpenIdConnectFlowState()
 
 ## 验证请求与续期
 
-管理请求统一使用 `.NexusAuth.Workbench` Cookie；Workbench 不注册 JWT Bearer 认证方案，也不接受外部 access token。[`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/WorkbenchCookieAuthenticationEvents.cs) 在 Cookie 验证时检查保存的 access token：
+管理请求统一使用 `.NexusAuth.Workbench` Cookie；Workbench 不注册 JWT Bearer 认证方案，也不接受外部 access token。[`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/Authentication/Events/WorkbenchCookieAuthenticationEvents.cs) 在 Cookie 验证时检查保存的 access token：
 
 - 距离过期超过一分钟时，通过 introspection 确认令牌仍有效，且 subject、client_id 与当前会话匹配；
 - 接近过期时使用 `IWorkbenchTokenClient` 刷新，再对新 token 执行 introspection；
@@ -72,10 +72,10 @@ Provider 登录页的“几天内免登录”和 Workbench 的 24 小时 BFF 会
 ## 对照实现
 
 - [`AuthController`](../admin/src/NexusAuth.Workbench.Api/Controllers/AuthController.cs)：发起标准 OIDC challenge、返回登录地址和执行本地登出。
-- [`WorkbenchAuthenticationExtensions`](../admin/src/NexusAuth.Workbench.Api/WorkbenchAuthenticationExtensions.cs)：Cookie、OpenID Connect、流程状态和 Basic 后通道配置。
+- [`WorkbenchAuthenticationExtensions`](../admin/src/NexusAuth.Workbench.Api/Authentication/WorkbenchAuthenticationExtensions.cs)：Cookie、OpenID Connect、流程状态和 Basic 后通道配置。
 - [`UseOpenIdConnectClientSecretBasic`](../admin/src/NexusAuth.Extension/Authentication/OpenIdConnectBackchannelExtensions.cs)：为指定原生 OIDC 方案适配后台表单请求的 Basic 认证头。
-- [`WorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/WorkbenchTokenClient.cs)：refresh、introspection 和 revoke。
-- [`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/WorkbenchCookieAuthenticationEvents.cs)：会话 introspection 与 refresh token 轮换。
+- [`WorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/Authentication/Tokens/WorkbenchTokenClient.cs)：refresh、introspection 和 revoke。
+- [`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/Authentication/Events/WorkbenchCookieAuthenticationEvents.cs)：会话 introspection 与 refresh token 轮换。
 - [`CurrentIdentityController`](../admin/src/NexusAuth.Workbench.Api/Controllers/CurrentIdentityController.cs)：`GET /api/auth/me`。
 
 `Auth:Authority` 必须与 Provider 的 issuer 完全一致，并且浏览器和 Workbench 进程都能直接访问。服务端位于容器内时，`localhost` 指向该容器自身；请让同一域名或 IP 通过 DNS 和网络路由同时可达 Provider。默认值和运行示例见 [Workbench 使用手册](Workbench使用手册.md)。

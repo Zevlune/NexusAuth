@@ -1,3 +1,8 @@
+using FrameworkOptions = Microsoft.Extensions.Options.Options;
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Authentication.Events;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Workbench.Api.Options;
 using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
@@ -118,7 +123,7 @@ public sealed class WorkbenchCookieRevocationTests
                 .AddSingleton<IWorkbenchTokenRefreshCoordinator, WorkbenchTokenRefreshCoordinator>()
                 .BuildServiceProvider();
             Events = new WorkbenchCookieAuthenticationEvents(oidc,
-                Options.Create(new WorkbenchAuthenticationOptions
+                FrameworkOptions.Create(new WorkbenchAuthenticationOptions
                 {
                     Authority = "https://issuer.test",
                     Audience = "workbench.api",

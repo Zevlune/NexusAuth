@@ -116,16 +116,14 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 
 浏览器访问 `http://localhost:5560`。Dashboard 的 Nginx（`admin/src/NexusAuth.Workbench.Dashboard/nginx.conf`）把 `/api` 和 `/signin-oidc` 转发到 `http://admin-api:8080`，其余路径回退到 `index.html`。因此对外的 OIDC 回调是 `http://localhost:5560/signin-oidc`，真正处理它的是 Workbench API，`admin-api` 本身不需要对外暴露端口。
 
-Compose 为 Workbench API 注入的关键值（见根 `docker-compose.yml` 的 `admin-api` 服务）：
+根 `docker-compose.yml` 只向 `admin-api` 注入 `ASPNETCORE_ENVIRONMENT` 和 `TZ`，业务配置全部来自 JSON 文件：
 
-- 基础编排的 `Auth:Authority` 需要由 `NEXUSAUTH_JWT_ISSUER` 提供 HTTPS 地址，`Auth:RequireHttpsMetadata` 默认 `true`；本地覆盖文件才把 metadata HTTPS 要求和 Cookie Secure 策略显式改为 HTTP 预览值；
-- `Auth:RedirectUri` 默认 `http://localhost:5560/signin-oidc`；`Auth:PostLogoutRedirectUri` 默认 `http://localhost:5560/`，可通过 `NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI` 覆盖；
-- `Auth:ClientSecret` 由 `${WORKBENCH_CLIENT_SECRET:-c57cf0e110c54ad2ac5591b99801b852}` 注入；
-- 连接串与 Bootstrap 名称也由环境变量提供。
+- 默认把 `docker/workbench.appsettings.json` 只读挂到 `/app/appsettings.${ASPNETCORE_ENVIRONMENT:-Production}.json`。这是生产安全样例，`Auth:Authority` 和 `Auth:ClientSecret` 留空，数据库密码为占位值；复制为私有文件并填写后才能启动；
+- `NEXUSAUTH_WORKBENCH_APPSETTINGS_FILE` 只选择要挂载的 JSON 路径，是 Compose 插值变量，不注入应用容器；需要自定义部署文件时只替换这一项；
+- `docker-compose.local.yml` 把该变量切换为 `./docker/workbench.local.appsettings.json`。本地文件单独提供 HTTP Authority `http://localhost:5100`、回调 `http://localhost:5560/signin-oidc`、登出回调 `http://localhost:5560/`、开发密钥和开发数据库连接，只用于隔离的本地预览；
+- 不把真实密钥写入仓库模板、`deploy/direct/workbench.env.example` 或 Compose `environment`。生产密钥应生成后放入私有配置文件，并与 Host 中该客户端的密钥一致（见 [6.2](#62-自身-bootstrap-登记了什么)）。
 
-`docker-compose.local.yml` 的 HTTP 设置只适合浏览器和 Workbench 进程都能访问本地 Provider 的隔离演示。`admin-api` 容器内的 `localhost` 是容器自身，不能借它访问 `sso`。基础或生产启动时应将 Host 配置文件中的 `Jwt:Issuer` 与 Workbench 的 `NEXUSAUTH_JWT_ISSUER` 设置为相同的 HTTPS 地址。
-
-容器默认的 `WORKBENCH_CLIENT_SECRET` 是仓库内置的开发值，只适合本地。生产必须用密钥管理注入，并保证与 Host 数据库里的客户端密钥一致（见 [6.2](#62-自身-bootstrap-登记了什么)）。
+`deploy/direct/workbench.env.example` 只列出 ASP.NET Core 宿主环境与监听地址等启动参数，不承载 Workbench 业务配置。框架原生环境变量和命令行参数仍然可用，但当前部署流程以环境 JSON 为准。
 
 ### 3.2 拆分启动
 
@@ -163,7 +161,7 @@ dotnet run --project src/NexusAuth.Host
 
 ### 4.3 Workbench API
 
-源码方式下 Workbench API 的认证与 Bootstrap 配置**必填**，缺任何一项都会在启动时抛 `InvalidOperationException` 并退出。`admin/src/NexusAuth.Workbench.Api/appsettings.Development.json` 已经准备了共享数据库，但认证密钥和 Bootstrap 名称仍要提供。
+源码方式下 Workbench API 的认证与 Bootstrap 配置**必填**，缺任何一项都会在启动时抛 `InvalidOperationException` 并退出。基础 `appsettings.json` 提供完整结构和安全默认值，`appsettings.Development.json` 已准备本地数据库、Authority 与回调地址，但 `Auth:ClientSecret` 留空，首次运行前需要在本机文件中填写。
 
 该开发配置文件包含共享数据库连接串：
 
@@ -177,22 +175,20 @@ dotnet run --project src/NexusAuth.Host
 
 也就是说，源码开发时数据库端口默认就是 Compose 的 `33210`，连的就是那套共享 `nexusauth` 库。
 
-基础 `appsettings.json` 的 `Auth:Authority` 为空，`Auth:RequireHttpsMetadata=true`。`appsettings.Development.json` 仅为本机开发显式提供 `http://localhost:5100` 和 `false`；通过 `dotnet run` 的 Development 配置即可连接本地 Host。启动命令示例（终端 3）：
+基础 `appsettings.json` 的 `Auth:Authority` 和 `Auth:ClientSecret` 为空，`Auth:RequireHttpsMetadata=true`。`appsettings.Development.json` 为本机开发显式提供：
+
+- `Auth:Authority=http://localhost:5100` 和 `Auth:RequireHttpsMetadata=false`；
+- `Auth:RedirectUri=http://localhost:5273/signin-oidc`；
+- `Auth:PostLogoutRedirectUri=http://localhost:5273/`；
+- 本地开发数据库连接与 `Security:CookieSecurePolicy=SameAsRequest`。
+
+在 `appsettings.Development.json` 中为 `Auth:ClientSecret` 填入 Host 登记的长随机开发密钥后，启动 Workbench API（终端 3）：
 
 ```bash
-NEXUSAUTH_WORKBENCH_AUTH_CLIENT_ID=nexusauth.workbench \
-NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET=请替换为长随机密钥 \
-NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI=http://localhost:5273/signin-oidc \
-NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI=http://localhost:5273/ \
-NEXUSAUTH_WORKBENCH_AUTH_SCOPE="openid profile offline_access nexusauth.workbench.api" \
-NEXUSAUTH_WORKBENCH_AUTH_AUDIENCE=nexusauth.workbench.api \
-NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_NAME=nexusauth.workbench.api \
-NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DISPLAY_NAME="NexusAuth Workbench API" \
-NEXUSAUTH_WORKBENCH_BOOTSTRAP_CLIENT_NAME="NexusAuth Workbench" \
 dotnet run --project admin/src/NexusAuth.Workbench.Api
 ```
 
-API 默认监听 `http://localhost:5051`（见 `Properties/launchSettings.json`），Swagger 在 `http://localhost:5051/swagger`。启动日志里会看到 Bootstrap 创建或更新客户端的信息。如果连接串需要覆盖，用 `NEXUSAUTH_WORKBENCH_CONNECTION_STRINGS_DEFAULT`。
+API 默认监听 `http://localhost:5051`（见 `Properties/launchSettings.json`），Swagger 在 `http://localhost:5051/swagger`。启动日志里会看到 Bootstrap 创建或更新客户端的信息。需要修改连接串或其他业务项时，直接编辑当前环境的 appsettings 文件。
 
 ### 4.4 Dashboard
 
@@ -215,70 +211,86 @@ npm --prefix admin/src/NexusAuth.Workbench.Dashboard run dev
 
 ## 5. Workbench API 配置
 
-### 5.1 appsettings.json 默认值
+### 5.1 appsettings 配置表
 
-`admin/src/NexusAuth.Workbench.Api/appsettings.json` 是安全基础配置，`appsettings.Development.json` 只覆盖本机开发所需项。当前默认值如下：
+`admin/src/NexusAuth.Workbench.Api/appsettings.json` 提供完整的安全基础结构；`appsettings.Development.json` 只覆盖本机开发项。所有功能通过 `IOptions<T>` 读取配置。
 
-| 键 | 当前默认值 | 说明 |
+| 配置键 | 安全基础或本地开发值 | 说明 |
 | --- | --- | --- |
-| `Auth:Authority` | 空 | 基础配置不提供隐式 Provider；部署必须显式配置 |
-| `Auth:Audience` | `nexusauth.workbench.api` | 请求的 API resource scope，同时作为 Bootstrap API resource 的 audience |
-| `Auth:RequireHttpsMetadata` | `true` | 强制 Authority 和 Discovery 端点使用 HTTPS；配置层允许显式 `false`，规范上仅限隔离本地开发关闭 |
-| `Auth:ClientId` | `nexusauth.workbench` | Workbench 客户端 ID |
-| `Auth:ClientSecret` | 空 | 机密客户端密钥，必须通过环境变量或 Secret 注入 |
-| `Auth:RedirectUri` | `http://localhost:5051/signin-oidc` | 登录回调 |
-| `Auth:PostLogoutRedirectUri` | `http://localhost:5273/` | 登出后回到的前端地址 |
+| `ConnectionStrings:Default` | 基础配置为空；Development 为 `127.0.0.1:33210` 开发库 | PostgreSQL 连接串；生产使用私有值 |
+| `Auth:Authority` | 基础为空；Development 为 `http://localhost:5100` | Provider issuer 与 OIDC Discovery 基础地址 |
+| `Auth:Audience` | `nexusauth.workbench.api` | API resource audience，同时补入登录 scope |
+| `Auth:ClientId` | `nexusauth.workbench` | Workbench OAuth 客户端 ID |
+| `Auth:ClientSecret` | 空 | 首次运行或部署前必须填写；不提交真实值 |
+| `Auth:RedirectUri` | 基础为 `http://localhost:5051/signin-oidc`；Development 为 `http://localhost:5273/signin-oidc` | 浏览器实际访问的 OIDC 回调 |
+| `Auth:PostLogoutRedirectUri` | 基础为 `http://localhost:5273/`；Development 同值 | Provider 登出后返回地址 |
 | `Auth:Scope` | `openid profile offline_access nexusauth.workbench.api` | 申请的 scope |
-| `Auth:SignOutProvider` | `true` | 登出时是否继续跳 Provider 全局登出 |
-| `Auth:FlowState:Provider` | `InMemory` | 登录流程存储；多实例使用 `Redis` |
-| `Auth:FlowState:Lifetime` | `00:10:00` | 待完成登录流程的最长有效期 |
-| `Auth:FlowState:Capacity` | `10000` | 当前实例或共享存储允许的最大待完成流程数 |
-| `Security:CookieSecurePolicy` | `Always` | 生产 Cookie 必须带 Secure；Development 覆盖为 `SameAsRequest` |
-| `Security:ForwardedHeadersEnabled` | `false` | 默认不信任任何转发头 |
-| `Security:ForwardLimit` | `1` | 启用转发头时最多处理的代理跳数，允许 1 到 10 |
-| `Security:KnownProxies` | 空 | 可信代理 IP，逗号或分号分隔 |
-| `Security:KnownNetworks` | 空 | 可信代理 CIDR 网段，逗号或分号分隔 |
-| `Swagger:Enabled` | 未设置 | 未设置时仅 Development 开启；显式 `true`/`false` 优先 |
+| `Auth:RequireHttpsMetadata` | 基础 `true`；Development `false` | 非本地环境保持 `true` |
+| `Auth:SignOutProvider` | `true` | 是否生成 Provider 全局登出地址 |
+| `Auth:FlowState:Provider` | `InMemory` | 多实例改为 `Redis` |
+| `Auth:FlowState:Lifetime` / `Capacity` | `00:10:00` / `10000` | 待完成登录流程有效期和容量 |
+| `Auth:FlowState:Redis:Configuration` | 空 | Redis 模式必填 |
+| `Auth:FlowState:Redis:KeyPrefix` / `Database` | `NexusAuth:oidc:flow` / `-1` | Redis 键前缀与数据库编号；使用默认数据库时设为 `-1` |
+| `Security:CookieSecurePolicy` | 基础 `Always`；Development `SameAsRequest` | 会话 Cookie Secure 策略 |
+| `Security:ForwardedHeadersEnabled` | `false` | 默认不信任转发头 |
+| `Security:ForwardLimit` | `1` | 可信代理链最大跳数，允许 1 到 10 |
+| `Security:KnownProxies` / `KnownNetworks` | 空 | 启用转发头时至少填写一项 |
+| `Swagger:Enabled` | `null` | 未配置时仅 Development 开启；显式布尔值优先 |
+| `Bootstrap:ResourceName` | `nexusauth.workbench.api` | Bootstrap API resource 名称 |
+| `Bootstrap:ResourceDisplayName` | `NexusAuth Workbench API` | 资源显示名 |
+| `Bootstrap:ResourceDescription` | `Workbench administration API` | 资源说明 |
+| `Bootstrap:ClientName` | `NexusAuth Workbench` | Bootstrap 客户端显示名 |
+| `Bootstrap:ClientDescription` | `Workbench BFF client` | 客户端说明 |
+| `Smtp:Enabled` | `false` | Workbench 邮件功能默认关闭 |
+| `Smtp:Host` / `Port` / `Security` | 空 / `465` / `SslOnConnect` | 启用邮件后填写并选择 `SslOnConnect` 或 `StartTls` |
+| `Smtp:Username` / `Password` / `FromAddress` | 空 | 启用邮件后必填；密钥只放私有配置 |
+| `Smtp:FromName` | `NexusAuth Workbench` | 发件人显示名 |
+| `Smtp:VerificationCodeCooldownSeconds` / `VerificationCodeLifetimeMinutes` | `60` / `5` | 验证码冷却和有效期 |
 
-Development 文件的 `Auth:Authority=http://localhost:5100`、`Auth:RequireHttpsMetadata=false` 和 `Security:CookieSecurePolicy=SameAsRequest` 是本地 HTTP 的显式例外。配置层允许任何环境显式设置 `Auth:RequireHttpsMetadata=false`，但规范上仅限隔离本地开发显式关闭；非本地环境应保持 `true` 并使用 HTTPS Authority。
+Development 文件中的 HTTP Authority、`RequireHttpsMetadata=false` 和 `SameAsRequest` 只用于隔离本地开发。非本地环境应保持 `RequireHttpsMetadata=true`、`CookieSecurePolicy=Always`，并使用 HTTPS Authority 和回调地址。
 
-### 5.2 关键环境变量前缀
+### 5.2 配置来源与部署文件
 
-Workbench API 支持标准 .NET 的双下划线环境变量；此外，为了便于阅读，`admin/src/NexusAuth.Workbench.Api/WorkbenchConfigurationExtensions.cs` 还显式映射了一组 `NEXUSAUTH_WORKBENCH_` 前缀的**单下划线**变量。两种写法都可以，同一键同时提供时以启动时的配置优先级为准。下表列出单下划线便利映射：
+业务配置统一使用 appsettings，不再由 `WorkbenchConfigurationExtensions` 映射 `NEXUSAUTH_WORKBENCH_*` 单下划线别名。框架原生环境变量和命令行参数仍由 ASP.NET Core 支持，但不是仓库当前的主要部署流程。
 
-| 环境变量 | 映射到配置 | 必填 |
+| 场景 | 配置文件 | 说明 |
 | --- | --- | --- |
-| `NEXUSAUTH_WORKBENCH_CONNECTION_STRINGS_DEFAULT` | `ConnectionStrings:Default` | 否（开发环境有默认值） |
-| `NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY` | `Auth:Authority` | 是（基础配置为空） |
-| `NEXUSAUTH_WORKBENCH_AUTH_AUDIENCE` | `Auth:Audience` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_ID` | `Auth:ClientId` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET` | `Auth:ClientSecret` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI` | `Auth:RedirectUri` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI` | `Auth:PostLogoutRedirectUri` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_SCOPE` | `Auth:Scope` | 是 |
-| `NEXUSAUTH_WORKBENCH_AUTH_REQUIRE_HTTPS_METADATA` | `Auth:RequireHttpsMetadata` | 否 |
-| `NEXUSAUTH_WORKBENCH_AUTH_SIGN_OUT_PROVIDER` | `Auth:SignOutProvider` | 否 |
-| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_PROVIDER` | `Auth:FlowState:Provider` | 否（默认 `InMemory`） |
-| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_CAPACITY` | `Auth:FlowState:Capacity` | 否 |
-| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_LIFETIME` | `Auth:FlowState:Lifetime` | 否 |
-| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_REDIS_CONFIGURATION` | `Auth:FlowState:Redis:Configuration` | Redis 模式必填 |
-| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_REDIS_KEY_PREFIX` | `Auth:FlowState:Redis:KeyPrefix` | 否 |
-| `NEXUSAUTH_WORKBENCH_AUTH_FLOW_STATE_REDIS_DATABASE` | `Auth:FlowState:Redis:Database` | 否 |
-| `NEXUSAUTH_WORKBENCH_SECURITY_COOKIE_SECURE_POLICY` | `Security:CookieSecurePolicy` | 否 |
-| `NEXUSAUTH_WORKBENCH_SECURITY_FORWARDED_HEADERS_ENABLED` | `Security:ForwardedHeadersEnabled` | 否 |
-| `NEXUSAUTH_WORKBENCH_SECURITY_FORWARD_LIMIT` | `Security:ForwardLimit` | 否 |
-| `NEXUSAUTH_WORKBENCH_SECURITY_KNOWN_PROXIES` | `Security:KnownProxies` | 启用转发头时二选一 |
-| `NEXUSAUTH_WORKBENCH_SECURITY_KNOWN_NETWORKS` | `Security:KnownNetworks` | 启用转发头时二选一 |
-| `NEXUSAUTH_WORKBENCH_SWAGGER_ENABLED` | `Swagger:Enabled` | 否 |
-| `NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_NAME` | `Bootstrap:ResourceName` | 是 |
-| `NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DISPLAY_NAME` | `Bootstrap:ResourceDisplayName` | 是 |
-| `NEXUSAUTH_WORKBENCH_BOOTSTRAP_RESOURCE_DESCRIPTION` | `Bootstrap:ResourceDescription` | 否 |
-| `NEXUSAUTH_WORKBENCH_BOOTSTRAP_CLIENT_NAME` | `Bootstrap:ClientName` | 是 |
-| `NEXUSAUTH_WORKBENCH_BOOTSTRAP_CLIENT_DESCRIPTION` | `Bootstrap:ClientDescription` | 否 |
+| 所有环境 | `admin/src/NexusAuth.Workbench.Api/appsettings.json` | 完整安全基础结构，无真实密钥 |
+| 源码开发 | `admin/src/NexusAuth.Workbench.Api/appsettings.Development.json` | 本地数据库、HTTP localhost、开发回调和 `ClientSecret` 空位 |
+| Compose 默认 | `docker/workbench.appsettings.json` | 挂载为 `/app/appsettings.${ASPNETCORE_ENVIRONMENT:-Production}.json`；Authority、密钥为空，DB 密码占位 |
+| Compose 本地 | `docker/workbench.local.appsettings.json` | 由 `docker-compose.local.yml` 显式选择，提供 HTTP localhost、开发密钥和开发数据库 |
+| 独立部署样例 | `deploy/direct/workbench.appsettings.example.json` | `Auth:Authority=https://sso.example.com`、密钥为空；复制为同目录 `workbench.appsettings.json` |
+| 独立部署运行 | `deploy/direct/workbench.appsettings.json` | 已 gitignore；`deploy/direct/compose.yml` 只读挂到 `/app/appsettings.Production.json` |
+| 启动参数 | `deploy/direct/workbench.env.example` | 只示意 `ASPNETCORE_ENVIRONMENT`、`ASPNETCORE_URLS` 等宿主设置 |
 
-`NEXUSAUTH_SMTP_*` 系列（`NEXUSAUTH_SMTP_ENABLED`、`HOST`、`PORT`、`SECURITY`、`USERNAME`、`PASSWORD`、`FROM_ADDRESS`、`FROM_NAME`、`VERIFICATION_CODE_COOLDOWN_SECONDS`、`VERIFICATION_CODE_LIFETIME_MINUTES`）由 Workbench API 一并读取并映射到 `Smtp:*`，与 Host 共享同样的校验规则。
+生产 Compose 建议从安全模板复制私有文件，再设置唯一路径变量：
 
-`NEXUSAUTH_LUCK_LOGGING_*` 覆盖 `LuckLogging:*` 日志配置。单下划线变量及其配置键的完整映射以 `admin/src/NexusAuth.Workbench.Api/WorkbenchConfigurationExtensions.cs` 为准。未列入单下划线映射的键可以用标准 .NET 双下划线形式（例如 `Auth__FlowState__Provider=Redis`），或者由编排直接注入配置键。
+```bash
+cp docker/workbench.appsettings.json docker/workbench.private.appsettings.json
+# 编辑私有文件，填写 Authority、ClientSecret、数据库密码和公开域名
+export NEXUSAUTH_WORKBENCH_APPSETTINGS_FILE=./docker/workbench.private.appsettings.json
+docker compose -f docker-compose.yml up -d admin-api
+```
+
+`docker/workbench.private.appsettings.json` 已被 gitignore。Compose 的文件路径覆盖只有：
+
+```bash
+NEXUSAUTH_WORKBENCH_APPSETTINGS_FILE=/path/to/workbench.appsettings.json \
+docker compose -f docker-compose.yml up -d admin-api
+```
+
+该变量只决定挂载哪一个文件，不会把其中每个配置项拆成容器环境变量。JSON 内的连接串不会展开 `${POSTGRES_PASSWORD}` 等变量；修改 PostgreSQL 用户名或密码时，也要同步修改私有 JSON 的 `ConnectionStrings:Default`。生产部署可直接使用等价挂载：
+
+```bash
+docker run --rm \
+  -e ASPNETCORE_ENVIRONMENT=Production \
+  -v "$PWD/deploy/direct/workbench.appsettings.json:/app/appsettings.Production.json:ro" \
+  <workbench-api-image>
+```
+
+`deploy/direct/workbench.appsettings.example.json` 使用 `https://sso.example.com` 等占位值。复制为同目录的 `workbench.appsettings.json` 后填写 `Auth:ClientSecret`、数据库密码和实际域名；该运行文件已被 gitignore。源码或发布目录需要 Production 覆盖时，可使用同样已被 gitignore 的 `admin/src/NexusAuth.Workbench.Api/appsettings.Production.json`。密钥可通过密码管理器或随机生成器产生，生成后只写入私有 JSON 和 Host 对应客户端。
+
+基础 `appsettings.json` 已提供 `Bootstrap:ResourceName`、`ResourceDisplayName`、`ResourceDescription`、`ClientName` 和 `ClientDescription` 默认值，环境文件只需覆盖实际需要变化的值；`launchSettings.json` 只负责本地 Development 环境和监听地址，不注入 Bootstrap 元数据。
 
 启动时会集中校验：`Authority` 必须是非空绝对 HTTP(S) 基础 URI，且不含用户信息、查询或片段；`RequireHttpsMetadata=true` 时必须是 HTTPS。`RedirectUri`、`PostLogoutRedirectUri`、`Scope` 必须有值。任何一项不满足都会抛出异常并阻止启动。
 
@@ -345,7 +357,7 @@ Workbench 只有 Cookie+OIDC BFF 一种登录模式。微软 `AddOpenIdConnect` 
 
 ### 6.2 自身 Bootstrap 登记了什么
 
-Workbench API 启动时由 `WorkbenchClientCredentialHostedService` 幂等地登记自己的 OAuth 客户端和资源，**不需要手工创建**。它读取 `Auth` 和 `Bootstrap` 配置：
+Workbench API 启动时由 [`WorkbenchClientCredentialHostedService`](../admin/src/NexusAuth.Workbench.Api/Bootstrap/WorkbenchClientCredentialHostedService.cs) 幂等地登记自己的 OAuth 客户端和资源，**不需要手工创建**。它读取 `Auth` 和 `Bootstrap` 配置：
 
 - 依赖项（缺任意一项即启动失败）：`Auth:ClientId`、`Auth:ClientSecret`、`Auth:RedirectUri`、`Auth:PostLogoutRedirectUri`、`Auth:Audience`、`Bootstrap:ResourceName`、`Bootstrap:ResourceDisplayName`、`Bootstrap:ClientName`。
 - 注册或更新 API resource：名称取 `Bootstrap:ResourceName`，`audience` 取 `Auth:Audience`，显示名与描述取 `Bootstrap:ResourceDisplayName` / `ResourceDescription`。
@@ -358,7 +370,7 @@ Workbench API 启动时由 `WorkbenchClientCredentialHostedService` 幂等地登
 
 ### 6.3 OIDC 后通道与流程状态扩展
 
-Workbench 的浏览器登录完全由标准 `AddOpenIdConnect` 和 Cookie 中间件处理。内部 `IWorkbenchTokenClient` 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。Basic 客户端认证由 Extension 的 `UseOpenIdConnectClientSecretBasic(scheme)` 为专用 `HttpClient` 适配；它不接管授权码兑换，也不重复验证 nonce 或 ID Token。
+Workbench 的浏览器登录完全由标准 `AddOpenIdConnect` 和 Cookie 中间件处理。注册入口见 [`WorkbenchAuthenticationExtensions`](../admin/src/NexusAuth.Workbench.Api/Authentication/WorkbenchAuthenticationExtensions.cs)。内部 [`IWorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/Authentication/Tokens/IWorkbenchTokenClient.cs) 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。Basic 客户端认证由 Extension 的 `UseOpenIdConnectClientSecretBasic(scheme)` 为专用 `HttpClient` 适配；它不接管授权码兑换，也不重复验证 nonce 或 ID Token。
 
 `admin/src/NexusAuth.Extension` 已不再是 OAuth/OIDC 协议 SDK。它提供可复用的 OIDC 流程状态、Basic 后台请求适配及原生元数据启动预热，并与标准 `AddOpenIdConnect` 组合使用，不依赖 `NexusAuth.Shared` 或 `NexusAuth.Workbench`，不提供登录端点，也不生成 PKCE。接入说明见 [Extension README](../admin/src/NexusAuth.Extension/README.md)，各注册项用途和复用边界见 [Workbench 认证注册说明](Workbench认证注册说明.md)。
 
@@ -415,7 +427,7 @@ Workbench 的 24 小时会话与 Provider 登录页“几天内免登录”是�
 
 ### 7.2 刷新与状态检查
 
-每次 Cookie 验证（`WorkbenchCookieAuthenticationEvents.ValidatePrincipal`）都会检查保存的令牌：
+每次 Cookie 验证（[`WorkbenchCookieAuthenticationEvents.ValidatePrincipal`](../admin/src/NexusAuth.Workbench.Api/Authentication/Events/WorkbenchCookieAuthenticationEvents.cs)）都会检查保存的令牌：
 
 - access token 距过期**超过 1 分钟**：调用 introspection，确认 token 仍 active、主体与当前用户一致、客户端是 Workbench 客户端。不满足则拒绝 Principal 并清 Cookie。
 - access token 距过期**不超过 1 分钟**：用 refresh token 刷新，再对新 token introspection 复检，然后保存轮换后的 access/refresh token，并把 Cookie 会话续到新的 24 小时窗口。
@@ -630,23 +642,23 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 
 - Dashboard 对外只暴露一个域名，由反向代理把 `/api` 和 `/signin-oidc` 转发到 Workbench API，保留 `Host`、`X-Forwarded-Proto` 和 Cookie；如需客户端 IP，同时转发 `X-Forwarded-For`。
 - 只有确需处理转发头时才启用 `Security:ForwardedHeadersEnabled`，并配置明确的 `Security:KnownProxies` 或 `Security:KnownNetworks`。应用端口只对可信代理开放，入口覆盖客户端伪造的转发头。
-- 基础配置使用 HTTPS Authority、`Auth:RequireHttpsMetadata=true` 和 `Security:CookieSecurePolicy=Always`。本地 Compose 通过 `docker-compose.local.yml` 显式覆盖为 HTTP，该覆盖不进入生产。
+- 生产配置使用 HTTPS Authority、`Auth:RequireHttpsMetadata=true` 和 `Security:CookieSecurePolicy=Always`。本地 Compose 通过 `docker-compose.local.yml` 选择 `docker/workbench.local.appsettings.json` 并显式使用 HTTP，该文件不进入生产。
 - Provider 登记的 `redirect_uri`、`post_logout_redirect_uri` 与 API 配置逐字符一致，且使用 HTTPS。
 - `Auth:Authority` 使用浏览器和 Workbench API 进程都能直接访问的 HTTPS 地址，并与 Provider issuer 和 token 的 `iss` 完全一致；通过 DNS 或入口路由保证该地址在两端可达。
 - `Auth:Audience` 与 Workbench API resource 的 audience 一致。
 - 多副本共享 Data Protection key ring；默认内存 flow 必须使用粘性路由，或将 `Auth:FlowState:Provider` 设为 `Redis` 并使用共享的 Redis 配置。数据库使用持久卷并备份。
 - `/api` 与 `/signin-oidc` 在应用侧强制 `no-store`，反向代理也应为这两个路径禁用响应缓存。
-- 不提交或在镜像里固化真实 `ClientSecret`；不使用仓库内置的开发密钥；生产不执行 `demo/seed.sql`。
+- 不提交或在镜像里固化真实 `ClientSecret`；生产只挂载私有 `appsettings.Production.json`，不使用 `docker/workbench.local.appsettings.json` 或仓库内置开发值，也不执行 `demo/seed.sql`。
 
 ## 12. 排错
 
 | 现象 | 可能原因 | 处理 |
 | --- | --- | --- |
-| API 启动即退出，日志出现 `Auth:... is required` | 认证配置或 Bootstrap 名称缺失 | 补齐第 5.2 节的必填项 |
+| API 启动即退出，日志出现 `Auth:... is required` | 当前环境 appsettings 缺少认证或 Bootstrap 值 | 按第 5.1 节补齐当前环境文件 |
 | API 启动即退出，提示转发头必须配置可信代理/网络 | 开启 `Security:ForwardedHeadersEnabled` 但两项均为空 | 配置 `KnownProxies` 或 `KnownNetworks`，不要信任宽泛公网 |
 | API 启动失败，提示数据库相关错误 | schema 未初始化或连接串不对 | 执行 `production-init.sql`；核对连接串与端口 |
 | 浏览器登录后立刻跳回登录页 | 回调地址、Issuer 或 Cookie 域不一致 | 核对第 4.4 节的四处地址，确认 `Authority` 与 Host issuer 一致 |
-| 本地 HTTP 登录后 Cookie 未保存 | 误用了基础 `Always` 而不是 Development/本地覆盖的 `SameAsRequest` | 源码使用 Development 配置，Compose 同时加载 `docker-compose.local.yml` |
+| 本地 HTTP 登录后 Cookie 未保存 | 误用了基础 `Always` 而不是 Development/本地文件的 `SameAsRequest` | 源码使用 `appsettings.Development.json`；Compose 同时加载 `docker-compose.local.yml` 与本地 JSON |
 | 本地 Dashboard 请求失败，命中内网地址 | Vite 代理仍是 `192.168.31.200:9100` | 把 `vite.config.ts` 的 `/api`、`/signin-oidc` 目标改成实际 API |
 | API 报无法访问 Provider Discovery | 容器内把 `localhost` 当成 Host，或网络 DNS/入口路由不可达 | 使用浏览器和 Workbench API 都能直达的同一 Authority；容器内不要用 `localhost` 或容器服务名替代 |
 | 多实例下回调偶尔失败 | 登录流程保存在默认进程内存储，回调落到了其他实例 | 使用粘性路由，或将 `Auth:FlowState:Provider` 设为 `Redis` |
@@ -663,5 +675,5 @@ Host 侧的问题（登录页、邮件、Passkey、令牌签发、SCIM 服务端
 - [Workbench Dashboard 统一登录接入模板](Workbench-Dashboard统一登录接入模板.md)：前端登录样例。
 - [OAuth/OIDC 协议设计](11-OAuth-OIDC协议设计.md)：端点、参数校验和令牌规则。
 - [SMTP 配置与发信验证](SMTP发信试验.md)：Host 邮件配置与发信排错。
-- [Workbench API README](../admin/README.md)：组件入口。
+- [Workbench API README](../admin/src/NexusAuth.Workbench.Api/README.md)：API 目录与配置入口。
 - [Dashboard README](../admin/src/NexusAuth.Workbench.Dashboard/README.md)：前端入口。

@@ -1,6 +1,6 @@
 using System.Security.Claims;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Authentication;
 
 internal static class WorkbenchPrincipalFactory
 {

@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Authentication.Tokens;
 
 public interface IWorkbenchTokenRefreshCoordinator
 {

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Builder;
@@ -10,6 +11,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NexusAuth.Workbench.Api;
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Options;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -26,7 +29,7 @@ public sealed class WorkbenchSecurityDefaultsTests
 
         var exception = Assert.ThrowsAny<Exception>(() => factory.Services);
 
-        Assert.Contains("NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY", exception.ToString());
+        Assert.Contains("Auth:Authority", exception.ToString());
     }
 
     [Fact]
@@ -133,40 +136,40 @@ public sealed class WorkbenchSecurityDefaultsTests
     }
 
     [Fact]
-    public void Security_environment_variables_map_to_configuration()
+    public void Security_and_swagger_json_configuration_bind_to_options()
     {
-        var values = new Dictionary<string, string>
-        {
-            ["NEXUSAUTH_WORKBENCH_SECURITY_COOKIE_SECURE_POLICY"] = "SameAsRequest",
-            ["NEXUSAUTH_WORKBENCH_SECURITY_FORWARDED_HEADERS_ENABLED"] = "true",
-            ["NEXUSAUTH_WORKBENCH_SECURITY_FORWARD_LIMIT"] = "2",
-            ["NEXUSAUTH_WORKBENCH_SECURITY_KNOWN_PROXIES"] = "10.0.0.2",
-            ["NEXUSAUTH_WORKBENCH_SECURITY_KNOWN_NETWORKS"] = "10.0.0.0/8",
-            ["NEXUSAUTH_WORKBENCH_SWAGGER_ENABLED"] = "false",
-        };
-        var originalValues = values.Keys.ToDictionary(name => name, Environment.GetEnvironmentVariable);
-        try
-        {
-            foreach (var (name, value) in values)
-                Environment.SetEnvironmentVariable(name, value);
-            using var configuration = new ConfigurationManager();
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(
+            """
+            {
+              "Security": {
+                "CookieSecurePolicy": "SameAsRequest",
+                "ForwardedHeadersEnabled": true,
+                "ForwardLimit": 2,
+                "KnownProxies": "10.0.0.2",
+                "KnownNetworks": "10.0.0.0/8"
+              },
+              "Swagger": {
+                "Enabled": false
+              }
+            }
+            """));
+        var configuration = new ConfigurationBuilder()
+            .AddJsonStream(stream)
+            .Build();
 
-            configuration.AddWorkbenchEnvironmentVariables();
+        var security = configuration.GetSection(WorkbenchSecurityOptions.SectionName)
+            .Get<WorkbenchSecurityOptions>();
+        var swagger = configuration.GetSection(WorkbenchSwaggerOptions.SectionName)
+            .Get<WorkbenchSwaggerOptions>();
 
-            Assert.Equal("SameAsRequest", configuration["Security:CookieSecurePolicy"]);
-            Assert.Equal("true", configuration["Security:ForwardedHeadersEnabled"]);
-            Assert.Equal("2", configuration["Security:ForwardLimit"]);
-            Assert.Equal("10.0.0.2", configuration["Security:KnownProxies"]);
-            Assert.Equal("10.0.0.0/8", configuration["Security:KnownNetworks"]);
-            var swagger = configuration.GetSection(WorkbenchSwaggerOptions.SectionName)
-                .Get<WorkbenchSwaggerOptions>();
-            Assert.False(swagger!.Enabled);
-        }
-        finally
-        {
-            foreach (var (name, value) in originalValues)
-                Environment.SetEnvironmentVariable(name, value);
-        }
+        Assert.NotNull(security);
+        Assert.Equal("SameAsRequest", security.CookieSecurePolicy);
+        Assert.True(security.ForwardedHeadersEnabled);
+        Assert.Equal(2, security.ForwardLimit);
+        Assert.Equal("10.0.0.2", security.KnownProxies);
+        Assert.Equal("10.0.0.0/8", security.KnownNetworks);
+        Assert.NotNull(swagger);
+        Assert.False(swagger.Enabled);
     }
 
     private static WebApplicationFactory<WorkbenchApiModule> CreateFactory(

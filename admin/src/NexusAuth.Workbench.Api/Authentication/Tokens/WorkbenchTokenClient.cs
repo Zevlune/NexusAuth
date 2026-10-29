@@ -3,8 +3,9 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using NexusAuth.Workbench.Api.Authentication;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Authentication.Tokens;
 
 /// <summary>Additional token operations needed by the BFF session, using the standard OIDC metadata.</summary>
 public sealed class WorkbenchTokenClient(

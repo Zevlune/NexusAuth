@@ -1,4 +1,4 @@
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Options;
 
 /// <summary>
 /// Describes the resource and client metadata managed by the Workbench startup bootstrapper.

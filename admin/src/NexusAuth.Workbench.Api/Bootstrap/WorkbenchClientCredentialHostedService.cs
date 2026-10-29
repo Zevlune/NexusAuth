@@ -3,8 +3,9 @@ using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Shared.OAuth;
+using NexusAuth.Workbench.Api.Options;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Bootstrap;
 
 /// <summary>
 /// Idempotently provisions the Workbench OAuth resource, client, associations, and secret from configuration.

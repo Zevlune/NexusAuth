@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Authentication.Tokens;
 
 public interface IWorkbenchTokenClient
 {

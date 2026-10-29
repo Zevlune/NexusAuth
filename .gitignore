@@ -297,3 +297,7 @@ signing-key.json
 deploy/direct/*.env
 deploy/direct/signing/
 deploy/direct/production-init.sql
+# Workbench runtime overrides are supplied as private appsettings files.
+admin/src/NexusAuth.Workbench.Api/appsettings.Production.json
+deploy/direct/workbench.appsettings.json
+docker/workbench.private.appsettings.json

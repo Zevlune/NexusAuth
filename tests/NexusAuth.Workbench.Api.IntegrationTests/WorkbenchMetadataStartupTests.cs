@@ -1,3 +1,5 @@
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;

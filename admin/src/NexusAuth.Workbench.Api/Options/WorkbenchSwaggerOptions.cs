@@ -1,4 +1,4 @@
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Options;
 
 public sealed class WorkbenchSwaggerOptions
 {

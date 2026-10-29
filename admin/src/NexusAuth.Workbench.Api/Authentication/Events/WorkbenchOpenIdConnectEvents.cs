@@ -6,8 +6,10 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Options;
 
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Authentication.Events;
 
 /// <summary>连接标准 OIDC 事件与 Workbench 的浏览器绑定、JSON 登录返回和会话策略。</summary>
 public sealed class WorkbenchOpenIdConnectEvents(

@@ -1,3 +1,5 @@
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Options;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

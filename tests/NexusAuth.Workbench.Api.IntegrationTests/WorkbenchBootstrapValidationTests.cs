@@ -1,3 +1,7 @@
+using FrameworkOptions = Microsoft.Extensions.Options.Options;
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Bootstrap;
+using NexusAuth.Workbench.Api.Options;
 using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -63,7 +67,7 @@ public sealed class WorkbenchBootstrapValidationTests
             .BuildServiceProvider();
         var service = new WorkbenchClientCredentialHostedService(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            Options.Create(new WorkbenchAuthenticationOptions
+            FrameworkOptions.Create(new WorkbenchAuthenticationOptions
             {
                 ClientId = "workbench",
                 ClientSecret = "bootstrap-secret",
@@ -71,7 +75,7 @@ public sealed class WorkbenchBootstrapValidationTests
                 RedirectUri = "https://app.test/signin-oidc",
                 PostLogoutRedirectUri = "https://app.test/"
             }),
-            Options.Create(new WorkbenchBootstrapOptions
+            FrameworkOptions.Create(new WorkbenchBootstrapOptions
             {
                 ResourceName = "workbench.api", ResourceDisplayName = "Workbench API", ClientName = "Workbench"
             }), new ProductionEnvironment(), NullLogger<WorkbenchClientCredentialHostedService>.Instance);
@@ -155,7 +159,7 @@ public sealed class WorkbenchBootstrapValidationTests
             .BuildServiceProvider();
         var service = new WorkbenchClientCredentialHostedService(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            Options.Create(new WorkbenchAuthenticationOptions
+            FrameworkOptions.Create(new WorkbenchAuthenticationOptions
             {
                 ClientId = "workbench",
                 ClientSecret = "updated-secret",
@@ -163,7 +167,7 @@ public sealed class WorkbenchBootstrapValidationTests
                 RedirectUri = "https://app.test/signin-oidc",
                 PostLogoutRedirectUri = "https://app.test/"
             }),
-            Options.Create(new WorkbenchBootstrapOptions
+            FrameworkOptions.Create(new WorkbenchBootstrapOptions
             {
                 ResourceName = "workbench.api",
                 ResourceDisplayName = "Workbench API",
@@ -213,8 +217,8 @@ public sealed class WorkbenchBootstrapValidationTests
     {
         var service = new WorkbenchClientCredentialHostedService(
             null!,
-            Options.Create(new WorkbenchAuthenticationOptions()),
-            Options.Create(new WorkbenchBootstrapOptions()),
+            FrameworkOptions.Create(new WorkbenchAuthenticationOptions()),
+            FrameworkOptions.Create(new WorkbenchBootstrapOptions()),
             new ProductionEnvironment(), NullLogger<WorkbenchClientCredentialHostedService>.Instance);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartAsync(default));

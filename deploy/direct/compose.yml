@@ -44,6 +44,7 @@ services:
       - path: ./workbench.env
         format: raw
     volumes:
+      - ./workbench.appsettings.json:/app/appsettings.Production.json:ro
       - workbench-protection:/root/.aspnet/DataProtection-Keys
     depends_on:
       db:

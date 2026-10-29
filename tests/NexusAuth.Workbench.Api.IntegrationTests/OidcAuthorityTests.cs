@@ -1,3 +1,5 @@
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;

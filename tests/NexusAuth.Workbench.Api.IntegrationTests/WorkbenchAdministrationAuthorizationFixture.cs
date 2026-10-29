@@ -1,3 +1,5 @@
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;

@@ -1,4 +1,4 @@
-namespace NexusAuth.Workbench.Api;
+namespace NexusAuth.Workbench.Api.Authentication;
 
 public static class WorkbenchAuthenticationDefaults
 {

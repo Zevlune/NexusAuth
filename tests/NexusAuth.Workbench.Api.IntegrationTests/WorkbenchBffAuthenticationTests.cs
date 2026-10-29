@@ -14,6 +14,9 @@ using Microsoft.IdentityModel.Tokens;
 using NexusAuth.Extension;
 using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api;
+using NexusAuth.Workbench.Api.Authentication;
+using NexusAuth.Workbench.Api.Authentication.Events;
+using NexusAuth.Workbench.Api.Authentication.Tokens;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -73,23 +76,21 @@ public sealed class WorkbenchBffAuthenticationTests
     }
 
     [Theory]
-    [InlineData("Auth:Authority", "NEXUSAUTH_WORKBENCH_AUTH_AUTHORITY")]
-    [InlineData("Auth:Audience", "NEXUSAUTH_WORKBENCH_AUTH_AUDIENCE")]
-    [InlineData("Auth:ClientId", "NEXUSAUTH_WORKBENCH_AUTH_CLIENT_ID")]
-    [InlineData("Auth:ClientSecret", "NEXUSAUTH_WORKBENCH_AUTH_CLIENT_SECRET")]
-    [InlineData("Auth:RedirectUri", "NEXUSAUTH_WORKBENCH_AUTH_REDIRECT_URI")]
-    [InlineData("Auth:PostLogoutRedirectUri", "NEXUSAUTH_WORKBENCH_AUTH_POST_LOGOUT_REDIRECT_URI")]
-    [InlineData("Auth:Scope", "NEXUSAUTH_WORKBENCH_AUTH_SCOPE")]
+    [InlineData("Auth:Authority")]
+    [InlineData("Auth:Audience")]
+    [InlineData("Auth:ClientId")]
+    [InlineData("Auth:ClientSecret")]
+    [InlineData("Auth:RedirectUri")]
+    [InlineData("Auth:PostLogoutRedirectUri")]
+    [InlineData("Auth:Scope")]
     public void Bff_fails_startup_for_empty_required_authentication_configuration(
-        string key,
-        string environmentVariable)
+        string key)
     {
         using var factory = CreateFactory(builder => builder.UseSetting(key, ""));
 
         var exception = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
 
         Assert.Contains(key, exception.ToString());
-        Assert.Contains(environmentVariable, exception.ToString());
     }
 
     [Theory]
