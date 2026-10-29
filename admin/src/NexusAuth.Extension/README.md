@@ -1,10 +1,43 @@
 # NexusAuth.Extension
 
-`NexusAuth.Extension` 是配合 ASP.NET Core 标准 OpenID Connect 使用的流程状态扩展。它保存登录往返期间待消费的临时状态，并自行签发 HttpOnly 的浏览器绑定 Cookie；它不管理登录会话 Cookie，也不承担 OAuth/OIDC 协议客户端、登录端点、令牌兑换或身份校验职责。
+`NexusAuth.Extension` 为 ASP.NET Core 标准 OpenID Connect 提供可选扩展：流程状态存储、`client_secret_basic` 后台请求适配和原生元数据启动预热。它保存登录往返期间待消费的临时状态，并自行签发 HttpOnly 的浏览器绑定 Cookie；它不管理登录会话 Cookie，也不承担 OAuth/OIDC 协议客户端、登录端点、令牌兑换或身份校验职责。
 
 旧版 `AddNexusAuth`、`INexusAuthClient` 及其协议模型已经移除。项目不再依赖 `NexusAuth.Shared` 或 `NexusAuth.Workbench`，也不会注册登录端点、生成 PKCE、兑换授权码或重复校验 ID Token；这些工作全部由应用的 `AddOpenIdConnect` 和 Cookie 认证完成。
 
-## 注册
+## Basic 认证与元数据预热
+
+这两个扩展可以独立使用，不要求注册流程状态存储，也不要求引用 Workbench。
+
+```csharp
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using NexusAuth.Extension;
+
+const string scheme = "oidc";
+const string backchannel = "client.oidc";
+
+services.AddHttpClient(backchannel, client => client.Timeout = TimeSpan.FromSeconds(30))
+    .UseOpenIdConnectClientSecretBasic(scheme);
+services.AddAuthentication("session")
+    .AddCookie("session")
+    .AddOpenIdConnect(scheme, options =>
+    {
+        // 与普通 AddOpenIdConnect 接入相同；ClientId、ClientSecret 等配置仍走原生 Options。
+        // 请按当前应用填写 Authority、ClientId、ClientSecret、CallbackPath、Scope 等。
+        options.ResponseType = "code";
+        options.UsePkce = true;
+    });
+services.AddOptions<OpenIdConnectOptions>(scheme)
+    .Configure<IHttpClientFactory>((options, http) => options.Backchannel = http.CreateClient(backchannel));
+services.AddOpenIdConnectMetadataWarmup();
+```
+
+`UseOpenIdConnectClientSecretBasic(scheme)` 在请求阶段读取该方案的 `OpenIdConnectOptions`，把表单中的客户端凭据改为 Basic 认证头；GET 发现文档和 JWKS 请求不附带凭据。它不决定 Cookie、scope、签名算法或令牌校验策略，不自行兑换授权码。只应将它加到专用于该 OIDC 方案的后台客户端；不同方案使用不同的命名 HttpClient。Provider 要求 `client_secret_post` 时不使用此扩展。
+
+`AddOpenIdConnectMetadataWarmup()` 在后台分别预热所有已注册 OIDC 方案的原生 `ConfigurationManager`；显式提供静态 `Configuration` 的方案无需发现请求。成功后结束预热，失败的方案每 30 秒重试，不阻塞其他方案和应用启动；后续刷新由标准中间件负责。此扩展是可选的启动优化，未启用时框架仍会按需加载元数据。重复注册不会重复创建预热服务。
+
+`OpenIdConnectEndpointValidator.Validate(uri, requireHttps)` 供后台请求和浏览器跳转共用地址检查，默认要求 HTTPS，拒绝相对地址、非 HTTP(S)、内嵌凭据和片段。
+
+## 流程状态注册
 
 扩展与标准 OIDC 中间件组合使用。应用仍需自行调用 `AddAuthentication().AddOpenIdConnect(...)`，并负责授权、回调和 Cookie 策略。
 

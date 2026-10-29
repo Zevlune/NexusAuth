@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using NexusAuth.Application.Clients;
+using NexusAuth.Extension;
 using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api;
 using Xunit;
@@ -76,11 +77,9 @@ public sealed class WorkbenchClientAuthenticationTests
     public async Task Native_code_exchange_form_is_converted_to_basic_without_duplicate_credentials()
     {
         using var terminal = new CapturingHandler();
-        using var adapter = new WorkbenchBasicAuthenticationHandler(CreateOptions())
-        {
-            InnerHandler = terminal
-        };
-        using var httpClient = new HttpClient(adapter, disposeHandler: false);
+        using var provider = CreateOpenIdConnectProvider(terminal);
+        using var httpClient = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient("oidc-backchannel");
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"{Authority}/connect/token")
@@ -183,19 +182,26 @@ public sealed class WorkbenchClientAuthenticationTests
         });
     }
 
-    private static IOptions<WorkbenchAuthenticationOptions> CreateOptions()
+    private static ServiceProvider CreateOpenIdConnectProvider(CapturingHandler handler)
     {
-        return Options.Create(new WorkbenchAuthenticationOptions
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddAuthentication()
+            .AddOpenIdConnect(WorkbenchAuthenticationDefaults.OpenIdConnectScheme, options =>
+            {
+                options.Authority = Authority;
+                options.ClientId = ExpectedClientId;
+                options.ClientSecret = ExpectedClientSecret;
+                options.RequireHttpsMetadata = true;
+            });
+        services.AddHttpClient("oidc-backchannel")
+            .UseOpenIdConnectClientSecretBasic(
+                WorkbenchAuthenticationDefaults.OpenIdConnectScheme)
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        return services.BuildServiceProvider(new ServiceProviderOptions
         {
-            Authority = Authority,
-            Audience = "workbench.api",
-            ClientId = ExpectedClientId,
-            ClientSecret = ExpectedClientSecret,
-            RedirectUri = "https://app.test/signin-oidc",
-            PostLogoutRedirectUri = "https://app.test/",
-            Scope = "openid profile offline_access",
-            SignOutProvider = true,
-            RequireHttpsMetadata = true
+            ValidateScopes = true,
+            ValidateOnBuild = true
         });
     }
 

@@ -4,7 +4,7 @@
 
 - **Workbench API**：`admin/src/NexusAuth.Workbench.Api`，固定使用 ASP.NET Core OpenID Connect + Cookie 的 BFF 登录，另含管理 API 与 Swagger。
 - **Dashboard**：`admin/src/NexusAuth.Workbench.Dashboard`，React 管理界面，见 [Dashboard README](./src/NexusAuth.Workbench.Dashboard/README.md)。
-- **流程状态扩展**：`admin/src/NexusAuth.Extension`，与标准 ASP.NET Core `AddOpenIdConnect` 组合使用的可复用流程状态存储，见 [Extension README](./src/NexusAuth.Extension/README.md)。
+- **OIDC 扩展**：`admin/src/NexusAuth.Extension`，与标准 ASP.NET Core `AddOpenIdConnect` 组合使用的流程状态存储、Basic 后台请求适配与元数据预热，见 [Extension README](./src/NexusAuth.Extension/README.md)。
 
 两套应用的分工：**Workbench API + Dashboard 是一套管理工作台；[NexusAuth.Host](../src/NexusAuth.Host) 是独立的身份认证服务器。** Host 提供登录、授权、令牌和身份协议，可单独运行；Workbench 通过 OIDC 委托 Host 完成人员登录，再管理用户、客户端、资源、凭证和审计。当前实现下两者共用同一个 `nexusauth` 数据库和 schema。
 
@@ -165,3 +165,5 @@ Dockerfile：API 为 `admin/src/NexusAuth.Workbench.Api/Dockerfile`（SDK 10 构
 - [Workbench API 统一登录接入模板](../document/Workbench-API统一登录接入模板.md)
 - [Workbench Dashboard 统一登录接入模板](../document/Workbench-Dashboard统一登录接入模板.md)
 - [OAuth/OIDC 协议设计](../document/11-OAuth-OIDC协议设计.md)
+
+认证注册各项配置的用途和复用边界见 [Workbench 认证注册说明](../document/Workbench认证注册说明.md)。

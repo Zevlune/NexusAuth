@@ -576,11 +576,10 @@ public sealed class WorkbenchLoginLifecycleTests
 
         private static void RemoveDiscoveryWarmup(IServiceCollection services)
         {
+            // 这些用例精确统计登录请求触发的发现次数；预热本身由独立测试覆盖。
             var descriptors = services
                 .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
-                    && descriptor.ImplementationType?.Name.EndsWith(
-                        "DiscoveryWarmupService",
-                        StringComparison.Ordinal) == true)
+                    && descriptor.ImplementationType?.DeclaringType == typeof(OpenIdConnectMetadataWarmupExtensions))
                 .ToArray();
             foreach (var descriptor in descriptors)
                 services.Remove(descriptor);

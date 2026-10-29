@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 namespace NexusAuth.Workbench.Api;
 
 /// <summary>
-/// Keeps the Workbench authentication ticket alive while rotating its OIDC tokens.
+/// 校验 Workbench 会话有效性，并在令牌临近过期时刷新受保护票据中的令牌。
 /// </summary>
 public class WorkbenchCookieAuthenticationEvents(
     IWorkbenchTokenClient tokenClient,
@@ -48,6 +48,7 @@ public class WorkbenchCookieAuthenticationEvents(
 
         if (expiresAt > DateTimeOffset.UtcNow.Add(AccessTokenRefreshWindow))
         {
+            // 未过期也需要内省：管理员撤销会话或禁用用户后，不允许继续凭旧 Cookie 访问。
             try
             {
                 var introspection = await tokenClient.IntrospectAccessTokenAsync(
@@ -83,9 +84,7 @@ public class WorkbenchCookieAuthenticationEvents(
                 throw new InvalidOperationException("The refresh response did not contain the required tokens.");
             }
 
-            // A completed refresh may be reused briefly by concurrent requests.
-            // Recheck its persisted state in case an administrator revoked the
-            // user after that result was produced.
+            // 并发请求可能复用刚完成的刷新结果；再次内省，避免复用管理员刚撤销的令牌。
             var introspection = await tokenClient.IntrospectAccessTokenAsync(
                 refreshed.AccessToken, context.HttpContext.RequestAborted);
             if (!introspection.Active
@@ -105,8 +104,7 @@ public class WorkbenchCookieAuthenticationEvents(
                 ]);
             context.Properties.StoreTokens(tokens);
 
-            // Renew the independent Workbench session window together with the
-            // ticket so both cookie sliding and token sliding remain active.
+            // 同时更新本应用会话窗口与票据，保持 Cookie 滑动续期和令牌刷新一致。
             var now = DateTimeOffset.UtcNow;
             context.Properties.IssuedUtc = now;
             context.Properties.ExpiresUtc = now.AddHours(24);

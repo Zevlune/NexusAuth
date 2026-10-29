@@ -34,7 +34,7 @@ Workbench 为 OIDC 后通道配置专用 `HttpClient` delegating handler。该 h
 
 ## 流程状态
 
-[`NexusAuth.Extension`](../admin/src/NexusAuth.Extension) 只发布可复用的 OIDC 流程状态扩展，与标准 `AddOpenIdConnect` 组合使用：
+[`NexusAuth.Extension`](../admin/src/NexusAuth.Extension) 提供可复用的 OIDC 流程状态、Basic 后台请求适配及原生元数据预热，与标准 `AddOpenIdConnect` 组合使用：
 
 ```csharp
 services.AddOpenIdConnectFlowState()
@@ -73,7 +73,7 @@ Provider 登录页的“几天内免登录”和 Workbench 的 24 小时 BFF 会
 
 - [`AuthController`](../admin/src/NexusAuth.Workbench.Api/Controllers/AuthController.cs)：发起标准 OIDC challenge、返回登录地址和执行本地登出。
 - [`WorkbenchAuthenticationExtensions`](../admin/src/NexusAuth.Workbench.Api/WorkbenchAuthenticationExtensions.cs)：Cookie、OpenID Connect、流程状态和 Basic 后通道配置。
-- [`WorkbenchBasicAuthenticationHandler`](../admin/src/NexusAuth.Workbench.Api/WorkbenchBasicAuthenticationHandler.cs)：只适配 token 请求的 Basic 认证头。
+- [`UseOpenIdConnectClientSecretBasic`](../admin/src/NexusAuth.Extension/Authentication/OpenIdConnectBackchannelExtensions.cs)：为指定原生 OIDC 方案适配后台表单请求的 Basic 认证头。
 - [`WorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/WorkbenchTokenClient.cs)：refresh、introspection 和 revoke。
 - [`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/WorkbenchCookieAuthenticationEvents.cs)：会话 introspection 与 refresh token 轮换。
 - [`CurrentIdentityController`](../admin/src/NexusAuth.Workbench.Api/Controllers/CurrentIdentityController.cs)：`GET /api/auth/me`。

@@ -32,7 +32,7 @@ Workbench 由以下项目和进程组成：
 | --- | --- | --- | --- |
 | Workbench API | `admin/src/NexusAuth.Workbench.Api` | OIDC BFF（登录、回调、Cookie、刷新、登出）+ 管理 API + Swagger | `admin-api` |
 | Dashboard | `admin/src/NexusAuth.Workbench.Dashboard` | React 管理界面，只通过 BFF 的 `/api` 同源访问 | `dashboard` |
-| 流程状态扩展 | `admin/src/NexusAuth.Extension` | 与标准 `AddOpenIdConnect` 组合使用的内存或 Redis 流程状态；不提供 Cookie、登录端点、PKCE 或协议校验 | 随 API 编译 |
+| OIDC 扩展 | `admin/src/NexusAuth.Extension` | 流程状态、Basic 后台请求适配与原生元数据预热；不管理会话 Cookie、登录端点、PKCE 或协议校验 | 随 API 编译 |
 
 Workbench 还依赖两个外部组件：
 
@@ -358,9 +358,9 @@ Workbench API 启动时由 `WorkbenchClientCredentialHostedService` 幂等地登
 
 ### 6.3 OIDC 后通道与流程状态扩展
 
-Workbench 的浏览器登录完全由标准 `AddOpenIdConnect` 和 Cookie 中间件处理。内部 `IWorkbenchTokenClient` 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。Basic 客户端认证由 Workbench 专用 `HttpClient` delegating handler 适配；它不接管授权码兑换，也不重复验证 nonce 或 ID Token。
+Workbench 的浏览器登录完全由标准 `AddOpenIdConnect` 和 Cookie 中间件处理。内部 `IWorkbenchTokenClient` 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。Basic 客户端认证由 Extension 的 `UseOpenIdConnectClientSecretBasic(scheme)` 为专用 `HttpClient` 适配；它不接管授权码兑换，也不重复验证 nonce 或 ID Token。
 
-`admin/src/NexusAuth.Extension` 已不再是 OAuth/OIDC 协议 SDK。它只发布可复用的 OIDC 流程状态扩展，并与标准 `AddOpenIdConnect` 组合使用，不依赖 `NexusAuth.Shared` 或 `NexusAuth.Workbench`，不提供登录端点，也不生成 PKCE。接入说明见 [Extension README](../admin/src/NexusAuth.Extension/README.md)。
+`admin/src/NexusAuth.Extension` 已不再是 OAuth/OIDC 协议 SDK。它提供可复用的 OIDC 流程状态、Basic 后台请求适配及原生元数据启动预热，并与标准 `AddOpenIdConnect` 组合使用，不依赖 `NexusAuth.Shared` 或 `NexusAuth.Workbench`，不提供登录端点，也不生成 PKCE。接入说明见 [Extension README](../admin/src/NexusAuth.Extension/README.md)，各注册项用途和复用边界见 [Workbench 认证注册说明](Workbench认证注册说明.md)。
 
 ```csharp
 services.AddOpenIdConnectFlowState().UseInMemory();
