@@ -8,6 +8,7 @@ using NexusAuth.Application.Services;
 using NexusAuth.Application.Clients;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Host.Controllers;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Host.Pages;
 
@@ -69,7 +70,10 @@ public class ConsentModel(IConsentStore consentStore, IAuthorizationService auth
         };
         var present = parameters.Where(pair => pair.Value is not null)
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        if (!string.Equals(GetValue(query, "response_mode"), "form_post", StringComparison.Ordinal))
+        if (!string.Equals(
+                GetValue(query, "response_mode"),
+                OAuthResponseModes.FormPost,
+                StringComparison.Ordinal))
             return Redirect(QueryHelpers.AddQueryString(redirectUri, present));
 
         Response.Headers.CacheControl = "no-store";

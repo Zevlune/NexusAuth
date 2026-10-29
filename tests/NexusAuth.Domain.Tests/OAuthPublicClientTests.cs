@@ -1,24 +1,23 @@
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Domain.Tests;
 
 public sealed class OAuthPublicClientTests
 {
-    private const string WeChatGrantType = "urn:nexusauth:grant-type:wechat_miniprogram";
-
     [Fact]
     public void Create_allows_none_without_credentials_or_jwks()
     {
         var client = CreatePublicClient();
 
-        Assert.Equal("none", OAuthClient.TokenEndpointAuthMethodNone);
-        Assert.Equal(OAuthClient.TokenEndpointAuthMethodNone, client.TokenEndpointAuthMethod);
+        Assert.Equal(OAuthClientAuthenticationMethods.None, OAuthClient.TokenEndpointAuthMethodNone);
+        Assert.Equal(OAuthClientAuthenticationMethods.None, client.TokenEndpointAuthMethod);
         Assert.Empty(client.ClientSecrets);
         Assert.Null(client.Jwks);
         Assert.Null(client.JwksUri);
-        Assert.True(client.AllowsTokenEndpointAuthMethod(OAuthClient.TokenEndpointAuthMethodNone));
+        Assert.True(client.AllowsTokenEndpointAuthMethod(OAuthClientAuthenticationMethods.None));
         Assert.False(client.AllowsClientSecretAuthentication());
         Assert.False(client.RequiresPrivateKeyJwtAuthentication());
     }
@@ -31,7 +30,7 @@ public sealed class OAuthPublicClientTests
         var exception = Assert.Throws<InvalidOperationException>(() => OAuthClient.Create(
             "public-client",
             "Public Client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None,
             clientSecrets: [secret]));
 
         Assert.Contains("cannot have client secrets", exception.Message);
@@ -45,7 +44,7 @@ public sealed class OAuthPublicClientTests
         var exception = Assert.Throws<InvalidOperationException>(() => OAuthClient.Create(
             "public-client",
             "Public Client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None,
             jwks: jwks,
             jwksUri: jwksUri));
 
@@ -58,11 +57,11 @@ public sealed class OAuthPublicClientTests
         var client = OAuthClient.Create(
             "public-client",
             "Public Client",
-            allowedGrantTypes: [WeChatGrantType, "refresh_token"]);
+            allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram, OAuthGrantTypes.RefreshToken]);
 
-        client.Update(tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone);
+        client.Update(tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None);
 
-        Assert.Equal(OAuthClient.TokenEndpointAuthMethodNone, client.TokenEndpointAuthMethod);
+        Assert.Equal(OAuthClientAuthenticationMethods.None, client.TokenEndpointAuthMethod);
         Assert.Empty(client.ClientSecrets);
     }
 
@@ -72,8 +71,8 @@ public sealed class OAuthPublicClientTests
         var exception = Assert.Throws<InvalidOperationException>(() => OAuthClient.Create(
             "public-client",
             "Public Client",
-            allowedGrantTypes: ["authorization_code"],
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone));
+            allowedGrantTypes: [OAuthGrantTypes.AuthorizationCode],
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None));
 
         Assert.Contains("requires the WeChat mini program grant", exception.Message);
     }
@@ -87,7 +86,7 @@ public sealed class OAuthPublicClientTests
         Assert.Throws<InvalidOperationException>(() => client.Update(clientSecrets: [secret]));
 
         Assert.Empty(client.ClientSecrets);
-        Assert.Equal(OAuthClient.TokenEndpointAuthMethodNone, client.TokenEndpointAuthMethod);
+        Assert.Equal(OAuthClientAuthenticationMethods.None, client.TokenEndpointAuthMethod);
     }
 
     [Fact]
@@ -107,7 +106,7 @@ public sealed class OAuthPublicClientTests
         return OAuthClient.Create(
             "public-client",
             "Public Client",
-            allowedGrantTypes: [WeChatGrantType, "refresh_token"],
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone);
+            allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram, OAuthGrantTypes.RefreshToken],
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None);
     }
 }

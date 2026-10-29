@@ -13,6 +13,7 @@ using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -21,19 +22,19 @@ public class ClientAuthenticationStrategyTests
 {
     [Theory]
     [InlineData(
-        OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+        OAuthClientAuthenticationMethods.PrivateKeyJwt,
         "PrivateKeyJwtAuthenticationStrategy")]
     [InlineData(
-        OAuthClient.TokenEndpointAuthMethodClientSecretJwt,
+        OAuthClientAuthenticationMethods.ClientSecretJwt,
         "ClientSecretJwtAuthenticationStrategy")]
     [InlineData(
-        OAuthClient.TokenEndpointAuthMethodClientSecretBasic,
+        OAuthClientAuthenticationMethods.ClientSecretBasic,
         "ClientSecretBasicAuthenticationStrategy")]
     [InlineData(
-        OAuthClient.TokenEndpointAuthMethodClientSecretPost,
+        OAuthClientAuthenticationMethods.ClientSecretPost,
         "ClientSecretPostAuthenticationStrategy")]
     [InlineData(
-        OAuthClient.TokenEndpointAuthMethodNone,
+        OAuthClientAuthenticationMethods.None,
         "NoneAuthenticationStrategy")]
     public void Assembly_scanning_registers_each_supported_method_key(
         string method,
@@ -67,8 +68,8 @@ public class ClientAuthenticationStrategyTests
     }
 
     [Theory]
-    [InlineData(OAuthClient.TokenEndpointAuthMethodClientSecretBasic)]
-    [InlineData(OAuthClient.TokenEndpointAuthMethodClientSecretPost)]
+    [InlineData(OAuthClientAuthenticationMethods.ClientSecretBasic)]
+    [InlineData(OAuthClientAuthenticationMethods.ClientSecretPost)]
     public async Task Client_service_dispatches_shared_secret_methods(string method)
     {
         var (client, rawSecret) = CreateSharedSecretClient(method);
@@ -85,12 +86,12 @@ public class ClientAuthenticationStrategyTests
 
     [Theory]
     [InlineData(
-        OAuthClient.TokenEndpointAuthMethodClientSecretBasic,
-        OAuthClient.TokenEndpointAuthMethodClientSecretPost,
+        OAuthClientAuthenticationMethods.ClientSecretBasic,
+        OAuthClientAuthenticationMethods.ClientSecretPost,
         "Client must authenticate with client_secret_basic.")]
     [InlineData(
-        OAuthClient.TokenEndpointAuthMethodClientSecretPost,
-        OAuthClient.TokenEndpointAuthMethodClientSecretBasic,
+        OAuthClientAuthenticationMethods.ClientSecretPost,
+        OAuthClientAuthenticationMethods.ClientSecretBasic,
         "Client must authenticate with client_secret_post.")]
     public async Task Shared_secret_strategies_preserve_method_errors(
         string clientMethod,
@@ -113,7 +114,7 @@ public class ClientAuthenticationStrategyTests
     [Fact]
     public async Task Shared_secret_strategy_rejects_assertions_before_method_mismatch()
     {
-        var (client, _) = CreateSharedSecretClient(OAuthClient.TokenEndpointAuthMethodClientSecretBasic);
+        var (client, _) = CreateSharedSecretClient(OAuthClientAuthenticationMethods.ClientSecretBasic);
         using var strategyProvider = CreateStrategyProvider();
         var service = CreateClientService(client, strategyProvider);
 
@@ -121,10 +122,10 @@ public class ClientAuthenticationStrategyTests
             new ClientAuthenticationInput(
                 client.ClientId,
                 null,
-                OAuthClient.ClientAssertionTypeJwtBearer,
+                OAuthClientAssertionTypes.JwtBearer,
                 "unused-assertion",
                 null,
-                OAuthClient.TokenEndpointAuthMethodClientSecretPost),
+                OAuthClientAuthenticationMethods.ClientSecretPost),
             requireClientAuthentication: true);
 
         Assert.False(result.IsSuccess);
@@ -139,8 +140,8 @@ public class ClientAuthenticationStrategyTests
         var client = OAuthClient.Create(
             "public-client",
             "Public client",
-            allowedGrantTypes: ["urn:nexusauth:grant-type:wechat_miniprogram"],
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone);
+            allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram],
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None);
         using var strategyProvider = CreateStrategyProvider();
         var service = CreateClientService(client, strategyProvider);
 
@@ -148,7 +149,7 @@ public class ClientAuthenticationStrategyTests
             new ClientAuthenticationInput(
                 client.ClientId,
                 "unused-secret",
-                OAuthClient.ClientAssertionTypeJwtBearer,
+                OAuthClientAssertionTypes.JwtBearer,
                 "unused-assertion"),
             requireClientAuthentication: false);
 
@@ -162,8 +163,8 @@ public class ClientAuthenticationStrategyTests
         var client = OAuthClient.Create(
             "public-client-required",
             "Public client",
-            allowedGrantTypes: ["urn:nexusauth:grant-type:wechat_miniprogram"],
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone);
+            allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram],
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None);
         using var strategyProvider = CreateStrategyProvider();
         var service = CreateClientService(client, strategyProvider);
 
@@ -171,7 +172,7 @@ public class ClientAuthenticationStrategyTests
             new ClientAuthenticationInput(
                 client.ClientId,
                 null,
-                OAuthClient.ClientAssertionTypeJwtBearer,
+                OAuthClientAssertionTypes.JwtBearer,
                 "unused-assertion"),
             requireClientAuthentication: true);
         var missingCredentialResult = await service.AuthenticateClientAsync(
@@ -191,7 +192,7 @@ public class ClientAuthenticationStrategyTests
     [Fact]
     public async Task Multiple_credentials_are_rejected_before_strategy_dispatch()
     {
-        var (client, rawSecret) = CreateSharedSecretClient(OAuthClient.TokenEndpointAuthMethodClientSecretPost);
+        var (client, rawSecret) = CreateSharedSecretClient(OAuthClientAuthenticationMethods.ClientSecretPost);
         using var strategyProvider = CreateStrategyProvider();
         var service = CreateClientService(client, strategyProvider);
 
@@ -199,10 +200,10 @@ public class ClientAuthenticationStrategyTests
             new ClientAuthenticationInput(
                 client.ClientId,
                 rawSecret,
-                OAuthClient.ClientAssertionTypeJwtBearer,
+                OAuthClientAssertionTypes.JwtBearer,
                 "assertion",
                 "https://issuer.example/token",
-                OAuthClient.TokenEndpointAuthMethodClientSecretPost),
+                OAuthClientAuthenticationMethods.ClientSecretPost),
             requireClientAuthentication: true);
 
         Assert.False(result.IsSuccess);
@@ -222,7 +223,7 @@ public class ClientAuthenticationStrategyTests
             clientId,
             "client-secret-jwt-client",
             "Client secret JWT client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodClientSecretJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretJwt,
             clientSecrets: [secret]);
         var (blacklistRepository, blacklistState) = CreateBlacklistRepository();
         using var serviceProvider = CreateStrategyProvider(blacklistRepository);
@@ -265,7 +266,7 @@ public class ClientAuthenticationStrategyTests
             clientId,
             "client-secret-jwt-multiple-audiences-client",
             "Client secret JWT client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodClientSecretJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretJwt,
             clientSecrets: [secret]);
         var (blacklistRepository, _) = CreateBlacklistRepository();
         using var serviceProvider = CreateStrategyProvider(blacklistRepository);
@@ -280,7 +281,7 @@ public class ClientAuthenticationStrategyTests
             new ClientAuthenticationInput(
                 client.ClientId,
                 null,
-                OAuthClient.ClientAssertionTypeJwtBearer,
+                OAuthClientAssertionTypes.JwtBearer,
                 assertion,
                 "https://issuer.example",
                 null,
@@ -314,7 +315,7 @@ public class ClientAuthenticationStrategyTests
         var client = OAuthClient.Create(
             "private-key-jwt-client",
             "Private key JWT client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.PrivateKeyJwt,
             jwks: jwks);
         var (blacklistRepository, _) = CreateBlacklistRepository();
         using var serviceProvider = CreateStrategyProvider(blacklistRepository);
@@ -346,7 +347,7 @@ public class ClientAuthenticationStrategyTests
         return new ClientAuthenticationInput(
             clientId,
             null,
-            OAuthClient.ClientAssertionTypeJwtBearer,
+            OAuthClientAssertionTypes.JwtBearer,
             assertion,
             audience);
     }
@@ -360,7 +361,7 @@ public class ClientAuthenticationStrategyTests
             rawSecret,
             persistPlainValue: string.Equals(
                 method,
-                OAuthClient.TokenEndpointAuthMethodClientSecretJwt,
+                OAuthClientAuthenticationMethods.ClientSecretJwt,
                 StringComparison.Ordinal));
         var client = OAuthClient.Create(
             clientId,

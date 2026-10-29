@@ -2,6 +2,7 @@
 using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.Security;
 using NexusAuth.Application.Services.Tokens;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Services.DeviceAuthorization;
 
@@ -28,7 +29,7 @@ public class DeviceAuthorizationService(
         if (!policy.IsSuccess)
             return DeviceAuthorizationStartResult.Failure("access_denied", policy.Error ?? "Client denied.");
 
-        if (!clientAuthentication.Client!.IsGrantTypeAllowed("urn:ietf:params:oauth:grant-type:device_code"))
+        if (!clientAuthentication.Client!.IsGrantTypeAllowed(OAuthGrantTypes.DeviceCode))
             return DeviceAuthorizationStartResult.Failure("unauthorized_client", "Client is not allowed to use device_code grant type.");
 
         var scopeValidation = await clientService.ValidateScopesAsync(clientId, scope, allowIdentityScopes: true, ct);
@@ -76,6 +77,18 @@ public class DeviceAuthorizationService(
         if (!await IsActiveUserAsync(userId, ct))
             return DeviceAuthorizationSessionResult.Failure("The user account is not allowed to approve this device.");
 
+        var clientPolicy = securityPolicyService.CheckClient(authorization.ClientId);
+        if (!clientPolicy.IsSuccess)
+            return DeviceAuthorizationSessionResult.Failure(clientPolicy.Error ?? "The client is no longer allowed to use device authorization.");
+
+        var scopeValidation = await clientService.ValidateScopesAsync(
+            authorization.ClientId,
+            authorization.Scope,
+            allowIdentityScopes: true,
+            ct);
+        if (!scopeValidation.IsSuccess)
+            return DeviceAuthorizationSessionResult.Failure(scopeValidation.Error ?? "The device authorization scope is no longer valid.");
+
         var approved = await deviceAuthorizationRepository.ApprovePendingAsync(
             authorization.Id,
             userId,
@@ -103,7 +116,7 @@ public class DeviceAuthorizationService(
         if (!policy.IsSuccess)
             return DeviceAuthorizationPollResult.Failure("access_denied", policy.Error ?? "Client denied.");
 
-        if (!clientAuthentication.Client.IsGrantTypeAllowed("urn:ietf:params:oauth:grant-type:device_code"))
+        if (!clientAuthentication.Client.IsGrantTypeAllowed(OAuthGrantTypes.DeviceCode))
             return DeviceAuthorizationPollResult.Failure("unauthorized_client", "Client is not allowed to use device_code grant type.");
 
         var deviceCodeHash = Domain.Entities.DeviceAuthorization.Hash(deviceCode);
@@ -119,6 +132,18 @@ public class DeviceAuthorizationService(
         var now = DateTimeOffset.UtcNow;
         if (authorization.ExpiresAt <= now)
             return DeviceAuthorizationPollResult.Failure("expired_token", "The device code has expired.");
+
+        // The persisted scope is immutable. Revalidate it before any status branch
+        // so a concurrent approval cannot skip the current client/resource checks.
+        var scopeValidation = await clientService.ValidateScopesAsync(
+            clientId,
+            authorization.Scope,
+            allowIdentityScopes: true,
+            ct);
+        if (!scopeValidation.IsSuccess)
+            return DeviceAuthorizationPollResult.Failure(
+                "invalid_grant",
+                scopeValidation.Error ?? "The device authorization scope is no longer valid.");
 
         if (authorization.Status == Domain.Entities.DeviceAuthorizationStatus.Pending)
             return await RegisterPendingPollAsync(deviceCodeHash, authorization, now, ct);

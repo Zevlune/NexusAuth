@@ -17,6 +17,7 @@ import {
 } from '../../api/client';
 import { getAllApiResources, type ApiResource } from '../../api/api-resource';
 import { getClientMetadata, type ClientMetadata } from '../../api/client-metadata';
+import { OAuthClientAuthenticationMethods, OAuthGrantTypes } from '../../constants/oauth';
 import {
   authMethodOptions,
   canResetClientCredential,
@@ -59,17 +60,6 @@ const jwksInputModeOptions = [
   { label: '手动录入', value: 'manual' },
 ];
 
-const oauthStandardScopeOptions = [
-  { label: 'openid', value: 'openid' },
-  { label: 'profile', value: 'profile' },
-  { label: 'email', value: 'email' },
-  { label: 'phone', value: 'phone' },
-  { label: 'address', value: 'address' },
-  { label: 'offline_access', value: 'offline_access' },
-];
-
-const oauthStandardScopeValues = new Set(oauthStandardScopeOptions.map((scope) => scope.value));
-
 const defaultFormData: ClientFormData = {
   clientId: '',
   clientName: '',
@@ -81,7 +71,7 @@ const defaultFormData: ClientFormData = {
   apiResourceIds: [],
   requirePkce: false,
   requireConsent: false,
-  tokenEndpointAuthMethod: 'client_secret_basic',
+  tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretBasic,
   keyMaterialSource: 'jwks',
   jwksInputMode: 'manual',
   jwks: '',
@@ -111,7 +101,7 @@ const formatDateTime = (value?: string) => {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
 };
 
-const toFormData = (client: Client): ClientFormData => ({
+const toFormData = (client: Client, availableScopes: ReadonlySet<string>): ClientFormData => ({
   clientId: client.clientId,
   clientName: client.clientName,
   description: client.description ?? '',
@@ -121,8 +111,8 @@ const toFormData = (client: Client): ClientFormData => ({
   postLogoutRedirectUris: client.postLogoutRedirectUris?.length
     ? client.postLogoutRedirectUris.map((uri, index) => ({ id: String(index + 1), value: uri }))
     : [{ id: '1', value: '' }],
-  allowedScopes: (client.allowedScopes ?? ['openid']).filter((scope) => oauthStandardScopeValues.has(scope)),
-  allowedGrantTypes: client.allowedGrantTypes ?? ['authorization_code'],
+  allowedScopes: (client.allowedScopes ?? []).filter((scope) => availableScopes.has(scope)),
+  allowedGrantTypes: client.allowedGrantTypes ?? [OAuthGrantTypes.AuthorizationCode],
   apiResourceIds: client.apiResourceIds ?? [],
   requirePkce: client.requirePkce,
   requireConsent: client.requireConsent ?? false,
@@ -139,16 +129,23 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
   const { id } = useParams();
   const isEditMode = mode === 'edit';
   const [clientMetadata, setClientMetadata] = useState<ClientMetadata>(defaultClientMetadata);
+  const [clientMetadataReady, setClientMetadataReady] = useState(false);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
   const [apiResources, setApiResources] = useState<ApiResource[]>([]);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [formData, setFormData] = useState<ClientFormData>(defaultFormData);
   const formRef = useRef<FormInstanceFunctions<ClientFormData> | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [loadingMetadata, setLoadingMetadata] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingResources, setLoadingResources] = useState(false);
   const [generatedCredential, setGeneratedCredential] = useState<GeneratedClientCredential | null>(null);
   const [createdClientId, setCreatedClientId] = useState<string | null>(null);
   const hasLegacyJwksUri = Boolean(editingClient?.jwksUri);
+  const metadataScopeValues = useMemo(
+    () => new Set(clientMetadata.scopes.map((scope) => scope.value)),
+    [clientMetadata.scopes],
+  );
 
   const authMethodSelectOptions = useMemo(
     () => {
@@ -177,7 +174,6 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
 
   const scopeSelectOptions = useMemo(
     () => mergeOptions(
-      oauthStandardScopeOptions,
       clientMetadata.scopes,
       formData.allowedScopes.map((value) => ({ label: value, value })),
     ),
@@ -198,27 +194,47 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
 
   useEffect(() => {
     let active = true;
-    setLoadingResources(true);
-    Promise.all([
-      getClientMetadata().catch((error) => {
+    setLoadingMetadata(true);
+    setClientMetadataReady(false);
+    setMetadataError(null);
+
+    getClientMetadata()
+      .then((metadata) => {
+        if (!active) {
+          return;
+        }
+        setClientMetadata(metadata);
+        setClientMetadataReady(true);
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
         console.error('Failed to fetch client metadata:', error);
-        return defaultClientMetadata;
-      }),
-      getAllApiResources({ isActive: true }).catch((error) => {
+        setMetadataError(getRequestErrorMessage(error, '加载 Scope 元数据失败'));
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingMetadata(false);
+        }
+      });
+
+    setLoadingResources(true);
+    getAllApiResources({ isActive: true })
+      .catch((error) => {
         console.error('Failed to fetch active API resources:', error);
         return [];
-      }),
-    ]).then(([metadata, resources]) => {
-      if (!active) {
-        return;
-      }
-      setClientMetadata(metadata);
-      setApiResources(resources);
-    }).finally(() => {
-      if (active) {
-        setLoadingResources(false);
-      }
-    });
+      })
+      .then((resources) => {
+        if (active) {
+          setApiResources(resources);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingResources(false);
+        }
+      });
 
     return () => {
       active = false;
@@ -226,10 +242,17 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
   }, []);
 
   useEffect(() => {
+    if (isEditMode) {
+      return;
+    }
+
+    setEditingClient(null);
+    setFormData(defaultFormData);
+    setGeneratedCredential(null);
+  }, [isEditMode]);
+
+  useEffect(() => {
     if (!isEditMode) {
-      setEditingClient(null);
-      setFormData(defaultFormData);
-      setGeneratedCredential(null);
       return;
     }
 
@@ -239,13 +262,17 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
       return;
     }
 
+    if (!clientMetadataReady) {
+      return;
+    }
+
     const fetchDetail = async () => {
       try {
         setLoadingDetail(true);
         setGeneratedCredential(null);
         const detail = await getClient(id);
         setEditingClient(detail);
-        setFormData(toFormData(detail));
+        setFormData(toFormData(detail, metadataScopeValues));
       } catch (error) {
         console.error('Failed to fetch client detail:', error);
         MessagePlugin.error(getRequestErrorMessage(error, '加载应用详情失败'));
@@ -256,7 +283,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     };
 
     fetchDetail();
-  }, [id, isEditMode, navigate]);
+  }, [clientMetadataReady, id, isEditMode, metadataScopeValues, navigate]);
 
   useEffect(() => {
     if (loadingDetail) {
@@ -294,10 +321,10 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     setFormData((prev) => ({
       ...prev,
       tokenEndpointAuthMethod: value,
-      keyMaterialSource: value === 'private_key_jwt' ? prev.keyMaterialSource : 'jwks',
-      jwksInputMode: value === 'private_key_jwt' ? prev.jwksInputMode : 'manual',
-      jwks: value === 'private_key_jwt' ? prev.jwks : '',
-      jwksUri: value === 'private_key_jwt' ? prev.jwksUri : '',
+      keyMaterialSource: value === OAuthClientAuthenticationMethods.PrivateKeyJwt ? prev.keyMaterialSource : 'jwks',
+      jwksInputMode: value === OAuthClientAuthenticationMethods.PrivateKeyJwt ? prev.jwksInputMode : 'manual',
+      jwks: value === OAuthClientAuthenticationMethods.PrivateKeyJwt ? prev.jwks : '',
+      jwksUri: value === OAuthClientAuthenticationMethods.PrivateKeyJwt ? prev.jwksUri : '',
     }));
   };
 
@@ -379,7 +406,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
         tokenEndpointAuthMethod: editingClient.tokenEndpointAuthMethod,
       });
       setEditingClient(result.client);
-      setFormData(toFormData(result.client));
+      setFormData(toFormData(result.client, metadataScopeValues));
       setGeneratedCredential(result.generatedCredential ?? null);
       MessagePlugin.success('密钥已重置');
     } catch (error) {
@@ -404,7 +431,8 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
     const requirePkce = Boolean(form.getFieldValue('requirePkce'));
     const requireConsent = Boolean(form.getFieldValue('requireConsent'));
     const isActive = Boolean(form.getFieldValue('isActive'));
-    const isPrivateKeyJwt = formData.tokenEndpointAuthMethod === 'private_key_jwt';
+    const isPrivateKeyJwt =
+      formData.tokenEndpointAuthMethod === OAuthClientAuthenticationMethods.PrivateKeyJwt;
     const jwks = isPrivateKeyJwt && formData.keyMaterialSource === 'jwks' && formData.jwksInputMode === 'manual'
       ? formData.jwks.trim() || undefined
       : undefined;
@@ -439,7 +467,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
         };
         const updated = await updateClient(editingClient.id, request);
         setEditingClient(updated);
-        setFormData(toFormData(updated));
+        setFormData(toFormData(updated, metadataScopeValues));
         MessagePlugin.success('应用已保存');
         return;
       }
@@ -592,6 +620,9 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
         </div>
       </div>
 
+      {metadataError && (
+        <Alert theme="error" message={metadataError} />
+      )}
       {renderClientOverview()}
       {renderCredentialDialog()}
 
@@ -651,7 +682,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
                 </div>
               </div>
 
-              {formData.tokenEndpointAuthMethod === 'private_key_jwt' && (
+              {formData.tokenEndpointAuthMethod === OAuthClientAuthenticationMethods.PrivateKeyJwt && (
                 <div className="client-jwt-material">
                   <Typography.Text strong className="client-form-section__subheading">JWT 客户端认证材料</Typography.Text>
                   {(hasLegacyJwksUri || !isEditMode) && (
@@ -689,7 +720,14 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
           </div>
 
           <div className="client-form-actions">
-            <Button theme="primary" loading={submitting} disabled={loadingDetail} onClick={handleSubmit}>{isEditMode ? '保存' : '创建'}</Button>
+            <Button
+              theme="primary"
+              loading={submitting}
+              disabled={loadingMetadata || loadingDetail || Boolean(metadataError)}
+              onClick={handleSubmit}
+            >
+              {isEditMode ? '保存' : '创建'}
+            </Button>
           </div>
         </Form>
       </Loading>

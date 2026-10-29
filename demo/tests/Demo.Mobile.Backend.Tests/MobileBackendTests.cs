@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace Demo.Mobile.Backend.Tests;
@@ -146,7 +147,7 @@ public sealed class MobileBackendTests : IClassFixture<MobileBackendFixture>
         var uri = new Uri(body!.AuthorizationUrl);
         provider.ExpectedCodeChallenge = GetQuery(uri, "code_challenge");
         Assert.Equal(43, provider.ExpectedCodeChallenge.Length);
-        Assert.Equal("S256", GetQuery(uri, "code_challenge_method"));
+        Assert.Equal(PkceMethods.S256, GetQuery(uri, "code_challenge_method"));
         return new(verifier, GetQuery(uri, "state"), GetQuery(uri, "nonce"), appState.PadRight(43, 'x'));
     }
 
@@ -174,7 +175,8 @@ public sealed class MobileBackendFixture : WebApplicationFactory<Program>
             ["NexusAuth:ClientId"] = FakeProvider.ClientId,
             ["NexusAuth:ClientSecret"] = FakeProvider.ClientSecret,
             ["NexusAuth:RedirectUri"] = "http://localhost:5401/signin-oidc",
-            ["NexusAuth:Scope"] = "openid profile email offline_access",
+            ["NexusAuth:Scope"] = OidcScopes.OpenId + " " + OidcScopes.Profile
+                + " " + OidcScopes.Email + " " + OidcScopes.OfflineAccess,
             ["Mobile:CallbackUri"] = "nexusauth-demo://auth/callback",
         })).ConfigureTestServices(services => services
             .AddHttpClient<Demo.Mobile.Backend.OidcClient>()
@@ -242,12 +244,12 @@ public sealed class FakeProvider : HttpMessageHandler
         var basic = request.Headers.Authorization?.Parameter;
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes(Uri.EscapeDataString(ClientId) + ":" + Uri.EscapeDataString(ClientSecret))), basic);
         var fields = QueryHelpers.ParseQuery(await request.Content!.ReadAsStringAsync(ct));
-        if (fields["grant_type"] == "refresh_token")
+        if (fields["grant_type"] == OAuthGrantTypes.RefreshToken)
         {
             if (RejectRefresh || fields["refresh_token"] != "refresh-1") return new HttpResponseMessage(HttpStatusCode.Unauthorized);
             return Json(new { access_token = "access-rotated", refresh_token = "refresh-rotated", id_token = (string?)null, expires_in = 3600, token_type = "Bearer" });
         }
-        Assert.Equal("authorization_code", fields["grant_type"]);
+        Assert.Equal(OAuthGrantTypes.AuthorizationCode, fields["grant_type"]);
         Assert.Equal("auth-code", fields["code"]);
         Assert.Equal("http://localhost:5401/signin-oidc", fields["redirect_uri"]);
         var verifier = fields["code_verifier"].ToString();

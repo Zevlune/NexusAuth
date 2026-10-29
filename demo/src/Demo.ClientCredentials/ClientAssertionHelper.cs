@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
+using NexusAuth.Shared.OAuth;
 
 internal static class ClientAssertionHelper
 {
@@ -38,7 +39,7 @@ internal static class ClientAssertionHelper
         var handler = new JwtSecurityTokenHandler();
         var token = handler.CreateToken(descriptor);
         form["client_id"] = clientId;
-        form["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+        form["client_assertion_type"] = OAuthClientAssertionTypes.JwtBearer;
         form["client_assertion"] = handler.WriteToken(token);
     }
 

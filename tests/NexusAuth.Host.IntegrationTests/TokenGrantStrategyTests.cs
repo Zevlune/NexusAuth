@@ -17,14 +17,13 @@ using NexusAuth.Domain.Repositories;
 using NexusAuth.Host.Controllers;
 using NexusAuth.Host.TokenEndpoint;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
 
 public class TokenGrantStrategyTests
 {
-    private const string DeviceGrant = "urn:ietf:params:oauth:grant-type:device_code";
-
     [Fact]
     public async Task Di_resolves_all_grants_and_accepts_an_additional_strategy()
     {
@@ -32,7 +31,14 @@ public class TokenGrantStrategyTests
         services.AddScopeKeyedServices(typeof(ExtensionTokenGrantStrategy).Assembly);
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         using var scope = provider.CreateScope();
-        var grantKeys = new[] { "authorization_code", "client_credentials", "refresh_token", DeviceGrant, WeChatMiniProgramGrantTypes.GrantType };
+        var grantKeys = new[]
+        {
+            OAuthGrantTypes.AuthorizationCode,
+            OAuthGrantTypes.ClientCredentials,
+            OAuthGrantTypes.RefreshToken,
+            OAuthGrantTypes.DeviceCode,
+            OAuthGrantTypes.WeChatMiniProgram,
+        };
         foreach (var key in grantKeys)
             Assert.NotNull(scope.ServiceProvider.ResolveKeyed<ITokenGrantStrategy>(key));
         var extension = scope.ServiceProvider.ResolveKeyed<ITokenGrantStrategy>("extension");
@@ -63,10 +69,10 @@ public class TokenGrantStrategyTests
     }
 
     [Theory]
-    [InlineData("authorization_code")]
-    [InlineData("client_credentials")]
-    [InlineData("refresh_token")]
-    [InlineData(DeviceGrant)]
+    [InlineData(OAuthGrantTypes.AuthorizationCode)]
+    [InlineData(OAuthGrantTypes.ClientCredentials)]
+    [InlineData(OAuthGrantTypes.RefreshToken)]
+    [InlineData(OAuthGrantTypes.DeviceCode)]
     public async Task Every_standard_grant_rejects_mixed_credentials_before_services_are_called(string grant)
     {
         using var provider = Services().BuildServiceProvider();
@@ -89,7 +95,10 @@ public class TokenGrantStrategyTests
             return Task.FromResult(ClientAuthenticationResult.Failure("invalid_client", "rejected"));
         }));
         using var provider = services.BuildServiceProvider();
-        var context = Context(new TokenRequest("client_credentials", basic ? null : "client", basic ? null : "secret"));
+        var context = Context(new TokenRequest(
+            OAuthGrantTypes.ClientCredentials,
+            basic ? null : "client",
+            basic ? null : "secret"));
         if (basic)
             context.HttpContext.Request.Headers.Authorization = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("client:secret"));
         var result = await ExecuteAsync(provider, context);
@@ -111,7 +120,7 @@ public class TokenGrantStrategyTests
             "client",
             "Client",
             allowedScopes: ["orders.api"],
-            allowedGrantTypes: ["client_credentials"]);
+            allowedGrantTypes: [OAuthGrantTypes.ClientCredentials]);
         var services = Services();
         services.AddSingleton(Stub<IClientService>((method, args) => method.Name switch
         {
@@ -132,7 +141,10 @@ public class TokenGrantStrategyTests
 
         using var provider = services.BuildServiceProvider();
         var result = await ExecuteAsync(provider, Context(new TokenRequest(
-            "client_credentials", "client", "secret", Scope: "orders.api")));
+            OAuthGrantTypes.ClientCredentials,
+            "client",
+            "secret",
+            Scope: "orders.api")));
 
         var error = AssertError(result, 400, "invalid_scope");
         Assert.Equal("Requested scopes span multiple audiences.", error.GetProperty("error_description").GetString());
@@ -162,7 +174,7 @@ public class TokenGrantStrategyTests
             method.Name == nameof(ISecurityPolicyService.CheckUser) ? policy.Service.CheckUser(user) : null));
         services.AddSingleton(Stub<IDeviceAuthorizationService>((method, _) =>
             method.Name == nameof(IDeviceAuthorizationService.PollAsync)
-                ? Task.FromResult(DeviceAuthorizationPollResult.Success(user.Id, "client", "openid"))
+                ? Task.FromResult(DeviceAuthorizationPollResult.Success(user.Id, "client", OidcScopes.OpenId))
                 : null));
         services.AddSingleton(Stub<ITokenService>((_, _) =>
         {
@@ -172,7 +184,9 @@ public class TokenGrantStrategyTests
 
         using var provider = services.BuildServiceProvider();
         var result = await ExecuteAsync(provider, Context(new TokenRequest(
-            DeviceGrant, "client", DeviceCode: "device-code")));
+            OAuthGrantTypes.DeviceCode,
+            "client",
+            DeviceCode: "device-code")));
 
         AssertError(result, 400, "invalid_grant");
         Assert.Equal(0, issued);
@@ -191,7 +205,7 @@ public class TokenGrantStrategyTests
             method.Name == nameof(ISecurityPolicyService.CheckUser) ? PolicyCheckResult.Success() : null));
         services.AddSingleton(Stub<IDeviceAuthorizationService>((method, _) =>
             method.Name == nameof(IDeviceAuthorizationService.PollAsync)
-                ? Task.FromResult(DeviceAuthorizationPollResult.Success(user.Id, "client", "openid"))
+                ? Task.FromResult(DeviceAuthorizationPollResult.Success(user.Id, "client", OidcScopes.OpenId))
                 : null));
         services.AddSingleton(Stub<ITokenService>((method, _) =>
             method.Name == nameof(ITokenService.IssueAccessTokenWithMetadataAsync)
@@ -200,7 +214,9 @@ public class TokenGrantStrategyTests
 
         using var provider = services.BuildServiceProvider();
         var result = await ExecuteAsync(provider, Context(new TokenRequest(
-            DeviceGrant, "client", DeviceCode: "device-code")));
+            OAuthGrantTypes.DeviceCode,
+            "client",
+            DeviceCode: "device-code")));
 
         AssertError(result, 400, "invalid_grant");
     }
@@ -210,8 +226,10 @@ public class TokenGrantStrategyTests
     {
         var user = User.Create("wechat-user", "test-password", "WeChat User");
         var client = OAuthClient.Create(
-            "mini", "Mini", allowedGrantTypes: [WeChatMiniProgramGrantTypes.GrantType],
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodNone);
+            "mini",
+            "Mini",
+            allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram],
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None);
         var services = Services();
         services.AddSingleton(Stub<IClientService>((method, args) => method.Name switch
         {
@@ -237,7 +255,10 @@ public class TokenGrantStrategyTests
 
         using var provider = services.BuildServiceProvider();
         var context = Context(new TokenRequest(
-            WeChatMiniProgramGrantTypes.GrantType, "mini", Code: "code", Scope: "openid"));
+            OAuthGrantTypes.WeChatMiniProgram,
+            "mini",
+            Code: "code",
+            Scope: OidcScopes.OpenId));
         context.HttpContext.Request.ContentType = "application/x-www-form-urlencoded";
         context.HttpContext.Request.ContentLength = 0;
         var result = await ExecuteAsync(provider, context);
@@ -264,7 +285,10 @@ public class TokenGrantStrategyTests
             return Task.FromResult(DeviceAuthorizationPollResult.Failure(pollError, "poll failed", 9));
         }));
         using var provider = services.BuildServiceProvider();
-        var context = Context(new TokenRequest(DeviceGrant, "client", DeviceCode: "device-code"));
+        var context = Context(new TokenRequest(
+            OAuthGrantTypes.DeviceCode,
+            "client",
+            DeviceCode: "device-code"));
         var result = await ExecuteAsync(provider, context);
         var json = AssertError(result, status, error);
         Assert.Equal(interval, json.TryGetProperty("interval", out var value));
@@ -285,7 +309,9 @@ public class TokenGrantStrategyTests
             return Task.FromResult(ClientAuthenticationResult.Failure("invalid_client", "rejected"));
         }));
         using var provider = services.BuildServiceProvider();
-        var result = await ExecuteAsync(provider, Context(new TokenRequest("refresh_token", clientId)));
+        var result = await ExecuteAsync(
+            provider,
+            Context(new TokenRequest(OAuthGrantTypes.RefreshToken, clientId)));
         AssertError(result, 401, "invalid_client");
     }
 
@@ -301,10 +327,15 @@ public class TokenGrantStrategyTests
         {
             Assert.Equal(false, args![1]);
             return Task.FromResult(ClientAuthenticationResult.Success(OAuthClient.Create(
-                "mini", "Mini", allowedGrantTypes: [WeChatMiniProgramGrantTypes.GrantType], tokenEndpointAuthMethod: supplied == "confidential-method" ? "client_secret_post" : "none")));
+                "mini",
+                "Mini",
+                allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram],
+                tokenEndpointAuthMethod: supplied == "confidential-method"
+                    ? OAuthClientAuthenticationMethods.ClientSecretPost
+                    : OAuthClientAuthenticationMethods.None)));
         }));
         using var provider = services.BuildServiceProvider();
-        var context = Context(new TokenRequest("refresh_token", "mini",
+        var context = Context(new TokenRequest(OAuthGrantTypes.RefreshToken, "mini",
             ClientSecret: supplied == "secret" ? "" : null,
             ClientAssertionType: supplied == "assertion" ? "" : null));
         if (supplied == "basic")
@@ -319,8 +350,10 @@ public class TokenGrantStrategyTests
     {
         var clientId = publicClient ? "mini" : "client";
         var client = OAuthClient.Create(clientId, "Refresh client",
-            allowedGrantTypes: ["refresh_token", WeChatMiniProgramGrantTypes.GrantType],
-            tokenEndpointAuthMethod: publicClient ? "none" : "client_secret_post");
+            allowedGrantTypes: [OAuthGrantTypes.RefreshToken, OAuthGrantTypes.WeChatMiniProgram],
+            tokenEndpointAuthMethod: publicClient
+                ? OAuthClientAuthenticationMethods.None
+                : OAuthClientAuthenticationMethods.ClientSecretPost);
         var services = Services();
         services.AddSingleton(Stub<IClientService>((_, args) =>
         {
@@ -333,20 +366,56 @@ public class TokenGrantStrategyTests
             Assert.Equal(nameof(ITokenService.RefreshAsync), method.Name);
             Assert.Equal("original-refresh", args![0]);
             Assert.Equal(clientId, args[1]);
-            return Task.FromResult(RefreshResult.Success("new-access", "new-refresh"));
+            Assert.Equal(OidcScopes.OpenId, args[3]);
+            return Task.FromResult(RefreshResult.Success("new-access", "new-refresh", OidcScopes.OpenId));
         }));
         using var provider = services.BuildServiceProvider();
         var result = await ExecuteAsync(provider, Context(
-            new TokenRequest("refresh_token", clientId, RefreshToken: "original-refresh")));
+            new TokenRequest(
+                OAuthGrantTypes.RefreshToken,
+                clientId,
+                RefreshToken: "original-refresh",
+                Scope: OidcScopes.OpenId)));
         var json = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value);
         Assert.Equal("new-access", json.GetProperty("access_token").GetString());
         Assert.Equal("new-refresh", json.GetProperty("refresh_token").GetString());
+        Assert.Equal("openid", json.GetProperty("scope").GetString());
         Assert.False(json.TryGetProperty("id_token", out _));
     }
 
     [Theory]
-    [InlineData("openid profile", false, true)]
-    [InlineData("openid offline_access", true, true)]
+    [InlineData("invalid_scope", "invalid_scope")]
+    [InlineData("invalid_grant", "invalid_grant")]
+    [InlineData(null, "invalid_grant")]
+    public async Task Refresh_endpoint_uses_the_structured_error_code(string? serviceErrorCode, string expectedErrorCode)
+    {
+        var client = OAuthClient.Create(
+            "client",
+            "Refresh client",
+            allowedGrantTypes: [OAuthGrantTypes.RefreshToken],
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretPost);
+        var services = Services();
+        services.AddSingleton(Stub<IClientService>((_, args) =>
+            Task.FromResult(ClientAuthenticationResult.Success(client))));
+        services.AddSingleton(Stub<ISecurityPolicyService>((_, _) => PolicyCheckResult.Success()));
+        services.AddSingleton(Stub<ITokenService>((method, _) =>
+            method.Name == nameof(ITokenService.RefreshAsync)
+                ? Task.FromResult(RefreshResult.Failure("refresh failed.", serviceErrorCode))
+                : null));
+        using var provider = services.BuildServiceProvider();
+
+        var result = await ExecuteAsync(provider, Context(new TokenRequest(
+            OAuthGrantTypes.RefreshToken,
+            "client",
+            "secret",
+            RefreshToken: "original-refresh")));
+
+        AssertError(result, 400, expectedErrorCode);
+    }
+
+    [Theory]
+    [InlineData(OidcScopes.OpenId + " " + OidcScopes.Profile, false, true)]
+    [InlineData(OidcScopes.OpenId + " " + OidcScopes.OfflineAccess, true, true)]
     [InlineData("api.read", false, false)]
     public async Task Authorization_code_preserves_oidc_context_and_scope_dependent_tokens(string requestedScope, bool refresh, bool idToken)
     {
@@ -378,7 +447,9 @@ public class TokenGrantStrategyTests
                 case nameof(ITokenService.IssueAccessTokenWithMetadataAsync):
                     Assert.Equal("{}", args![4]);
                     return Task.FromResult(new TokenIssueResult("access", "jti", DateTime.UtcNow.AddMinutes(5)));
-                case nameof(ITokenService.IssueRefreshTokenAsync): return Task.FromResult("refresh");
+                case nameof(ITokenService.IssueRefreshTokenAsync):
+                    Assert.Equal("{}", args![4]);
+                    return Task.FromResult("refresh");
                 case nameof(ITokenService.IssueIdTokenAsync):
                     Assert.Equal(new object?[] { "client", user.Id, "nonce", "access", "{}", authenticatedAt, "acr", "pwd" }, args![..8]);
                     return Task.FromResult("id");
@@ -387,7 +458,11 @@ public class TokenGrantStrategyTests
         }));
         using var provider = services.BuildServiceProvider();
         var result = await ExecuteAsync(provider, Context(new TokenRequest(
-            "authorization_code", "client", Code: "code", RedirectUri: "https://client/callback", CodeVerifier: "verifier")));
+            OAuthGrantTypes.AuthorizationCode,
+            "client",
+            Code: "code",
+            RedirectUri: "https://client/callback",
+            CodeVerifier: "verifier")));
         var json = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value);
         Assert.Equal("access", json.GetProperty("access_token").GetString());
         Assert.Equal(refresh ? "refresh" : null, json.GetProperty("refresh_token").GetString());

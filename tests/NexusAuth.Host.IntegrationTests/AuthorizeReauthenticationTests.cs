@@ -10,6 +10,7 @@ using NexusAuth.Application.Services.OIDC;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Host.Controllers;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -33,7 +34,10 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
     public async Task Prompt_login_forces_one_reauthentication_and_then_issues_a_code()
     {
         var staleSession = Principal(DateTimeOffset.UtcNow.AddHours(-1));
-        var first = CreateController(staleSession, AuthorizeUrl("prompt=login"), out var firstAuthentication);
+        var first = CreateController(
+            staleSession,
+            AuthorizeUrl($"prompt={OidcPromptValues.Login}"),
+            out var firstAuthentication);
 
         var loginRedirect = Assert.IsType<RedirectResult>(await InvokeAsync(first));
 
@@ -57,7 +61,10 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
     [Fact]
     public async Task Anonymous_prompt_login_request_needs_only_the_first_login()
     {
-        var anonymous = CreateController(new ClaimsPrincipal(new ClaimsIdentity()), AuthorizeUrl("prompt=login"), out var firstAuthentication);
+        var anonymous = CreateController(
+            new ClaimsPrincipal(new ClaimsIdentity()),
+            AuthorizeUrl($"prompt={OidcPromptValues.Login}"),
+            out var firstAuthentication);
 
         var returnUrl = ExtractReturnUrl(Assert.IsType<RedirectResult>(await InvokeAsync(anonymous)).Url);
 
@@ -72,7 +79,10 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
     [Fact]
     public async Task Reauthentication_marker_does_not_satisfy_a_session_older_than_the_marker()
     {
-        var first = CreateController(Principal(DateTimeOffset.UtcNow.AddHours(-1)), AuthorizeUrl("prompt=login"), out _);
+        var first = CreateController(
+            Principal(DateTimeOffset.UtcNow.AddHours(-1)),
+            AuthorizeUrl($"prompt={OidcPromptValues.Login}"),
+            out _);
         var returnUrl = ExtractReturnUrl(Assert.IsType<RedirectResult>(await InvokeAsync(first)).Url);
 
         var replayWithOldSession = CreateController(Principal(DateTimeOffset.UtcNow.AddHours(-1)), returnUrl, out var authentication);
@@ -85,7 +95,8 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
     [Fact]
     public async Task Tampered_reauthentication_marker_is_ignored()
     {
-        var url = AuthorizeUrl("prompt=login") + $"&{AuthorizeController.ReauthenticationParameterName}=forged";
+        var url = AuthorizeUrl($"prompt={OidcPromptValues.Login}")
+            + $"&{AuthorizeController.ReauthenticationParameterName}=forged";
         var controller = CreateController(Principal(DateTimeOffset.UtcNow), url, out var authentication);
 
         var result = Assert.IsType<RedirectResult>(await InvokeAsync(controller));
@@ -130,7 +141,10 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
     [Fact]
     public async Task Prompt_none_with_expired_max_age_returns_login_required()
     {
-        var controller = CreateController(Principal(DateTimeOffset.UtcNow.AddMinutes(-10)), AuthorizeUrl("prompt=none&max_age=60"), out var authentication);
+        var controller = CreateController(
+            Principal(DateTimeOffset.UtcNow.AddMinutes(-10)),
+            AuthorizeUrl($"prompt={OidcPromptValues.None}&max_age=60"),
+            out var authentication);
 
         var callback = Assert.IsType<RedirectResult>(await InvokeAsync(controller));
 
@@ -141,7 +155,10 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
     [Fact]
     public async Task Consent_redirect_carries_the_satisfied_reauthentication_marker()
     {
-        var first = CreateController(Principal(DateTimeOffset.UtcNow.AddHours(-1)), AuthorizeUrl("prompt=login%20consent"), out _);
+        var first = CreateController(
+            Principal(DateTimeOffset.UtcNow.AddHours(-1)),
+            AuthorizeUrl($"prompt={OidcPromptValues.Login}%20{OidcPromptValues.Consent}"),
+            out _);
         var returnUrl = ExtractReturnUrl(Assert.IsType<RedirectResult>(await InvokeAsync(first)).Url);
 
         var store = new InMemoryConsentStore();
@@ -171,8 +188,8 @@ public sealed class AuthorizeReauthenticationTests : IClassFixture<AuthorizeReau
 
     private static string AuthorizeUrl(string? extra)
     {
-        var url = "/connect/authorize?response_type=code&client_id=web-client"
-            + $"&redirect_uri={Uri.EscapeDataString(RedirectUri)}&scope=openid&state=state-1";
+        var url = $"/connect/authorize?response_type={OAuthResponseTypes.Code}&client_id=web-client"
+            + $"&redirect_uri={Uri.EscapeDataString(RedirectUri)}&scope={OidcScopes.OpenId}&state=state-1";
         return string.IsNullOrEmpty(extra) ? url : url + "&" + extra;
     }
 

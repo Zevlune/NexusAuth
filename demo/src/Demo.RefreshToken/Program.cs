@@ -1,4 +1,5 @@
 using System.Text.Json;
+using NexusAuth.Shared.OAuth;
 
 var authority = Environment.GetEnvironmentVariable("NEXUSAUTH_AUTHORITY") ?? "http://localhost:5100";
 var clientId = Environment.GetEnvironmentVariable("NEXUSAUTH_CLIENT_ID") ?? "demo-device";
@@ -28,7 +29,7 @@ var tokenEndpoint = GetStringProperty(discovery, "token_endpoint");
 
 var form = new Dictionary<string, string>
 {
-    ["grant_type"] = "refresh_token",
+    ["grant_type"] = OAuthGrantTypes.RefreshToken,
     ["refresh_token"] = refreshToken,
 };
 await ClientAssertionHelper.AppendPrivateKeyJwtAsync(form, clientId, tokenEndpoint, privateKeyPath, keyId);

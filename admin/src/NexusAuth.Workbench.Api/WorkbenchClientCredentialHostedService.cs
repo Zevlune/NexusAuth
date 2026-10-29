@@ -3,6 +3,7 @@ using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Extension;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Workbench.Api;
 
@@ -16,7 +17,8 @@ public sealed class WorkbenchClientCredentialHostedService(
     IHostEnvironment environment,
     ILogger<WorkbenchClientCredentialHostedService> logger) : IHostedService
 {
-    private static readonly string[] StaticClientScopes = ["openid", "profile", "offline_access"];
+    private static readonly string[] StaticClientScopes =
+        [OidcScopes.OpenId, OidcScopes.Profile, OidcScopes.OfflineAccess];
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -56,7 +58,9 @@ public sealed class WorkbenchClientCredentialHostedService(
         string[] redirectUris = gatewayEnabled ? [] : [redirectUri!];
         string[] postLogoutRedirectUris = gatewayEnabled ? [] : [postLogoutRedirectUri!];
         // The gateway owns its login client; keep this application's registration without enabling new grants.
-        string[] grantTypes = gatewayEnabled ? [] : ["authorization_code", "refresh_token"];
+        string[] grantTypes = gatewayEnabled
+            ? []
+            : [OAuthGrantTypes.AuthorizationCode, OAuthGrantTypes.RefreshToken];
 
         using var scope = scopeFactory.CreateScope();
         var clientRepository = scope.ServiceProvider.GetRequiredService<IOAuthClientRepository>();
@@ -83,7 +87,7 @@ public sealed class WorkbenchClientCredentialHostedService(
                 managedScopes,
                 grantTypes,
                 requirePkce: true,
-                tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodClientSecretBasic);
+                tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretBasic);
             await clientRepository.AddAsync(client, cancellationToken);
             logger.LogInformation("Created Workbench OAuth client {ClientId} from configuration.", clientId);
         }
@@ -98,7 +102,7 @@ public sealed class WorkbenchClientCredentialHostedService(
                 grantTypes,
                 requirePkce: true,
                 isActive: true,
-                tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodClientSecretBasic,
+                tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretBasic,
                 jwks: string.Empty,
                 jwksUri: string.Empty);
             await clientRepository.UpdateAsync(client, cancellationToken);

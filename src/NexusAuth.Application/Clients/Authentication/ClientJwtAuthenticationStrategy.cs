@@ -1,4 +1,5 @@
 using NexusAuth.Application.Clients;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Clients.Authentication;
 
@@ -14,7 +15,7 @@ internal abstract class ClientJwtAuthenticationStrategy(
         OAuthClient client,
         CancellationToken ct = default)
     {
-        if (!string.Equals(input.ClientAssertionType, OAuthClient.ClientAssertionTypeJwtBearer, StringComparison.Ordinal))
+        if (!string.Equals(input.ClientAssertionType, OAuthClientAssertionTypes.JwtBearer, StringComparison.Ordinal))
             return ClientAuthenticationStrategyResult.Failure(
                 "WrongAuthMethod",
                 "client_assertion_type is invalid for this client.");

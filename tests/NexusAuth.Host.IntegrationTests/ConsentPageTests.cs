@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.WebUtilities;
 using NexusAuth.Host.Controllers;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -17,6 +18,9 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
     private const string ClientId = ConsentPageTestHarness.ClientId;
     private const string RedirectUri = ConsentPageTestHarness.RedirectUri;
     private const string PkceChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    private const string DefaultScope = OidcScopes.OpenId + " " + OidcScopes.Profile;
+    private const string OfflineScope = OidcScopes.OpenId + " " + OidcScopes.OfflineAccess;
+    private const string ExpandedScope = DefaultScope + " " + OidcScopes.Email;
     private readonly WebApplicationFactory<AppWebModule> baseFactory;
     private readonly ConsentPageTestHarness harness;
 
@@ -32,12 +36,12 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
         using var client = harness.CreateClient();
         var url = QueryHelpers.AddQueryString("/connect/authorize", new Dictionary<string, string?>
         {
-            ["response_type"] = "code",
+            ["response_type"] = OAuthResponseTypes.Code,
             ["client_id"] = ClientId,
             ["redirect_uri"] = RedirectUri,
-            ["scope"] = "openid profile",
+            ["scope"] = DefaultScope,
             ["code_challenge"] = PkceChallenge,
-            ["code_challenge_method"] = "S256",
+            ["code_challenge_method"] = PkceMethods.S256,
         });
         using var authorization = await client.GetAsync(url);
         using var pageResponse = await client.GetAsync(authorization.Headers.Location!);
@@ -103,7 +107,7 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
         form.Fields["Remember"] = "true";
         form.Fields["client_id"] = "attacker-client";
         form.Fields["redirect_uri"] = "https://attacker.example/callback";
-        form.Fields["scope"] = "openid email";
+        form.Fields["scope"] = ExpandedScope;
 
         using var approveResponse = await client.PostAsync(form.Action, new FormUrlEncodedContent(form.Fields));
 
@@ -156,7 +160,7 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
                 pair => pair.Key,
                 pair => (string?)pair.Value.ToString(),
                 StringComparer.Ordinal);
-        tamperedQuery["scope"] = "openid email";
+        tamperedQuery["scope"] = ExpandedScope;
         var tamperedLocation = QueryHelpers.AddQueryString(GetLocalPath(callbackLocation), tamperedQuery);
 
         using var tamperedResponse = await client.GetAsync(tamperedLocation);
@@ -218,7 +222,7 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
         await harness.Store.SaveGrantAsync(
             harness.UserId,
             ClientId,
-            "openid profile",
+            DefaultScope,
             "{}",
             CancellationToken.None);
         using var client = harness.CreateClient();
@@ -239,8 +243,8 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
     }
 
     [Theory]
-    [InlineData("openid profile email", "{}")]
-    [InlineData("openid profile", "{\"id_token\":{\"email\":{\"essential\":true}}}")]
+    [InlineData(ExpandedScope, "{}")]
+    [InlineData(DefaultScope, "{\"id_token\":{\"email\":{\"essential\":true}}}")]
     public async Task Changed_scope_or_claims_requires_consent_again(
         string requestedScope,
         string requestedClaims)
@@ -248,7 +252,7 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
         await harness.Store.SaveGrantAsync(
             harness.UserId,
             ClientId,
-            "openid profile",
+            DefaultScope,
             "{}",
             CancellationToken.None);
         using var client = harness.CreateClient();
@@ -273,7 +277,7 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
         using var client = noConsentHarness.CreateClient();
 
         using var response = await client.GetAsync(AuthorizeUrl(
-            scope: "openid offline_access",
+            scope: OfflineScope,
             prompt: null));
 
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
@@ -298,8 +302,8 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
         using var client = harness.CreateClient();
 
         using var response = await client.GetAsync(AuthorizeUrl(
-            scope: "openid offline_access",
-            prompt: "none"));
+            scope: OfflineScope,
+            prompt: OidcPromptValues.None));
 
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         var location = response.Headers.Location!;
@@ -314,8 +318,8 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
 
     private async Task<ConsentFlow> StartConsentFlowAsync(
         HttpClient client,
-        string scope = "openid profile",
-        string? prompt = "consent",
+        string scope = DefaultScope,
+        string? prompt = OidcPromptValues.Consent,
         string claims = "{}")
     {
         using var authorizeResponse = await client.GetAsync(AuthorizeUrl(scope, prompt, claims));
@@ -335,22 +339,22 @@ public sealed class ConsentPageTests : IClassFixture<WebApplicationFactory<AppWe
     }
 
     private static string AuthorizeUrl(
-        string scope = "openid profile",
-        string? prompt = "consent",
+        string scope = DefaultScope,
+        string? prompt = OidcPromptValues.Consent,
         string claims = "{}")
     {
         var query = new Dictionary<string, string?>
         {
-            ["response_type"] = "code",
+            ["response_type"] = OAuthResponseTypes.Code,
             ["client_id"] = ClientId,
             ["redirect_uri"] = RedirectUri,
             ["scope"] = scope,
             ["state"] = "state-123",
             ["nonce"] = "nonce-1",
             ["claims"] = claims,
-            ["response_mode"] = "query",
+            ["response_mode"] = OAuthResponseModes.Query,
             ["code_challenge"] = PkceChallenge,
-            ["code_challenge_method"] = "S256",
+            ["code_challenge_method"] = PkceMethods.S256,
         };
         if (prompt is not null)
             query["prompt"] = prompt;

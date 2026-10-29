@@ -4,4 +4,12 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OAuthClientAssertionTypes.cs" Link="Shared/OAuthClientAssertionTypes.cs" />
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OAuthClientAuthenticationMethods.cs" Link="Shared/OAuthClientAuthenticationMethods.cs" />
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OAuthGrantTypes.cs" Link="Shared/OAuthGrantTypes.cs" />
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OAuthResponseTypes.cs" Link="Shared/OAuthResponseTypes.cs" />
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/PkceMethods.cs" Link="Shared/PkceMethods.cs" />
+  </ItemGroup>
+
 </Project>

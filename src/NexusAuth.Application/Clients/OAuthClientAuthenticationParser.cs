@@ -1,3 +1,5 @@
+using NexusAuth.Shared.OAuth;
+
 namespace NexusAuth.Application.Clients;
 
 public static class OAuthClientAuthenticationParser
@@ -35,7 +37,7 @@ public static class OAuthClientAuthenticationParser
                 hasFormAssertionData
                     ? null
                     : hasFormSecret
-                        ? OAuthClient.TokenEndpointAuthMethodClientSecretPost
+                        ? OAuthClientAuthenticationMethods.ClientSecretPost
                         : null,
                 assertionAudiences));
         }
@@ -95,7 +97,7 @@ public static class OAuthClientAuthenticationParser
             null,
             null,
             assertionAudience,
-            OAuthClient.TokenEndpointAuthMethodClientSecretBasic,
+            OAuthClientAuthenticationMethods.ClientSecretBasic,
             assertionAudiences));
     }
 

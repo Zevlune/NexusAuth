@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Extension;
+using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api.Authorization;
 
 namespace NexusAuth.Workbench.Api.Controllers;
@@ -47,14 +48,14 @@ public class AuthController : ControllerBase
         await _flowStore.AddAsync(state, new FlowState(codeVerifier, nonce), ct);
 
         var authorizeUrl = discovery.AuthorizationEndpoint +
-            $"?response_type=code" +
+            $"?response_type={OAuthResponseTypes.Code}" +
             $"&client_id={Uri.EscapeDataString(_oidcService.ClientId)}" +
             $"&redirect_uri={Uri.EscapeDataString(_oidcService.RedirectUri)}" +
             $"&scope={Uri.EscapeDataString(_oidcService.Scope)}" +
             $"&state={Uri.EscapeDataString(state)}" +
             $"&nonce={Uri.EscapeDataString(nonce)}" +
             $"&code_challenge={Uri.EscapeDataString(codeChallenge)}" +
-            $"&code_challenge_method=S256";
+            $"&code_challenge_method={PkceMethods.S256}";
 
         return Ok(new { authorizeUrl });
     }

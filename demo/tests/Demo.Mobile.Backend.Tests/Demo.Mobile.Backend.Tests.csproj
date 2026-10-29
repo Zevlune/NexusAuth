@@ -12,4 +12,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Demo.Mobile.Backend/Demo.Mobile.Backend.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OidcScopes.cs" Link="Shared/OidcScopes.cs" />
+  </ItemGroup>
 </Project>

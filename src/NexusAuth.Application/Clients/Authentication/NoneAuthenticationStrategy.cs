@@ -1,9 +1,10 @@
 using NexusAuth.Application.Clients;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Clients.Authentication;
 
-[KeyedService(typeof(IClientAuthenticationStrategy), OAuthClient.TokenEndpointAuthMethodNone)]
+[KeyedService(typeof(IClientAuthenticationStrategy), OAuthClientAuthenticationMethods.None)]
 internal class NoneAuthenticationStrategy : IClientAuthenticationStrategy
 {
     public Task<ClientAuthenticationStrategyResult> AuthenticateAsync(

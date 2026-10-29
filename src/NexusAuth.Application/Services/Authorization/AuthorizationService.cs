@@ -2,6 +2,7 @@ using Luck.Logging.Serilog;
 using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.Security;
 using NexusAuth.Application.Services.OIDC;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Services.Authorization;
 
@@ -86,8 +87,9 @@ public class AuthorizationService(
     }
 
     /// <summary>
-    /// 2. 校验 redirect_uri
-    /// 3. 校验 PKCE
+    /// 1. 校验 redirect_uri
+    /// 2. 校验 PKCE
+    /// 3. 重验客户端当前授权配置与 scope
     /// 4. 将授权码标记为已消费
     /// </summary>
     public async Task<AuthorizationCodeResult> ValidateAndConsumeCodeAsync(
@@ -136,6 +138,34 @@ public class AuthorizationService(
             return ConsumeFailure(clientId, "UnexpectedCodeVerifier", "code_verifier was supplied but the authorization request did not use PKCE.");
         }
 
+        var clientValidation = await clientService.ValidateClientForAuthorizationAsync(
+            authCode.ClientId,
+            redirectUri,
+            OAuthGrantTypes.AuthorizationCode,
+            authCode.CodeChallenge,
+            authCode.CodeChallengeMethod,
+            ct);
+        if (!clientValidation.IsSuccess)
+        {
+            return ConsumeFailure(
+                clientId,
+                "ClientAuthorizationRevalidationFailed",
+                clientValidation.Error ?? "The client is no longer allowed to redeem this authorization code.");
+        }
+
+        var scopeValidation = await clientService.ValidateScopesAsync(
+            clientId,
+            authCode.Scope,
+            allowIdentityScopes: true,
+            ct);
+        if (!scopeValidation.IsSuccess)
+        {
+            return ConsumeFailure(
+                clientId,
+                "ScopeRevalidationFailed",
+                scopeValidation.Error ?? "The authorization code scope is no longer valid.");
+        }
+
         var consumedCode = await codeRepository.ConsumeAsync(code, clientId, ct);
         if (consumedCode is null)
             return ConsumeFailure(clientId, "AuthorizationCodeConsumeRace", "Authorization code has already been used or expired.");
@@ -173,7 +203,7 @@ public class AuthorizationService(
         if (!clientPolicy.IsSuccess)
             return ClientCredentialsResult.Failure(clientPolicy.Error ?? "Client is blocked by security policy.");
 
-        if (!client.IsGrantTypeAllowed("client_credentials"))
+        if (!client.IsGrantTypeAllowed(OAuthGrantTypes.ClientCredentials))
             return ClientCredentialsResult.Failure("Client is not allowed to use client_credentials grant type.");
 
         var scopeValidation = await clientService.ValidateScopesAsync(clientId, scope, allowIdentityScopes: false, ct);
@@ -201,7 +231,7 @@ public class AuthorizationService(
 
     private static bool VerifyPkce(string codeVerifier, string codeChallenge, string? codeChallengeMethod)
     {
-        if (codeChallengeMethod == "S256")
+        if (codeChallengeMethod == PkceMethods.S256)
         {
             var hash = SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier));
             var computed = Convert.ToBase64String(hash)

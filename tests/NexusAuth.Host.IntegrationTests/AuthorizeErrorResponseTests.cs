@@ -10,6 +10,7 @@ using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Host.Controllers;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -29,7 +30,7 @@ public sealed class AuthorizeErrorResponseTests
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
 
-        var result = await controller.Authorize(null, "client-1", RedirectUri, "openid");
+        var result = await controller.Authorize(null, "client-1", RedirectUri, OidcScopes.OpenId);
 
         var redirect = Assert.IsType<RedirectResult>(result);
         var query = QueryHelpers.ParseQuery(new Uri(redirect.Url!).Query);
@@ -44,7 +45,12 @@ public sealed class AuthorizeErrorResponseTests
         var controller = CreateController();
         controller.HttpContext.Request.QueryString = new QueryString($"?{parameter}=value");
 
-        var result = await controller.Authorize("code", "client-1", RedirectUri, "openid", state: "state-123");
+        var result = await controller.Authorize(
+            OAuthResponseTypes.Code,
+            "client-1",
+            RedirectUri,
+            OidcScopes.OpenId,
+            state: "state-123");
 
         var redirect = Assert.IsType<RedirectResult>(result);
         var query = QueryHelpers.ParseQuery(new Uri(redirect.Url!).Query);
@@ -61,7 +67,7 @@ public sealed class AuthorizeErrorResponseTests
             responseType: null,
             clientId: "client-1",
             redirectUri: RedirectUri,
-            scope: "openid",
+            scope: OidcScopes.OpenId,
             state: "state-123");
 
         var redirect = Assert.IsType<RedirectResult>(result);
@@ -82,9 +88,9 @@ public sealed class AuthorizeErrorResponseTests
             responseType: "token",
             clientId: "client-1",
             redirectUri: RedirectUri,
-            scope: "openid",
+            scope: OidcScopes.OpenId,
             state: "state-<&>\"",
-            responseMode: "form_post");
+            responseMode: OAuthResponseModes.FormPost);
 
         var content = Assert.IsType<ContentResult>(result);
         Assert.Equal(StatusCodes.Status200OK, content.StatusCode);
@@ -122,7 +128,7 @@ public sealed class AuthorizeErrorResponseTests
         public Task<ClientValidationResult> ValidateClientRedirectUriAsync(string clientId, string redirectUri, CancellationToken ct = default) =>
             Task.FromResult(ClientValidationResult.Success());
 
-        public Task<OAuthClient> RegisterClientAsync(string clientId, string clientName, string? description = null, IEnumerable<string>? redirectUris = null, IEnumerable<string>? postLogoutRedirectUris = null, IEnumerable<string>? allowedScopes = null, IEnumerable<string>? allowedGrantTypes = null, bool requirePkce = true, string tokenEndpointAuthMethod = OAuthClient.TokenEndpointAuthMethodClientSecretBasic, IEnumerable<OAuthClientSecret>? clientSecrets = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<OAuthClient> RegisterClientAsync(string clientId, string clientName, string? description = null, IEnumerable<string>? redirectUris = null, IEnumerable<string>? postLogoutRedirectUris = null, IEnumerable<string>? allowedScopes = null, IEnumerable<string>? allowedGrantTypes = null, bool requirePkce = true, string tokenEndpointAuthMethod = OAuthClientAuthenticationMethods.ClientSecretBasic, IEnumerable<OAuthClientSecret>? clientSecrets = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<OAuthClient?> ValidateClientAsync(string clientId, string rawClientSecret, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ClientValidationResult> ValidateClientForAuthorizationAsync(string clientId, string redirectUri, string grantType, string? codeChallenge = null, string? codeChallengeMethod = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ClientAuthenticationResult> AuthenticateClientAsync(string clientId, string? rawClientSecret, bool requireSecret, CancellationToken ct = default) => throw new NotSupportedException();

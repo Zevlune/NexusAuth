@@ -1,5 +1,6 @@
 using NexusAuth.Application;
 using NexusAuth.Domain.Entities;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Clients;
 
@@ -16,7 +17,7 @@ public interface IClientService : IScopedDependency
         IEnumerable<string>? allowedScopes = null,
         IEnumerable<string>? allowedGrantTypes = null,
         bool requirePkce = true,
-        string tokenEndpointAuthMethod = OAuthClient.TokenEndpointAuthMethodClientSecretBasic,
+        string tokenEndpointAuthMethod = OAuthClientAuthenticationMethods.ClientSecretBasic,
         IEnumerable<OAuthClientSecret>? clientSecrets = null,
         CancellationToken ct = default);
 

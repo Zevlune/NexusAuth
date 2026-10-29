@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Persistence.Repositories;
+using NexusAuth.Shared.OAuth;
 using Npgsql;
 using Xunit;
 using AuthDbContext = NexusAuth.Persistence.DbContext;
@@ -35,7 +36,8 @@ public sealed class ConsentStorePostgreSqlTests
         var store = CreateStore(setupContext);
         var requestId = await store.CreateRequestAsync(
             userId,
-            "response_type=code&client_id=client&scope=openid%20offline_access",
+            "response_type=" + OAuthResponseTypes.Code + "&client_id=client&scope="
+                + OidcScopes.OpenId + "%20" + OidcScopes.OfflineAccess,
             CancellationToken.None);
 
         var pending = await store.GetRequestAsync(requestId, userId, CancellationToken.None);
@@ -79,7 +81,7 @@ public sealed class ConsentStorePostgreSqlTests
 
         var expiredId = await store.CreateRequestAsync(
             userId,
-            "response_type=code&client_id=expired",
+            "response_type=" + OAuthResponseTypes.Code + "&client_id=expired",
             CancellationToken.None);
         var expiredAt = DateTimeOffset.UtcNow.AddSeconds(-1);
         await setupContext.Database.ExecuteSqlInterpolatedAsync($"""
@@ -115,13 +117,13 @@ public sealed class ConsentStorePostgreSqlTests
             CreateStore(writeContext1).SaveGrantAsync(
                 userId,
                 clientId,
-                "openid profile read",
+                OidcScopes.OpenId + " " + OidcScopes.Profile + " read",
                 claims,
                 CancellationToken.None),
             CreateStore(writeContext2).SaveGrantAsync(
                 userId,
                 clientId,
-                "read openid profile openid",
+                "read " + OidcScopes.OpenId + " " + OidcScopes.Profile + " " + OidcScopes.OpenId,
                 claims,
                 CancellationToken.None));
 
@@ -133,50 +135,50 @@ public sealed class ConsentStorePostgreSqlTests
         Assert.True(await store.HasGrantAsync(
             userId,
             clientId,
-            "profile read openid",
+            OidcScopes.Profile + " read " + OidcScopes.OpenId,
             claims,
             CancellationToken.None));
         Assert.False(await store.HasGrantAsync(
             userId,
             clientId,
-            "profile read OpenID",
+            OidcScopes.Profile + " read OpenID",
             claims,
             CancellationToken.None));
         Assert.False(await store.HasGrantAsync(
             userId,
             clientId,
-            "profile read openid offline_access",
+            OidcScopes.Profile + " read " + OidcScopes.OpenId + " " + OidcScopes.OfflineAccess,
             claims,
             CancellationToken.None));
         Assert.False(await store.HasGrantAsync(
             userId,
             clientId,
-            "profile read openid",
+            OidcScopes.Profile + " read " + OidcScopes.OpenId,
             claims + " ",
             CancellationToken.None));
         Assert.False(await store.HasGrantAsync(
             userId,
             clientId,
-            "profile read openid",
+            OidcScopes.Profile + " read " + OidcScopes.OpenId,
             null,
             CancellationToken.None));
 
         await store.SaveGrantAsync(
             userId,
             clientId,
-            "openid",
+            OidcScopes.OpenId,
             null,
             CancellationToken.None);
         Assert.True(await store.HasGrantAsync(
             userId,
             clientId,
-            "openid",
+            OidcScopes.OpenId,
             null,
             CancellationToken.None));
         Assert.False(await store.HasGrantAsync(
             userId,
             clientId,
-            "openid",
+            OidcScopes.OpenId,
             string.Empty,
             CancellationToken.None));
 

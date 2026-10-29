@@ -32,6 +32,10 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
             .HasMaxLength(512)
             .IsRequired();
 
+        builder.Property(r => r.ClaimsJson)
+            .HasColumnName("claims_json")
+            .HasColumnType("text");
+
         builder.Property(r => r.IsRevoked)
             .HasColumnName("is_revoked")
             .IsRequired();

@@ -9,6 +9,7 @@ using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -59,7 +60,7 @@ public sealed class UserPolicyEnforcementTests
     {
         var user = User.Create($"device-{Guid.NewGuid():N}", "Test-password-123!", "Device User");
         var policy = new TestSecurityPolicy();
-        var authorization = DeviceAuthorization.Create("tv-client", "openid").Entity;
+        var authorization = DeviceAuthorization.Create("tv-client", OidcScopes.OpenId).Entity;
         var approvals = 0;
         var devices = HardeningProxy.Create<IDeviceAuthorizationRepository>((method, _) =>
         {
@@ -76,8 +77,17 @@ public sealed class UserPolicyEnforcementTests
         });
         var users = HardeningProxy.Create<IUserRepository>((method, args) =>
             method.Name == nameof(IUserRepository.FindByIdAsync) && (Guid)args![0]! == user.Id ? user : null);
+        var scopeValidations = 0;
+        var clients = HardeningProxy.Create<IClientService>((method, args) =>
+        {
+            if (method.Name != nameof(IClientService.ValidateScopesAsync))
+                return null;
+
+            scopeValidations++;
+            return ScopeValidationResult.Success((string)args![1]!);
+        });
         var service = new DeviceAuthorizationService(
-            HardeningProxy.Create<IClientService>((_, _) => null),
+            clients,
             devices,
             users,
             policy.Service,
@@ -87,11 +97,13 @@ public sealed class UserPolicyEnforcementTests
         var blocked = await service.ApproveAsync(authorization.UserCode, user.Id);
         Assert.False(blocked.IsSuccess);
         Assert.Equal(0, approvals);
+        Assert.Equal(0, scopeValidations);
 
         policy.BlockedUsers.Clear();
         var allowed = await service.ApproveAsync(authorization.UserCode, user.Id);
         Assert.True(allowed.IsSuccess);
         Assert.Equal(1, approvals);
+        Assert.Equal(1, scopeValidations);
     }
 
     private sealed class WeChatHarness

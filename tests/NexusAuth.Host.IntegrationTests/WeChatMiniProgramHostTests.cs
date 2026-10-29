@@ -15,6 +15,7 @@ using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Persistence.Repositories;
+using NexusAuth.Shared.OAuth;
 using Npgsql;
 using Xunit;
 using AuthDbContext = NexusAuth.Persistence.DbContext;
@@ -55,12 +56,16 @@ public sealed class WeChatMiniProgramHostTests
         Assert.Equal("invalid_grant", (await ReadAsync(replay)).GetProperty("error").GetString());
 
         using var rotated = await client.PostAsync("/connect/token", Form(
-            ("grant_type", "refresh_token"), ("client_id", harness.ClientId), ("refresh_token", refresh)));
+            ("grant_type", OAuthGrantTypes.RefreshToken),
+            ("client_id", harness.ClientId),
+            ("refresh_token", refresh)));
         Assert.Equal(HttpStatusCode.OK, rotated.StatusCode);
         var replacement = (await ReadAsync(rotated)).GetProperty("refresh_token").GetString()!;
         Assert.NotEqual(refresh, replacement);
         using var reused = await client.PostAsync("/connect/token", Form(
-            ("grant_type", "refresh_token"), ("client_id", harness.ClientId), ("refresh_token", refresh)));
+            ("grant_type", OAuthGrantTypes.RefreshToken),
+            ("client_id", harness.ClientId),
+            ("refresh_token", refresh)));
         Assert.Equal("invalid_grant", (await ReadAsync(reused)).GetProperty("error").GetString());
 
         await using (var db = CreateContext())
@@ -73,7 +78,9 @@ public sealed class WeChatMiniProgramHostTests
         using var disabled = await harness.LoginAsync(client, "disabled");
         Assert.Equal("invalid_grant", (await ReadAsync(disabled)).GetProperty("error").GetString());
         using var disabledRefresh = await client.PostAsync("/connect/token", Form(
-            ("grant_type", "refresh_token"), ("client_id", harness.ClientId), ("refresh_token", replacement)));
+            ("grant_type", OAuthGrantTypes.RefreshToken),
+            ("client_id", harness.ClientId),
+            ("refresh_token", replacement)));
         Assert.Equal("invalid_grant", (await ReadAsync(disabledRefresh)).GetProperty("error").GetString());
         client.DefaultRequestHeaders.Authorization = new("Bearer", access);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/connect/userinfo")).StatusCode);
@@ -86,19 +93,26 @@ public sealed class WeChatMiniProgramHostTests
         using var harness = await Harness.CreateAsync();
         using var client = harness.Factory.CreateClient();
         using var wrongClient = await client.PostAsync("/connect/token", Form(
-            ("grant_type", WeChatMiniProgramGrantTypes.GrantType), ("client_id", "another-client"),
-            ("code", "test"), ("scope", "openid")));
+            ("grant_type", OAuthGrantTypes.WeChatMiniProgram),
+            ("client_id", "another-client"),
+            ("code", "test"),
+            ("scope", OidcScopes.OpenId)));
         Assert.Equal(HttpStatusCode.Unauthorized, wrongClient.StatusCode);
         using var secret = await client.PostAsync("/connect/token", Form(
-            ("grant_type", WeChatMiniProgramGrantTypes.GrantType), ("client_id", harness.ClientId),
-            ("client_secret", "must-not-be-used"), ("code", "test"), ("scope", "openid")));
+            ("grant_type", OAuthGrantTypes.WeChatMiniProgram),
+            ("client_id", harness.ClientId),
+            ("client_secret", "must-not-be-used"),
+            ("code", "test"),
+            ("scope", OidcScopes.OpenId)));
         Assert.Equal(HttpStatusCode.Unauthorized, secret.StatusCode);
         using var scope = await harness.LoginAsync(client, "test", "unregistered-scope");
         Assert.Equal("invalid_scope", (await ReadAsync(scope)).GetProperty("error").GetString());
         using var missingCode = await harness.LoginAsync(client, "");
         Assert.Equal("invalid_request", (await ReadAsync(missingCode)).GetProperty("error").GetString());
         using var credentials = await client.PostAsync("/connect/token", Form(
-            ("grant_type", "client_credentials"), ("client_id", harness.ClientId), ("scope", "openid")));
+            ("grant_type", OAuthGrantTypes.ClientCredentials),
+            ("client_id", harness.ClientId),
+            ("scope", OidcScopes.OpenId)));
         Assert.Equal(HttpStatusCode.Unauthorized, credentials.StatusCode);
         Assert.Equal(0, harness.Upstream.Calls);
         using var unavailable = await harness.LoginAsync(client, "unavailable");
@@ -106,7 +120,7 @@ public sealed class WeChatMiniProgramHostTests
         Assert.Equal("temporarily_unavailable", (await ReadAsync(unavailable)).GetProperty("error").GetString());
         using var discovery = JsonDocument.Parse(await client.GetStringAsync("/.well-known/openid-configuration"));
         Assert.Contains(discovery.RootElement.GetProperty("grant_types_supported").EnumerateArray(),
-            value => value.GetString() == WeChatMiniProgramGrantTypes.GrantType);
+            value => value.GetString() == "urn:nexusauth:grant-type:wechat_miniprogram");
         Assert.Contains(discovery.RootElement.GetProperty("token_endpoint_auth_methods_supported").EnumerateArray(),
             value => value.GetString() == "none");
     }
@@ -276,11 +290,11 @@ public sealed class WeChatMiniProgramHostTests
         using var harness = await Harness.CreateAsync();
         using var client = harness.Factory.CreateClient();
         using var missingProfile = await harness.LoginAsync(
-            client, "nickname-missing-scope", scope: "openid", nickname: "不应写入");
+            client, "nickname-missing-scope", scope: OidcScopes.OpenId, nickname: "不应写入");
         await AssertErrorAsync(missingProfile, HttpStatusCode.BadRequest, "invalid_scope");
 
         using var lookalikeProfile = await harness.LoginAsync(
-            client, "nickname-lookalike-scope", scope: "openid profile.read",
+            client, "nickname-lookalike-scope", scope: OidcScopes.OpenId + " profile.read",
             nickname: "不应写入");
         await AssertErrorAsync(lookalikeProfile, HttpStatusCode.BadRequest, "invalid_scope");
 
@@ -341,7 +355,7 @@ public sealed class WeChatMiniProgramHostTests
             harness, client, "nickname-refresh-grant", nickname: "刷新前昵称");
 
         using var refreshed = await client.PostAsync("/connect/token", Form(
-            ("grant_type", "refresh_token"),
+            ("grant_type", OAuthGrantTypes.RefreshToken),
             ("client_id", harness.ClientId),
             ("refresh_token", initial.RefreshToken),
             ("nickname", "不应写入")));
@@ -358,7 +372,7 @@ public sealed class WeChatMiniProgramHostTests
     }
     private static async Task<(string AccessToken, string RefreshToken, string Sub, string Name)> LoginAndReadUserAsync(
         Harness harness, HttpClient client, string code, string? nickname,
-        string scopeName = "openid profile offline_access")
+        string scopeName = OidcScopes.OpenId + " " + OidcScopes.Profile + " " + OidcScopes.OfflineAccess)
     {
         using var response = await harness.LoginAsync(client, code, scopeName, nickname);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -432,18 +446,22 @@ public sealed class WeChatMiniProgramHostTests
             var harness = new Harness();
             await using var db = CreateContext();
             db.Add(OAuthClient.Create(harness.ClientId, "测试小程序",
-                allowedScopes: ["openid", "profile", "profile.read", "offline_access"],
-                allowedGrantTypes: [WeChatMiniProgramGrantTypes.GrantType, "refresh_token"],
-                tokenEndpointAuthMethod: "none", requirePkce: false));
+                allowedScopes: [OidcScopes.OpenId, OidcScopes.Profile, "profile.read", OidcScopes.OfflineAccess],
+                allowedGrantTypes: [OAuthGrantTypes.WeChatMiniProgram, OAuthGrantTypes.RefreshToken],
+                tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.None,
+                requirePkce: false));
             await db.SaveChangesAsync();
             return harness;
         }
         public Task<HttpResponseMessage> LoginAsync(
-            HttpClient client, string code, string scope = "openid profile offline_access", string? nickname = null)
+            HttpClient client,
+            string code,
+            string scope = OidcScopes.OpenId + " " + OidcScopes.Profile + " " + OidcScopes.OfflineAccess,
+            string? nickname = null)
         {
             var values = new List<KeyValuePair<string, string>>
             {
-                new("grant_type", WeChatMiniProgramGrantTypes.GrantType),
+                new("grant_type", OAuthGrantTypes.WeChatMiniProgram),
                 new("client_id", ClientId),
                 new("code", code),
                 new("scope", scope),

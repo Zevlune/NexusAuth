@@ -11,4 +11,10 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OAuthClientAssertionTypes.cs" Link="Shared/OAuthClientAssertionTypes.cs" />
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OAuthGrantTypes.cs" Link="Shared/OAuthGrantTypes.cs" />
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OidcScopes.cs" Link="Shared/OidcScopes.cs" />
+  </ItemGroup>
+
 </Project>

@@ -1,11 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 using static NexusAuth.Host.TokenEndpoint.TokenGrantHelper;
 
 namespace NexusAuth.Host.TokenEndpoint;
 
-[KeyedService(typeof(ITokenGrantStrategy), "urn:ietf:params:oauth:grant-type:device_code")]
+[KeyedService(typeof(ITokenGrantStrategy), OAuthGrantTypes.DeviceCode)]
 public class DeviceCodeGrantStrategy(
     IDeviceAuthorizationService deviceAuthorizationService,
     ITokenService tokenService,
@@ -59,7 +60,8 @@ public class DeviceCodeGrantStrategy(
             refreshToken = ShouldIssueRefreshToken(result.Scope!)
                 ? await tokenService.IssueRefreshTokenAsync(result.ClientId!, result.UserId, result.Scope!, ct)
                 : null;
-            var includeIdToken = result.Scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
+            var includeIdToken = result.Scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Contains(OidcScopes.OpenId, StringComparer.Ordinal);
             if (includeIdToken)
                 idToken = await tokenService.IssueIdTokenAsync(result.ClientId!, result.UserId, null, accessTokenResult.AccessToken, ct: ct);
         }

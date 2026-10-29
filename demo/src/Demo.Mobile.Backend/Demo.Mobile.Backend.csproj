@@ -2,4 +2,10 @@
   <ItemGroup>
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OAuthGrantTypes.cs" Link="Shared/OAuthGrantTypes.cs" />
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/OAuthResponseTypes.cs" Link="Shared/OAuthResponseTypes.cs" />
+    <Compile Include="../../../src/NexusAuth.Shared/OAuth/PkceMethods.cs" Link="Shared/PkceMethods.cs" />
+  </ItemGroup>
 </Project>

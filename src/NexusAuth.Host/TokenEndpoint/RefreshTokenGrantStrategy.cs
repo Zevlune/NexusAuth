@@ -1,11 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 using static NexusAuth.Host.TokenEndpoint.TokenGrantHelper;
 
 namespace NexusAuth.Host.TokenEndpoint;
 
-[KeyedService(typeof(ITokenGrantStrategy), "refresh_token")]
+[KeyedService(typeof(ITokenGrantStrategy), OAuthGrantTypes.RefreshToken)]
 public class RefreshTokenGrantStrategy(
     IRefreshTokenClientStrategyResolver clientStrategies,
     ITokenService tokenService,
@@ -36,16 +37,25 @@ public class RefreshTokenGrantStrategy(
         if (string.IsNullOrWhiteSpace(refreshToken))
             return new BadRequestObjectResult(new { error = "invalid_request", error_description = "refresh_token is required." });
 
-        var result = await tokenService.RefreshAsync(refreshToken, authentication.ClientId!, ct);
+        var result = await tokenService.RefreshAsync(
+            refreshToken,
+            authentication.ClientId!,
+            ct,
+            context.Request.Scope);
 
         if (!result.IsSuccess)
-            return new BadRequestObjectResult(new { error = "invalid_grant", error_description = result.Error });
+            return new BadRequestObjectResult(new
+            {
+                error = result.ErrorCode ?? "invalid_grant",
+                error_description = result.Error,
+            });
 
         return new OkObjectResult(new
         {
             access_token = result.AccessToken,
             token_type = "Bearer",
             refresh_token = result.RefreshToken,
+            scope = result.Scope,
             expires_in = checked(jwtOptions.Value.AccessTokenLifetimeMinutes * 60),
         });
     }

@@ -6,4 +6,8 @@
         <PackageReference Include="BCrypt.Net-Next" />
     </ItemGroup>
 
+    <ItemGroup>
+        <ProjectReference Include="..\NexusAuth.Shared\NexusAuth.Shared.csproj" />
+    </ItemGroup>
+
 </Project>

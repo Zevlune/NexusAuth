@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NexusAuth.Extension;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -130,7 +131,7 @@ public sealed class OidcAuthorityTests
             options.ClientSecret = "client-secret";
             options.RedirectUri = "http://localhost:5560/signin-oidc";
             options.PostLogoutRedirectUri = "http://localhost:5560/";
-            options.Scope = "openid profile";
+            options.Scope = OidcScopes.OpenId + " " + OidcScopes.Profile;
         });
         services.AddHttpClient(OidcWorkbenchService.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => recorder);
@@ -144,7 +145,7 @@ public sealed class OidcAuthorityTests
             ClientId = "workbench",
             RedirectUri = "http://localhost:5560/signin-oidc",
             PostLogoutRedirectUri = "http://localhost:5560/",
-            Scope = "openid profile",
+            Scope = OidcScopes.OpenId + " " + OidcScopes.Profile,
         }));
 
     private sealed class RequestRecorder(params string[] responseBodies) : HttpMessageHandler

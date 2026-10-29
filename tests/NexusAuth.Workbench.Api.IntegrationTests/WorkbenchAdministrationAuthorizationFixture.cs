@@ -24,6 +24,7 @@ using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Extension;
+using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -38,6 +39,8 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
     private const string Authority = "https://issuer.example.test";
     private const string Audience = "nexusauth.workbench.api";
     private const string ClientId = "nexusauth.workbench";
+    private const string WorkbenchScope = OidcScopes.OpenId + " " + OidcScopes.Profile
+        + " " + OidcScopes.OfflineAccess + " " + Audience;
     private readonly RSA rsa = RSA.Create(2048);
     private readonly RsaSecurityKey signingKey;
     private readonly WebApplicationFactory<WorkbenchApiModule> factory;
@@ -78,7 +81,7 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                 .UseSetting("Auth:ClientSecret", "test-only-secret")
                 .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
                 .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")
-                .UseSetting("Auth:Scope", "openid profile offline_access nexusauth.workbench.api")
+                .UseSetting("Auth:Scope", WorkbenchScope)
                 .UseSetting("Auth:AllowedBearerClientIds:0", "additional-bearer-client");
 
             builder.ConfigureServices(services =>
@@ -132,7 +135,7 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                         "get_ClientId" => ClientId,
                         "get_RedirectUri" => "https://dashboard.example.test/signin-oidc",
                         "get_PostLogoutRedirectUri" => "https://dashboard.example.test/",
-                        "get_Scope" => "openid profile offline_access nexusauth.workbench.api",
+                        "get_Scope" => WorkbenchScope,
                         "get_SignOutProvider" => false,
                         nameof(IOidcWorkbenchService.IntrospectAccessTokenAsync) =>
                             new AccessTokenIntrospectionResult(

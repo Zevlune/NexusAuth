@@ -1,11 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 using static NexusAuth.Host.TokenEndpoint.TokenGrantHelper;
 
 namespace NexusAuth.Host.TokenEndpoint;
 
-[KeyedService(typeof(ITokenGrantStrategy), "client_credentials")]
+[KeyedService(typeof(ITokenGrantStrategy), OAuthGrantTypes.ClientCredentials)]
 public class ClientCredentialsGrantStrategy(
     IClientService clientService,
     ITokenService tokenService,
@@ -34,7 +35,7 @@ public class ClientCredentialsGrantStrategy(
         if (!policy.IsSuccess)
             return new BadRequestObjectResult(new { error = "access_denied", error_description = policy.Error });
 
-        if (!clientAuthentication.Client.IsGrantTypeAllowed("client_credentials"))
+        if (!clientAuthentication.Client.IsGrantTypeAllowed(OAuthGrantTypes.ClientCredentials))
         {
             return new BadRequestObjectResult(new
             {

@@ -114,6 +114,28 @@ docker compose exec -T db \
 
 对已有数据库执行前，先在可恢复的副本或备份上确认目标库、当前 schema 和幂等性。`production-init.sql` 对当前新库使用 `CREATE SCHEMA IF NOT EXISTS` 和 `CREATE TABLE`，它不是通用升级脚本。
 
+#### Refresh Token claims 升级
+
+本版本要求 `nexusauth.refresh_tokens` 包含 nullable `claims_json text` 列。全新数据库由当前 `production-init.sql` 直接包含该列，不需要再执行升级脚本。已有数据库必须在启动升级后的 Host 前执行根目录的 [`refresh-token-claims-upgrade.sql`](../refresh-token-claims-upgrade.sql)：
+
+```bash
+docker compose exec -T db \
+  psql --username nexusauth --dbname nexusauth \
+  --set ON_ERROR_STOP=1 \
+  < refresh-token-claims-upgrade.sql
+```
+
+执行前应备份数据库。执行后可核对列是否存在且允许 `NULL`：
+
+```bash
+docker compose exec -T db \
+  psql --username nexusauth --dbname nexusauth \
+  --set ON_ERROR_STOP=1 \
+  --command "SELECT data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'nexusauth' AND table_name = 'refresh_tokens' AND column_name = 'claims_json';"
+```
+
+升级只增加存储位置，不能还原历史数据。升级前已经签发的 refresh token 在原授权时没有保存 claims 请求，升级后仍为 `NULL`；Host 不会也无法回填授权时的 `claims` 参数或其 `value`/`values` 约束。依赖这些约束的客户端应重新走授权流程，取得带有 claims 快照的新 refresh token。
+
 ### 2.4 从源码运行 Host
 
 先只启动数据库：
@@ -555,7 +577,7 @@ curl -sS -X POST 'http://localhost:5100/connect/token' \
 - 过期返回 `expired_token`；
 - 用户拒绝返回 `access_denied`；
 - 成功后 device_code 只能消费一次；
-- scope 必须在客户端允许范围内；资源 scope 必须对应启用的 API resource。
+- 每次轮询在消费已批准的 device_code 前，都会重新验证当前客户端的 device code grant、持久化 scope 和活动 API resource；重验失败返回 `invalid_grant`，且不消费该 device_code。
 
 ## 6. OAuth / OIDC 端点
 
@@ -569,7 +591,7 @@ curl -sS -X POST 'http://localhost:5100/connect/token' \
 | `/.well-known/jwks.json` | GET | 当前加载的验签公钥 |
 | `/connect/authorize` | GET | 授权端点，只支持 `response_type=code` |
 | `/connect/token` | POST | Token 端点 |
-| `/connect/userinfo` | GET | OIDC UserInfo |
+| `/connect/userinfo` | GET / POST | OIDC UserInfo |
 | `/connect/introspect` | POST | Token Introspection |
 | `/connect/revocation` | POST | Token Revocation |
 | `/connect/deviceauthorization` | POST | Device Authorization |
@@ -583,6 +605,7 @@ Discovery 对外声明的能力以实际实现为准：
 - `grant_types_supported` 默认包含 `["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"]`；启用微信小程序登录后追加 `urn:nexusauth:grant-type:wechat_miniprogram`
 - `code_challenge_methods_supported = ["S256"]`
 - `token_endpoint_auth_methods_supported` 默认包含 `["client_secret_post", "client_secret_basic", "client_secret_jwt", "private_key_jwt"]`；启用微信小程序登录后追加 `none`
+- `scopes_supported = ["openid", "profile", "email", "phone", "offline_access"]`
 - `id_token_signing_alg_values_supported` 来自当前活跃签名密钥，默认 RSA 签名为 `RS256`
 - `claims_parameter_supported = true`
 - `request_parameter_supported = false`
@@ -590,14 +613,16 @@ Discovery 对外声明的能力以实际实现为准：
 
 Discovery 中的 issuer 和所有绝对端点地址来自 `Jwt:Issuer`，不是从请求 Host 动态推断。生产环境必须把它配置成浏览器和客户端都能访问、且与 token `iss` 一致的 HTTPS 地址。
 
+标准 Scope 的声明源是 [`src/NexusAuth.Shared/OAuth/OidcScopes.cs`](../src/NexusAuth.Shared/OAuth/OidcScopes.cs) 中的 `NexusAuth.Shared.OAuth.OidcScopes`，六个 `const` 分别是 `openid`、`profile`、`email`、`phone`、`address`、`offline_access`。Discovery 不发布 `address`，因为 Host 当前没有地址数据。
+
 ### 6.2 Grant 类型
 
 | `grant_type` | 用途 | 关键要求 |
 | --- | --- | --- |
-| `authorization_code` | 浏览器或服务端 Web 应用通过授权码换 token | 客户端必须允许该 grant；redirect URI 精确匹配；需要 PKCE 时必须提供 `S256`；授权码 10 分钟有效且只能消费一次 |
+| `authorization_code` | 浏览器或服务端 Web 应用通过授权码换 token | 客户端必须允许该 grant；redirect URI 精确匹配；需要 PKCE 时必须提供 `S256`；兑换时重验当前 grant、redirect URI、PKCE 配置、scope 和活动资源，失败不消费授权码 |
 | `client_credentials` | 机器对机器访问资源 API | 客户端必须允许该 grant；`scope` 必填；不允许身份 scope；scope 必须对应启用的 API resource |
-| `refresh_token` | 刷新用户 access token | 客户端必须允许该 grant；refresh token 必须属于该客户端；旧 refresh token 轮换后立即失效 |
-| `urn:ietf:params:oauth:grant-type:device_code` | 设备授权码换 token | 客户端必须允许该 grant；必须先完成 `/connect/deviceauthorization` 和用户确认 |
+| `refresh_token` | 刷新用户 access token | 客户端必须允许该 grant；refresh token 必须先绑定当前客户端；可选 `scope` 只能缩小 access token 权限；原 grant 和活动资源仍需有效 |
+| `urn:ietf:params:oauth:grant-type:device_code` | 设备授权码换 token | 客户端必须允许该 grant；必须先完成 `/connect/deviceauthorization` 和用户确认；消费前重验当前 grant、scope 和活动资源 |
 | `urn:nexusauth:grant-type:wechat_miniprogram` | 微信小程序 `wx.login` code 换 token | 仅用于认证方式为 `none` 的公共客户端；客户端必须只允许该 grant 和可选的 `refresh_token`；Host 必须启用并配置微信小程序；详见[微信小程序接入](微信小程序接入.md) |
 
 授权码和设备码流程只有在请求 scope 包含 `offline_access` 时才签发 refresh token。scope 包含 `openid` 时才签发 ID token。
@@ -674,7 +699,8 @@ GET /connect/authorize
 - `claims` 必须是合法 JSON；
 - 未登录时跳转 `/account/login`，已登录时直接签发授权码；
 - 授权码 10 分钟有效，只能使用一次；
-- 换 token 时必须在 `/connect/token` 再次完成客户端认证。
+- 换 token 时必须在 `/connect/token` 再次完成客户端认证；
+- 消费授权码前会重新检查当前客户端是否仍允许 `authorization_code`、回调地址是否仍登记、PKCE 配置是否仍满足原 challenge，以及 scope 与活动 API resource 是否仍有效；重验失败返回 `invalid_grant`，授权码不消费。
 
 ### 6.5 Client Credentials
 
@@ -714,15 +740,22 @@ curl -sS -X POST 'http://localhost:5100/connect/token' \
 
 行为：
 
-- refresh token 必须属于当前认证的客户端；
-- 每次刷新都会轮换 refresh token；
-- 旧 refresh token 立即失效；
+- `scope` 可省略；省略时沿用 refresh token 保存的原 grant scope；
+- 提供 `scope` 时只能缩小本次 access token 的 scope，不能扩大原 grant 权限；
+- 响应包含本次 access token 的 `scope`；
+- 先核对 refresh token 是否属于当前认证客户端，再处理 revoked token 的重放语义，避免其他客户端撤销原 token family；
+- 原 grant 对应的当前客户端配置、scope 和 API resource 必须仍然有效；权限移除后刷新失败，需要重新授权；
+- 每次刷新都会轮换 refresh token，新 refresh token 保留原 grant scope；
+- 授权码流程签发 refresh token 时，会把授权请求中的 claims 快照保存到 `refresh_tokens.claims_json`；
+- 刷新签发 access token 时会带入该 claims 快照，轮换后的新 refresh token 继续继承，避免 UserInfo 的 `userinfo` 字段值约束在刷新后丢失；
+- 升级前签发且 `claims_json` 为 `NULL` 的旧 refresh token 无法恢复当时未保存的 claims；依赖原约束时应重新授权；
+- 旧 refresh token 在轮换后立即失效；
 - 如果用户不活跃、token 已撤销或 token 在用户 `TokenInvalidBefore` 之前，刷新失败；
 - 默认 refresh token 有效期是 `Jwt:RefreshTokenLifetimeMinutes`，默认 43200 分钟，也就是 30 天。
 
 ### 6.7 UserInfo
 
-`/connect/userinfo` 要求 Bearer access token：
+`/connect/userinfo` 支持 GET 和 POST，要求有效的用户 Bearer access token：
 
 ```bash
 curl -sS 'http://localhost:5100/connect/userinfo' \
@@ -732,9 +765,15 @@ curl -sS 'http://localhost:5100/connect/userinfo' \
 行为：
 
 - 只接受 `token_use=access_token` 的用户 access token；
+- access token 必须包含 `openid` scope；缺少时返回 `403 insufficient_scope`；
+- 仅包含 `openid` 时至少返回 `sub`；包含 `profile` 后才返回 `name`、`preferred_username` 等资料 claim；
+- `email` 和 `phone` 相关 claim 分别需要对应 scope；
+- `claims` 参数中的 `id_token` 与 `userinfo` section 独立处理，UserInfo 只读取 `userinfo`；section 内的 `value`、`values` 等约束保留；
+- UserInfo 从 access token 携带的 claims 快照恢复 `userinfo` 约束；授权码签发 refresh token、刷新和轮换都会保留该快照；
+- 本项目要求显式 claim 也受已授予 scope 限制，这是 NexusAuth 的保守策略，不应理解为 OIDC 对所有单项 claim 都强制要求同名 scope；
+- 响应设置 `Cache-Control: no-store`；
 - 客户端凭据 token 没有用户 subject，不能调用；
-- 返回的 claim 受 scope 和授权时 `claims` 参数影响；
-- `email` 和 `phone` 相关 claim 需要请求对应 scope；
+- token 无效、不是 access token 或用户已停用时返回 `401 invalid_token`；
 - 当前 `email_verified` 和 `phone_number_verified` 不表示已经完成 Host 的邮箱所有权验证，实现中这两个 claim 会返回 `false`。
 
 ### 6.8 Token Introspection 和 Revocation
@@ -1126,7 +1165,7 @@ Host 在 [`src/NexusAuth.Host/AppWebModule.cs`](../src/NexusAuth.Host/AppWebModu
 5. 持久化并备份 Data Protection key ring；多副本共享同一 key ring。
 6. 配置真实的 SMTP；不要把授权码写入镜像、仓库或普通配置文件。
 7. 覆盖 `BootstrapAdmin` 的用户名和密码；已有管理员密码不会被配置自动重置。
-8. 使用独立数据库账号、强密码和受控网络，并预先执行当前 schema；Host 不代替迁移工具。
+8. 使用独立数据库账号、强密码和受控网络，并预先执行当前 schema；已有数据库升级时先执行 `refresh-token-claims-upgrade.sql`。Host 不代替迁移工具。
 9. 在反向代理后只信任明确的代理 IP 或 CIDR，代理入口覆盖客户端转发头。
 10. 使用 HTTPS、受控日志目录、日志轮转和集中日志采集。
 11. 为 SCIM 和 Open API 分别使用最小权限凭证，定期轮换和撤销。
@@ -1142,7 +1181,7 @@ Host 在 [`src/NexusAuth.Host/AppWebModule.cs`](../src/NexusAuth.Host/AppWebModu
 - Host 开发配置：[`src/NexusAuth.Host/appsettings.Development.json`](../src/NexusAuth.Host/appsettings.Development.json)
 - 启动 profile：[`src/NexusAuth.Host/Properties/launchSettings.json`](../src/NexusAuth.Host/Properties/launchSettings.json)
 - Compose：[`docker-compose.yml`](../docker-compose.yml)
-- 数据库初始化：[`docker/postgres-init.sh`](../docker/postgres-init.sh)、[`production-init.sql`](../production-init.sql)
+- 数据库初始化和升级：[`docker/postgres-init.sh`](../docker/postgres-init.sh)、[`production-init.sql`](../production-init.sql)、[`refresh-token-claims-upgrade.sql`](../refresh-token-claims-upgrade.sql)
 - 管理员初始化：[`src/NexusAuth.Host/BootstrapAdminHostedService.cs`](../src/NexusAuth.Host/BootstrapAdminHostedService.cs)
 - 邮箱实现：[`src/NexusAuth.Application/Services/Email/EmailAccountService.cs`](../src/NexusAuth.Application/Services/Email/EmailAccountService.cs)、[`EmailVerificationCodeService.cs`](../src/NexusAuth.Application/Services/Email/EmailVerificationCodeService.cs)
 - SMTP 选项和校验：[`src/NexusAuth.Shared/Email/SmtpOptions.cs`](../src/NexusAuth.Shared/Email/SmtpOptions.cs)

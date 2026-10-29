@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Luck.Logging.Serilog;
 using NexusAuth.Application.Services.Security;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Application.Services.ExternalIdentity;
 
@@ -111,7 +112,7 @@ public sealed class WeChatMiniProgramLoginService(
             + $"?appid={Uri.EscapeDataString(options.AppId)}"
             + $"&secret={Uri.EscapeDataString(options.AppSecret)}"
             + $"&js_code={Uri.EscapeDataString(code)}"
-            + "&grant_type=authorization_code";
+            + $"&grant_type={OAuthGrantTypes.AuthorizationCode}";
 
         try
         {

@@ -11,6 +11,7 @@ using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 using Xunit;
 
 namespace NexusAuth.Host.IntegrationTests;
@@ -24,14 +25,14 @@ public sealed class ClientServiceHardeningTests
     [Fact]
     public async Task Scope_validation_rejects_scopes_spanning_multiple_resource_audiences()
     {
-        var client = OAuthClient.Create("api-client", "API", allowedScopes: ["openid", "profile", "orders.api", "billing.api"]);
+        var client = OAuthClient.Create("api-client", "API", allowedScopes: [OidcScopes.OpenId, OidcScopes.Profile, "orders.api", "billing.api"]);
         using var harness = new ClientServiceHarness(client);
         harness.Resources.Add(ApiResource.Create("orders", "Orders", "orders.api"));
         harness.Resources.Add(ApiResource.Create("billing", "Billing", "billing.api"));
 
-        var multiple = await harness.Service.ValidateScopesAsync("api-client", "openid orders.api billing.api", allowIdentityScopes: true);
+        var multiple = await harness.Service.ValidateScopesAsync("api-client", OidcScopes.OpenId + " orders.api billing.api", allowIdentityScopes: true);
         var multipleMachine = await harness.Service.ValidateScopesAsync("api-client", "orders.api billing.api", allowIdentityScopes: false);
-        var single = await harness.Service.ValidateScopesAsync("api-client", "openid profile orders.api", allowIdentityScopes: true);
+        var single = await harness.Service.ValidateScopesAsync("api-client", OidcScopes.OpenId + " " + OidcScopes.Profile + " orders.api", allowIdentityScopes: true);
 
         Assert.False(multiple.IsSuccess);
         Assert.Equal("invalid_scope", multiple.ErrorCode);
@@ -47,11 +48,19 @@ public sealed class ClientServiceHardeningTests
     [InlineData("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM=")]
     public async Task Authorize_validation_rejects_malformed_code_challenge(string codeChallenge)
     {
-        var client = OAuthClient.Create("web-client", "Web", redirectUris: ["https://client.example/callback"], allowedGrantTypes: ["authorization_code"]);
+        var client = OAuthClient.Create(
+            "web-client",
+            "Web",
+            redirectUris: ["https://client.example/callback"],
+            allowedGrantTypes: [OAuthGrantTypes.AuthorizationCode]);
         using var harness = new ClientServiceHarness(client);
 
         var result = await harness.Service.ValidateClientForAuthorizationAsync(
-            "web-client", "https://client.example/callback", "authorization_code", codeChallenge, "S256");
+            "web-client",
+            "https://client.example/callback",
+            OAuthGrantTypes.AuthorizationCode,
+            codeChallenge,
+            PkceMethods.S256);
 
         Assert.False(result.IsSuccess);
         Assert.Equal("invalid_request", result.ErrorCode);
@@ -61,11 +70,19 @@ public sealed class ClientServiceHardeningTests
     [Fact]
     public async Task Authorize_validation_accepts_a_well_formed_s256_code_challenge()
     {
-        var client = OAuthClient.Create("web-client", "Web", redirectUris: ["https://client.example/callback"], allowedGrantTypes: ["authorization_code"]);
+        var client = OAuthClient.Create(
+            "web-client",
+            "Web",
+            redirectUris: ["https://client.example/callback"],
+            allowedGrantTypes: [OAuthGrantTypes.AuthorizationCode]);
         using var harness = new ClientServiceHarness(client);
 
         var result = await harness.Service.ValidateClientForAuthorizationAsync(
-            "web-client", "https://client.example/callback", "authorization_code", ValidChallenge, "S256");
+            "web-client",
+            "https://client.example/callback",
+            OAuthGrantTypes.AuthorizationCode,
+            ValidChallenge,
+            PkceMethods.S256);
 
         Assert.True(result.IsSuccess);
         Assert.Same(client, result.Client);
@@ -82,9 +99,9 @@ public sealed class ClientServiceHardeningTests
             RedirectUris: null,
             PostLogoutRedirectUris: null,
             AllowedScopes: null,
-            AllowedGrantTypes: ["client_credentials"],
+            AllowedGrantTypes: [OAuthGrantTypes.ClientCredentials],
             RequirePkce: false,
-            TokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodClientSecretPost,
+            TokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretPost,
             AutoGenerateJwks: false,
             Jwks: null,
             JwksUri: null,
@@ -113,7 +130,10 @@ public sealed class ClientServiceHardeningTests
     [Fact]
     public async Task Generating_credentials_is_capped_at_three_active_shared_secrets()
     {
-        var client = OAuthClient.Create("secret-client", "Secrets", allowedGrantTypes: ["client_credentials"]);
+        var client = OAuthClient.Create(
+            "secret-client",
+            "Secrets",
+            allowedGrantTypes: [OAuthGrantTypes.ClientCredentials]);
         using var harness = new ClientServiceHarness(client);
 
         for (var index = 0; index < ClientService.MaxActiveSharedSecrets; index++)
@@ -181,9 +201,9 @@ public sealed class ClientServiceHardeningTests
             null,
             null,
             null,
-            ["client_credentials"],
+            [OAuthGrantTypes.ClientCredentials],
             false,
-            OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            OAuthClientAuthenticationMethods.PrivateKeyJwt,
             false,
             null,
             "https://client.example/jwks.json")));
@@ -203,14 +223,14 @@ public sealed class ClientServiceHardeningTests
         var client = OAuthClient.Create(
             "pk-client",
             "Private key client",
-            allowedGrantTypes: ["client_credentials"],
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            allowedGrantTypes: [OAuthGrantTypes.ClientCredentials],
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.PrivateKeyJwt,
             jwks: PublicJwks(rsa));
         using var harness = new ClientServiceHarness(client);
         var input = new ClientAuthenticationInput(
             "pk-client",
             null,
-            OAuthClient.ClientAssertionTypeJwtBearer,
+            OAuthClientAssertionTypes.JwtBearer,
             Assertion(rsa, "pk-client", audience),
             TokenEndpoint,
             null,
@@ -228,7 +248,7 @@ public sealed class ClientServiceHardeningTests
         var client = OAuthClient.Create(
             "pk-client",
             "Private key client",
-            tokenEndpointAuthMethod: OAuthClient.TokenEndpointAuthMethodPrivateKeyJwt,
+            tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.PrivateKeyJwt,
             jwks: PublicJwks(rsa));
         // Legacy rows were stored before JWKS validation existed.
         typeof(OAuthClient).GetProperty(nameof(OAuthClient.Jwks))!.SetValue(client, "{not-json");
@@ -241,7 +261,7 @@ public sealed class ClientServiceHardeningTests
 
     [Theory]
     [InlineData("legacy-secret", null, null, true)]
-    [InlineData("legacy-secret", "client_secret_post", null, true)]
+    [InlineData("legacy-secret", OAuthClientAuthenticationMethods.ClientSecretPost, null, true)]
     [InlineData("wrong-secret", null, "Invalid client secret.", false)]
     [InlineData(null, null, "client_secret is required.", false)]
     public async Task Legacy_unknown_auth_method_preserves_pr_shared_secret_fallback(
@@ -271,7 +291,11 @@ public sealed class ClientServiceHardeningTests
         using var harness = new ClientServiceHarness(client);
 
         var result = await harness.Service.AuthenticateClientAsync(
-            new ClientAuthenticationInput("legacy-client", null, OAuthClient.ClientAssertionTypeJwtBearer, "assertion"),
+            new ClientAuthenticationInput(
+                "legacy-client",
+                null,
+                OAuthClientAssertionTypes.JwtBearer,
+                "assertion"),
             requireClientAuthentication: true);
 
         Assert.False(result.IsSuccess);

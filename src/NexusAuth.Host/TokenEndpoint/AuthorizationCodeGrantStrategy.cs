@@ -1,11 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Shared.DependencyInjection;
+using NexusAuth.Shared.OAuth;
 using static NexusAuth.Host.TokenEndpoint.TokenGrantHelper;
 
 namespace NexusAuth.Host.TokenEndpoint;
 
-[KeyedService(typeof(ITokenGrantStrategy), "authorization_code")]
+[KeyedService(typeof(ITokenGrantStrategy), OAuthGrantTypes.AuthorizationCode)]
 public class AuthorizationCodeGrantStrategy(
     IAuthorizationService authorizationService,
     ITokenService tokenService,
@@ -53,9 +54,10 @@ public class AuthorizationCodeGrantStrategy(
         {
             accessTokenResult = await tokenService.IssueAccessTokenWithMetadataAsync(result.ClientId, result.Scope, null, result.UserId, result.ClaimsJson, ct);
             refreshToken = ShouldIssueRefreshToken(result.Scope)
-                ? await tokenService.IssueRefreshTokenAsync(result.ClientId, result.UserId, result.Scope, ct)
+                ? await tokenService.IssueRefreshTokenAsync(result.ClientId, result.UserId, result.Scope, ct, result.ClaimsJson)
                 : null;
-            var includeIdToken = result.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("openid", StringComparer.Ordinal);
+            var includeIdToken = result.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Contains(OidcScopes.OpenId, StringComparer.Ordinal);
             if (includeIdToken)
             {
                 // 中文注释：授权码里已经保存了 OIDC 上下文，这里在换 token 时继续带到 id_token 里。

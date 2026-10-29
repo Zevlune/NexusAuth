@@ -193,8 +193,8 @@ public sealed class EndSessionTests
         public Task<string> IssueAccessTokenAsync(string clientId, string scope, string? audience = null, Guid? userId = null, string? claimsJson = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<TokenIssueResult> IssueAccessTokenWithMetadataAsync(string clientId, string scope, string? audience = null, Guid? userId = null, string? claimsJson = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<string> IssueIdTokenAsync(string clientId, Guid userId, string? nonce, string accessToken, string? claimsJson = null, DateTimeOffset? authenticatedAt = null, string? acr = null, string? amr = null, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<string> IssueRefreshTokenAsync(string clientId, Guid userId, string scope, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<RefreshResult> RefreshAsync(string refreshTokenString, string? clientId = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<string> IssueRefreshTokenAsync(string clientId, Guid userId, string scope, CancellationToken ct = default, string? claimsJson = null) => throw new NotSupportedException();
+        public Task<RefreshResult> RefreshAsync(string refreshTokenString, string? clientId = null, CancellationToken ct = default, string? scope = null) => throw new NotSupportedException();
         public Task RevokeRefreshTokenAsync(string refreshTokenString, CancellationToken ct = default) => throw new NotSupportedException();
         public Task RevokeRefreshTokenAsync(string refreshTokenString, string? clientId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<bool> IsRefreshTokenOwnedByClientAsync(string refreshTokenString, string clientId, CancellationToken ct = default) => throw new NotSupportedException();

@@ -2,30 +2,30 @@ using Luck.DDD.Domain.Domain.AggregateRoots;
 using System.Linq;
 using System.Text.Json;
 using NexusAuth.Domain.Entities;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Domain.AggregateRoots.OAuthClients;
 
 public class OAuthClient : AggregateRootWithIdentity<Guid>
 {
-    public const string TokenEndpointAuthMethodNone = "none";
+    // 兼容别名：新代码请直接使用 NexusAuth.Shared.OAuth.OAuthClientAuthenticationMethods。
+    public const string TokenEndpointAuthMethodNone = OAuthClientAuthenticationMethods.None;
 
-    public const string TokenEndpointAuthMethodClientSecretBasic = "client_secret_basic";
+    public const string TokenEndpointAuthMethodClientSecretBasic = OAuthClientAuthenticationMethods.ClientSecretBasic;
 
-    public const string TokenEndpointAuthMethodClientSecretPost = "client_secret_post";
+    public const string TokenEndpointAuthMethodClientSecretPost = OAuthClientAuthenticationMethods.ClientSecretPost;
 
-    public const string TokenEndpointAuthMethodClientSecretJwt = "client_secret_jwt";
+    public const string TokenEndpointAuthMethodClientSecretJwt = OAuthClientAuthenticationMethods.ClientSecretJwt;
 
-    public const string TokenEndpointAuthMethodPrivateKeyJwt = "private_key_jwt";
+    public const string TokenEndpointAuthMethodPrivateKeyJwt = OAuthClientAuthenticationMethods.PrivateKeyJwt;
 
-    private const string WeChatMiniProgramGrantType = "urn:nexusauth:grant-type:wechat_miniprogram";
-
-    public const string ClientAssertionTypeJwtBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+    public const string ClientAssertionTypeJwtBearer = OAuthClientAssertionTypes.JwtBearer;
 
     public string ClientId { get; private set; } = default!;
 
     public List<OAuthClientSecret> ClientSecrets { get; private set; } = [];
 
-    public string TokenEndpointAuthMethod { get; private set; } = TokenEndpointAuthMethodClientSecretBasic;
+    public string TokenEndpointAuthMethod { get; private set; } = OAuthClientAuthenticationMethods.ClientSecretBasic;
 
     public string? Jwks { get; private set; }
 
@@ -120,7 +120,7 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         IEnumerable<string>? allowedScopes = null,
         IEnumerable<string>? allowedGrantTypes = null,
         bool requirePkce = true,
-        string tokenEndpointAuthMethod = TokenEndpointAuthMethodClientSecretBasic,
+        string tokenEndpointAuthMethod = OAuthClientAuthenticationMethods.ClientSecretBasic,
         IEnumerable<OAuthClientSecret>? clientSecrets = null,
         string? jwks = null,
         string? jwksUri = null,
@@ -157,14 +157,14 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
 
     public bool RequiresPrivateKeyJwtAuthentication()
     {
-        return string.Equals(TokenEndpointAuthMethod, TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal);
+        return string.Equals(TokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal);
     }
 
     public bool AllowsClientSecretAuthentication()
     {
-        return string.Equals(TokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretBasic, StringComparison.Ordinal)
-            || string.Equals(TokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretPost, StringComparison.Ordinal)
-            || string.Equals(TokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretJwt, StringComparison.Ordinal);
+        return string.Equals(TokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretBasic, StringComparison.Ordinal)
+            || string.Equals(TokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretPost, StringComparison.Ordinal)
+            || string.Equals(TokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretJwt, StringComparison.Ordinal);
     }
 
     public bool IsValidRedirectUri(string uri)
@@ -383,16 +383,16 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         string? jwks,
         string? jwksUri)
     {
-        if (!string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretBasic, StringComparison.Ordinal)
-            && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretPost, StringComparison.Ordinal)
-            && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretJwt, StringComparison.Ordinal)
-            && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal)
-            && !string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+        if (!string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretBasic, StringComparison.Ordinal)
+            && !string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretPost, StringComparison.Ordinal)
+            && !string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretJwt, StringComparison.Ordinal)
+            && !string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal)
+            && !string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.None, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"Unsupported token_endpoint_auth_method '{tokenEndpointAuthMethod}'.");
         }
 
-        if (string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.None, StringComparison.Ordinal))
         {
             if (clientSecrets.Count > 0)
                 throw new InvalidOperationException("token_endpoint_auth_method 'none' cannot have client secrets.");
@@ -403,7 +403,7 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
             return;
         }
 
-        if (string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodPrivateKeyJwt, StringComparison.Ordinal))
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.PrivateKeyJwt, StringComparison.Ordinal))
         {
             if (string.IsNullOrWhiteSpace(jwks) && string.IsNullOrWhiteSpace(jwksUri))
                 return;
@@ -414,7 +414,7 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
             return;
         }
 
-        if (string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodClientSecretJwt, StringComparison.Ordinal)
+        if (string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.ClientSecretJwt, StringComparison.Ordinal)
             && clientSecrets.Any(secret => secret.IsActive && string.IsNullOrWhiteSpace(secret.PlainValue)))
         {
             throw new InvalidOperationException("client_secret_jwt requires retrievable shared secret material.");
@@ -428,14 +428,14 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         string tokenEndpointAuthMethod,
         IReadOnlyCollection<string> allowedGrantTypes)
     {
-        if (!string.Equals(tokenEndpointAuthMethod, TokenEndpointAuthMethodNone, StringComparison.Ordinal))
+        if (!string.Equals(tokenEndpointAuthMethod, OAuthClientAuthenticationMethods.None, StringComparison.Ordinal))
             return;
 
         var unsupportedGrant = allowedGrantTypes.FirstOrDefault(grantType =>
-            !string.Equals(grantType, WeChatMiniProgramGrantType, StringComparison.Ordinal)
-            && !string.Equals(grantType, "refresh_token", StringComparison.Ordinal));
+            !string.Equals(grantType, OAuthGrantTypes.WeChatMiniProgram, StringComparison.Ordinal)
+            && !string.Equals(grantType, OAuthGrantTypes.RefreshToken, StringComparison.Ordinal));
         if (unsupportedGrant is not null
-            || !allowedGrantTypes.Contains(WeChatMiniProgramGrantType, StringComparer.Ordinal))
+            || !allowedGrantTypes.Contains(OAuthGrantTypes.WeChatMiniProgram, StringComparer.Ordinal))
         {
             throw new InvalidOperationException(
                 "token_endpoint_auth_method 'none' requires the WeChat mini program grant and may only include refresh_token.");
@@ -445,7 +445,7 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
     private static string NormalizeTokenEndpointAuthMethod(string? tokenEndpointAuthMethod)
     {
         return string.IsNullOrWhiteSpace(tokenEndpointAuthMethod)
-            ? TokenEndpointAuthMethodClientSecretBasic
+            ? OAuthClientAuthenticationMethods.ClientSecretBasic
             : tokenEndpointAuthMethod.Trim();
     }
 
