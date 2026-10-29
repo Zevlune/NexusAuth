@@ -21,6 +21,7 @@ public static class OpenIdConnectFlowStateExtensions
         services.AddOptions<RedisFlowStateOptions>().ValidateOnStart();
         services.TryAddSingleton<TimeProvider>(TimeProvider.System);
         services.TryAddScoped<OpenIdConnectFlowState>();
+        services.TryAddScoped<OpenIdConnectFlowStateEvents>();
         return new OpenIdConnectFlowStateBuilder(services);
     }
 }

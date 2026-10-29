@@ -1,3 +1,4 @@
+using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Workbench.Api.Authentication;
 using NexusAuth.Workbench.Api.Authentication.Tokens;
 using System.Net;
@@ -174,6 +175,8 @@ public sealed class WorkbenchClientAuthenticationTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddScoped<IUserTokenValidator>(_ =>
+            RecordingDispatchProxy.Create<IUserTokenValidator>((_, _) => false));
         services.AddWorkbenchAuthentication(CreateConfiguration());
         services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => handler);

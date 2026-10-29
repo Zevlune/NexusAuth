@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application;
 using NexusAuth.Application.Users;
 using NexusAuth.Workbench.Api.Controllers;
+using NexusAuth.Workbench.Api.Models.Requests;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;

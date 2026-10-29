@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -43,6 +44,7 @@ public static class WorkbenchAuthenticationExtensions
         // 事件和令牌操作按请求创建，处理 Workbench 的回调、JSON 契约及会话撤销检查。
         services.AddScoped<WorkbenchCookieAuthenticationEvents>();
         services.AddScoped<WorkbenchOpenIdConnectEvents>();
+        services.AddScoped<WorkbenchJwtBearerEvents>();
         services.AddScoped<IWorkbenchTokenClient, WorkbenchTokenClient>();
         // 合并并发刷新，避免同一个旋转 refresh token 被多个请求重复消费；内部创建 scope 执行请求。
         services.AddSingleton<IWorkbenchTokenRefreshCoordinator, WorkbenchTokenRefreshCoordinator>();
@@ -53,8 +55,13 @@ public static class WorkbenchAuthenticationExtensions
 
     private static void AddAuthenticationHandlers(IServiceCollection services)
     {
-        // Cookie 表示本应用的登录会话；只有显式 challenge 时才跳到 OIDC Provider。
-        services.AddAuthentication(WorkbenchAuthenticationDefaults.CookieScheme)
+        // 浏览器会话用 Cookie，显式提供 Authorization 头的 API 调用只走 Bearer。
+        // 无效或空的 Bearer 不能回退到 Cookie，否则会掩盖 API 凭据错误。
+        services.AddAuthentication(WorkbenchAuthenticationDefaults.Scheme)
+            .AddPolicyScheme(WorkbenchAuthenticationDefaults.Scheme, "Cookie or Bearer", options =>
+                options.ForwardDefaultSelector = context => context.Request.Headers.ContainsKey("Authorization")
+                    ? WorkbenchAuthenticationDefaults.BearerScheme
+                    : WorkbenchAuthenticationDefaults.CookieScheme)
             .AddCookie(WorkbenchAuthenticationDefaults.CookieScheme, options =>
             {
                 options.Cookie.Name = ".NexusAuth.Workbench";
@@ -66,7 +73,10 @@ public static class WorkbenchAuthenticationExtensions
                 options.EventsType = typeof(WorkbenchCookieAuthenticationEvents);
             })
             .AddOpenIdConnect(WorkbenchAuthenticationDefaults.OpenIdConnectScheme, options =>
-                options.EventsType = typeof(WorkbenchOpenIdConnectEvents));
+                options.EventsType = typeof(WorkbenchOpenIdConnectEvents))
+            .AddJwtBearer(WorkbenchAuthenticationDefaults.BearerScheme, options =>
+                options.EventsType = typeof(WorkbenchJwtBearerEvents));
+        AddBearerOptions(services);
         services.AddOptions<CookieAuthenticationOptions>(WorkbenchAuthenticationDefaults.CookieScheme)
             .Configure<IOptions<WorkbenchSecurityOptions>>((options, security) =>
                 // 默认仅 HTTPS；本地 HTTP 调试需要在安全配置中显式放开。
@@ -78,6 +88,41 @@ public static class WorkbenchAuthenticationExtensions
                 {
                     ConfigureOpenIdConnect(options, auth.Value, security.Value, flow.Value,
                         http.CreateClient(WorkbenchTokenClient.HttpClientName));
+                });
+    }
+
+    private static void AddBearerOptions(IServiceCollection services)
+    {
+        services.AddOptions<JwtBearerOptions>(WorkbenchAuthenticationDefaults.BearerScheme)
+            .Configure<IOptions<WorkbenchAuthenticationOptions>, IOptionsMonitor<OpenIdConnectOptions>>(
+                (options, auth, oidcOptions) =>
+                {
+                    var settings = auth.Value;
+                    var oidc = oidcOptions.Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
+                    options.Authority = settings.Authority;
+                    options.Audience = settings.Audience;
+                    options.RequireHttpsMetadata = settings.RequireHttpsMetadata;
+                    // API 验签与 OIDC 登录复用框架的发现文档和签名密钥缓存。
+                    options.Configuration = oidc.Configuration;
+                    options.ConfigurationManager = oidc.ConfigurationManager;
+                    options.MapInboundClaims = false;
+                    options.SaveToken = true;
+                    options.IncludeErrorDetails = false;
+                    options.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuer = true,
+                        ValidIssuer = settings.Authority,
+                        ValidateAudience = true,
+                        ValidAudience = settings.Audience, // Access Token 的受众是 API resource。
+                        ValidateIssuerSigningKey = true,
+                        RequireSignedTokens = true,
+                        ValidateLifetime = true,
+                        RequireExpirationTime = true,
+                        ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
+                        ClockSkew = TimeSpan.FromSeconds(30),
+                        NameClaimType = "name",
+                        RoleClaimType = "role",
+                    };
                 });
     }
 

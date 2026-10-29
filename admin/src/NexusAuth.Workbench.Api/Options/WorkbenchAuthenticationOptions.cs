@@ -14,6 +14,8 @@ public sealed class WorkbenchAuthenticationOptions
     public string Scope { get; set; } = string.Empty;
     public bool SignOutProvider { get; set; } = true;
     public bool RequireHttpsMetadata { get; set; } = true;
+    /// <summary>除本应用 ClientId 外，允许调用 Workbench API 的 OAuth 客户端。</summary>
+    public string[] AllowedBearerClientIds { get; set; } = [];
 
     internal void Normalize()
     {
@@ -21,6 +23,11 @@ public sealed class WorkbenchAuthenticationOptions
         Audience = Audience?.Trim() ?? string.Empty;
         ClientId = ClientId?.Trim() ?? string.Empty;
         ClientSecret = ClientSecret?.Trim() ?? string.Empty;
+        AllowedBearerClientIds = (AllowedBearerClientIds ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
         RedirectUri = RedirectUri?.Trim() ?? string.Empty;
         PostLogoutRedirectUri = PostLogoutRedirectUri?.Trim() ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(Scope))

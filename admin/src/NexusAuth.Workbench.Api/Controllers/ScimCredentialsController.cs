@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Services.Scim;
 using NexusAuth.Workbench.Api.Filters;
+using NexusAuth.Workbench.Api.Models.Requests;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
@@ -32,6 +33,3 @@ public sealed class ScimCredentialsController(IScimCredentialService credentialS
         return await credentialService.RevokeAsync(id, ct) ? NoContent() : NotFound();
     }
 }
-
-public sealed record CreateScimCredentialRequest(string Name, IReadOnlyCollection<string>? Scopes, DateTimeOffset? ExpiresAt);
-public sealed record UpdateScimCredentialRequest(string Name, IReadOnlyCollection<string>? Scopes, DateTimeOffset? ExpiresAt, bool IsActive);

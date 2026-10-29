@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -30,7 +31,7 @@ public sealed class WorkbenchBffAuthenticationTests
         + " " + OidcScopes.OfflineAccess;
 
     [Fact]
-    public async Task Bff_registers_cookie_and_oidc_without_a_bearer_authentication_scheme()
+    public async Task Workbench_registers_cookie_oidc_and_bearer_with_a_request_selector()
     {
         using var factory = CreateFactory();
         var schemes = (await factory.Services
@@ -45,9 +46,17 @@ public sealed class WorkbenchBffAuthenticationTests
         Assert.Contains(schemes, scheme =>
             scheme.Name == WorkbenchAuthenticationDefaults.OpenIdConnectScheme
             && scheme.HandlerType == typeof(OpenIdConnectHandler));
-        Assert.DoesNotContain(schemes, scheme =>
-            scheme.HandlerType.FullName?.Contains("JwtBearer", StringComparison.Ordinal) == true);
-        Assert.Equal(WorkbenchAuthenticationDefaults.CookieScheme, defaults.DefaultScheme);
+        Assert.Contains(schemes, scheme => scheme.Name == WorkbenchAuthenticationDefaults.BearerScheme
+            && scheme.HandlerType == typeof(JwtBearerHandler));
+        Assert.Equal(WorkbenchAuthenticationDefaults.Scheme, defaults.DefaultScheme);
+
+        var bearer = factory.Services.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.BearerScheme);
+        var oidc = factory.Services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
+        Assert.Same(oidc.ConfigurationManager, bearer.ConfigurationManager);
+        Assert.Equal(Audience, bearer.TokenValidationParameters.ValidAudience);
+        Assert.Equal(typeof(WorkbenchJwtBearerEvents), bearer.EventsType);
 
         var cookie = factory.Services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
@@ -161,7 +170,7 @@ public sealed class WorkbenchBffAuthenticationTests
     }
 
     [Fact]
-    public async Task Anonymous_requests_are_unauthorized_and_a_bearer_header_is_not_authenticated()
+    public async Task Anonymous_requests_and_an_invalid_bearer_token_are_unauthorized()
     {
         using var factory = CreateFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -179,6 +188,11 @@ public sealed class WorkbenchBffAuthenticationTests
         using var bearer = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Unauthorized, bearer.StatusCode);
+        using var protectedRequest = new HttpRequestMessage(HttpMethod.Get, "/api/users");
+        protectedRequest.Headers.Authorization = request.Headers.Authorization;
+        using var challenge = await client.SendAsync(protectedRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, challenge.StatusCode);
+        Assert.Contains(challenge.Headers.WwwAuthenticate, header => header.Scheme == "Bearer");
     }
 
     private static WebApplicationFactory<WorkbenchApiModule> CreateFactory(

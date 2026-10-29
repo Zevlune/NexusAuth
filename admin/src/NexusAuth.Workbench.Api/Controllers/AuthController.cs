@@ -75,6 +75,9 @@ public class AuthController(
     [Authorize(Policy = WorkbenchAuthorizationPolicies.AuthenticatedUser)]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
+        // Bearer 调用撤销本次 Access Token；浏览器调用同时清理 Cookie 和 Provider 会话。
+        var bearerRequest = Request.Headers.ContainsKey("Authorization");
+        var scheme = bearerRequest ? WorkbenchAuthenticationDefaults.BearerScheme : WorkbenchAuthenticationDefaults.CookieScheme;
         var logoutUrl = string.Empty;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
@@ -82,7 +85,7 @@ public class AuthController(
         {
             foreach (var tokenName in new[] { "refresh_token", "access_token" })
             {
-                var token = await HttpContext.GetTokenAsync(WorkbenchAuthenticationDefaults.CookieScheme, tokenName);
+                var token = await HttpContext.GetTokenAsync(scheme, tokenName);
                 if (string.IsNullOrEmpty(token)) continue;
                 try { await client.RevokeTokenAsync(token, tokenName, timeout.Token); }
                 catch (Exception exception)
@@ -91,7 +94,7 @@ public class AuthController(
                         tokenName, exception.GetType().Name);
                 }
             }
-            if (settings.SignOutProvider
+            if (!bearerRequest && settings.SignOutProvider
                 && !string.IsNullOrEmpty(await HttpContext.GetTokenAsync(WorkbenchAuthenticationDefaults.CookieScheme, "id_token")))
             {
                 try
@@ -111,7 +114,8 @@ public class AuthController(
         }
         finally
         {
-            await HttpContext.SignOutAsync(WorkbenchAuthenticationDefaults.CookieScheme);
+            if (!bearerRequest)
+                await HttpContext.SignOutAsync(WorkbenchAuthenticationDefaults.CookieScheme);
         }
         Response.Headers.Remove("Location");
         Response.StatusCode = StatusCodes.Status200OK;

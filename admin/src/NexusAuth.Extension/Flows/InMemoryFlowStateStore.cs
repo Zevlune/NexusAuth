@@ -7,7 +7,7 @@ namespace NexusAuth.Extension;
 /// <summary>Bounded, expiring process-local login state shared across request scopes.</summary>
 public sealed class InMemoryFlowStateStore : IFlowStateStore, IDisposable
 {
-    private readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, InMemoryFlowStateStoreEntry> entries = new(StringComparer.Ordinal);
     private readonly object gate = new();
     private readonly TimeProvider clock;
     private readonly TimeSpan lifetime;
@@ -57,7 +57,7 @@ public sealed class InMemoryFlowStateStore : IFlowStateStore, IDisposable
                 throw new FlowStateCapacityExceededException();
             if (!entries.TryAdd(
                     state,
-                    new Entry(flowState, clock.GetUtcNow() + lifetime)))
+                    new InMemoryFlowStateStoreEntry(flowState, clock.GetUtcNow() + lifetime)))
             {
                 throw new InvalidOperationException("Login state already exists.");
             }
@@ -135,6 +135,4 @@ public sealed class InMemoryFlowStateStore : IFlowStateStore, IDisposable
         return left.Length == right.Length
             && CryptographicOperations.FixedTimeEquals(left, right);
     }
-
-    private sealed record Entry(FlowState State, DateTimeOffset ExpiresAt);
 }

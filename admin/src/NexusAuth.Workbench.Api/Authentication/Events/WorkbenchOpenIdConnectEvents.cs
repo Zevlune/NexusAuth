@@ -14,29 +14,24 @@ namespace NexusAuth.Workbench.Api.Authentication.Events;
 /// <summary>连接标准 OIDC 事件与 Workbench 的浏览器绑定、JSON 登录返回和会话策略。</summary>
 public sealed class WorkbenchOpenIdConnectEvents(
     IOptions<WorkbenchAuthenticationOptions> authenticationOptions,
-    OpenIdConnectFlowState flows) : OpenIdConnectEvents
+    OpenIdConnectFlowState flows) : OpenIdConnectFlowStateEvents(flows)
 {
     private readonly WorkbenchAuthenticationOptions settings = authenticationOptions.Value;
 
     private const string ExchangeStartedKey = "Workbench.Oidc.ExchangeStarted";
 
-    public override Task RedirectToIdentityProvider(RedirectContext context)
+    public override async Task RedirectToIdentityProvider(RedirectContext context)
     {
         // 中间件负责构造协议请求；这里仅校验跳转端点并补入配置的完整回调地址。
-        OpenIdConnectEndpointValidator.Validate(new Uri(context.ProtocolMessage.IssuerAddress), settings.RequireHttpsMetadata);
+        await base.RedirectToIdentityProvider(context);
         context.ProtocolMessage.RedirectUri = settings.RedirectUri;
-        return Task.CompletedTask;
     }
 
-    public override Task RedirectToIdentityProviderForSignOut(RedirectContext context)
+    public override async Task RedirectToIdentityProviderForSignOut(RedirectContext context)
     {
-        OpenIdConnectEndpointValidator.Validate(new Uri(context.ProtocolMessage.IssuerAddress), settings.RequireHttpsMetadata);
+        await base.RedirectToIdentityProviderForSignOut(context);
         context.ProtocolMessage.PostLogoutRedirectUri = settings.PostLogoutRedirectUri;
-        return Task.CompletedTask;
     }
-
-    // 在框架继续校验回调前，原子消费扩展流程并确认来自发起登录的浏览器。
-    public override Task MessageReceived(MessageReceivedContext context) => flows.ValidateAsync(context);
 
     public override Task AuthorizationCodeReceived(AuthorizationCodeReceivedContext context)
     {

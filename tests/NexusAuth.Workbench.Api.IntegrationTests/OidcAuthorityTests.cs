@@ -1,3 +1,4 @@
+using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Workbench.Api.Authentication;
 using NexusAuth.Workbench.Api.Authentication.Tokens;
 using System.Net;
@@ -131,6 +132,8 @@ public sealed class OidcAuthorityTests
         var exception = Assert.Throws<OptionsValidationException>(() =>
         {
             var services = new ServiceCollection();
+            services.AddScoped<IUserTokenValidator>(_ =>
+                RecordingDispatchProxy.Create<IUserTokenValidator>((_, _) => false));
             services.AddWorkbenchAuthentication(CreateConfiguration(authority));
             using var provider = services.BuildServiceProvider(new ServiceProviderOptions
             {
@@ -189,6 +192,8 @@ public sealed class OidcAuthorityTests
         var manager = new NeverCompletingConfigurationManager();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddScoped<IUserTokenValidator>(_ =>
+            RecordingDispatchProxy.Create<IUserTokenValidator>((_, _) => false));
         services.AddWorkbenchAuthentication(CreateConfiguration());
         services.PostConfigure<OpenIdConnectOptions>(
             WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
@@ -254,6 +259,8 @@ public sealed class OidcAuthorityTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddScoped<IUserTokenValidator>(_ =>
+            RecordingDispatchProxy.Create<IUserTokenValidator>((_, _) => false));
         services.AddWorkbenchAuthentication(CreateConfiguration(authority, requireHttpsMetadata));
         services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => recorder);

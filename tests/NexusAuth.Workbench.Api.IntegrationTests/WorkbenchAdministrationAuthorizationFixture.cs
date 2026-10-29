@@ -5,16 +5,12 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Security.Cryptography;
-using System.Text.Encodings.Web;
-using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -37,8 +33,6 @@ namespace NexusAuth.Workbench.Api.IntegrationTests;
 
 public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
 {
-    private const string TestBearerScheme = "Workbench.Tests.Bearer";
-
     public static readonly Guid AdministratorId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     public static readonly Guid OrdinaryUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     public static readonly Guid InactiveUserId = Guid.Parse("33333333-3333-3333-3333-333333333333");
@@ -53,6 +47,8 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
     private readonly RsaSecurityKey signingKey;
     private readonly WebApplicationFactory<WorkbenchApiModule> factory;
     private readonly Dictionary<Guid, User> users;
+    private readonly HashSet<string> blacklistedJtis = new(StringComparer.Ordinal);
+    private readonly TestTokenClient tokenClient;
     private int userLookupCount;
 
     public WorkbenchAdministrationAuthorizationFixture() : this(ClientId)
@@ -89,10 +85,7 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
         configuration.SigningKeys.Add(signingKey);
         var metadata = new StaticConfigurationManager<OpenIdConnectConfiguration>(configuration);
         var normalizedClientId = configuredClientId.Trim();
-        var allowedClientIds = new HashSet<string>(
-            [normalizedClientId, "additional-bearer-client"],
-            StringComparer.Ordinal);
-        var tokenClient = new TestTokenClient(normalizedClientId);
+        tokenClient = new TestTokenClient(normalizedClientId);
 
         factory = new WebApplicationFactory<WorkbenchApiModule>().WithWebHostBuilder(builder =>
         {
@@ -104,6 +97,7 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                 .UseSetting("Auth:RedirectUri", "https://dashboard.example.test/signin-oidc")
                 .UseSetting("Auth:PostLogoutRedirectUri", "https://dashboard.example.test/")
                 .UseSetting("Auth:Scope", WorkbenchScope)
+                .UseSetting("Auth:AllowedBearerClientIds:0", "additional-bearer-client")
                 .UseSetting("Swagger:Enabled", "true");
 
             builder.ConfigureServices(services =>
@@ -116,7 +110,9 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                     Interlocked.Increment(ref userLookupCount);
                     return users.GetValueOrDefault((Guid)args![0]!);
                 }));
-                Replace(services, RecordingDispatchProxy.Create<ITokenBlacklistRepository>((_, _) => false));
+                Replace(services, RecordingDispatchProxy.Create<ITokenBlacklistRepository>((method, args) =>
+                    method.Name == nameof(ITokenBlacklistRepository.ExistsActiveAsync)
+                    && IsBlacklisted((string)args![0]!)));
                 Replace(services, RecordingDispatchProxy.Create<IApiResourceService>((method, _) =>
                     method.Name == nameof(IApiResourceService.GetAllAsync)
                         ? new List<ApiResourceDto>()
@@ -153,16 +149,9 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
 
                 services.RemoveAll<IWorkbenchTokenClient>();
                 services.AddScoped<IWorkbenchTokenClient>(_ => tokenClient);
-                services.AddSingleton(new TestBearerAuthenticationState(signingKey, allowedClientIds));
-                services.AddAuthentication(options =>
-                    {
-                        options.DefaultAuthenticateScheme = TestBearerScheme;
-                        options.DefaultChallengeScheme = TestBearerScheme;
-                        options.DefaultForbidScheme = TestBearerScheme;
-                    })
-                    .AddScheme<AuthenticationSchemeOptions, TestBearerAuthenticationHandler>(
-                        TestBearerScheme,
-                        _ => { });
+                services.PostConfigure<JwtBearerOptions>(
+                    WorkbenchAuthenticationDefaults.BearerScheme,
+                    options => options.ConfigurationManager = metadata);
                 services.PostConfigure<OpenIdConnectOptions>(
                     WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
                     options => options.ConfigurationManager = metadata);
@@ -185,33 +174,62 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
         });
 
     public HttpClient CreateBearerClient(Guid userId, string? clientId = ClientId)
+        => CreateClientWithBearerToken(CreateBearerToken(userId, clientId: clientId));
+
+    public HttpClient CreateClientWithBearerToken(string token)
     {
-        var now = DateTime.UtcNow;
+        var client = CreateAnonymousClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    public string CreateBearerToken(
+        Guid userId,
+        string? clientId = ClientId,
+        string? tokenUse = "access_token",
+        string? issuer = null,
+        string? audience = null,
+        DateTimeOffset? notBefore = null,
+        DateTimeOffset? expires = null,
+        SecurityKey? signingKeyOverride = null,
+        string? jti = null)
+    {
+        var issuedAt = DateTimeOffset.UtcNow;
         var claims = new List<Claim>
         {
             new("sub", userId.ToString()),
             new("name", users[userId].Nickname),
-            new("token_use", "access_token"),
-            new("iat", new DateTimeOffset(now).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
+            new("iat", issuedAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
+            new("jti", jti ?? Guid.NewGuid().ToString()),
         };
+        if (tokenUse is not null)
+            claims.Add(new Claim("token_use", tokenUse));
         if (clientId is not null)
             claims.Add(new Claim("client_id", clientId));
 
         var token = new JwtSecurityToken(
-            Authority,
-            Audience,
+            issuer ?? Authority,
+            audience ?? Audience,
             claims,
-            now.AddSeconds(-1),
-            now.AddMinutes(5),
-            new SigningCredentials(signingKey, SecurityAlgorithms.RsaSha256));
-        var client = CreateAnonymousClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
-            "Bearer",
-            new JwtSecurityTokenHandler().WriteToken(token));
-        return client;
+            (notBefore ?? issuedAt.AddSeconds(-1)).UtcDateTime,
+            (expires ?? issuedAt.AddMinutes(5)).UtcDateTime,
+            new SigningCredentials(
+                signingKeyOverride ?? signingKey,
+                SecurityAlgorithms.RsaSha256));
+        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
     public void ResetUserLookups() => Interlocked.Exchange(ref userLookupCount, 0);
+
+    public IReadOnlyList<(string Token, string TokenTypeHint)> RevokedTokens => tokenClient.RevokedTokens;
+
+    public void ResetTokenRevocations() => tokenClient.ResetRevocations();
+
+    public void BlacklistToken(string jti)
+    {
+        lock (blacklistedJtis)
+            blacklistedJtis.Add(jti);
+    }
 
     public void Dispose()
     {
@@ -225,110 +243,32 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
         services.AddSingleton(instance);
     }
 
-    private sealed record TestBearerAuthenticationState(
-        SecurityKey SigningKey,
-        IReadOnlySet<string> AllowedClientIds);
-
-    private sealed class TestBearerAuthenticationHandler(
-        IOptionsMonitor<AuthenticationSchemeOptions> options,
-        ILoggerFactory logger,
-        UrlEncoder encoder,
-        TestBearerAuthenticationState state,
-        IUserTokenValidator tokenValidator)
-        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    private bool IsBlacklisted(string jti)
     {
-        protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
-        {
-            if (!Request.Headers.TryGetValue("Authorization", out var authorizationValues))
-            {
-                var cookie = await Context.AuthenticateAsync(WorkbenchAuthenticationDefaults.CookieScheme);
-                if (!cookie.Succeeded)
-                    return AuthenticateResult.NoResult();
-
-                return AuthenticateResult.Success(
-                    new AuthenticationTicket(cookie.Principal!, Scheme.Name));
-            }
-
-            if (!AuthenticationHeaderValue.TryParse(authorizationValues.ToString(), out var header)
-                || !string.Equals(header.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase)
-                || string.IsNullOrWhiteSpace(header.Parameter))
-                return AuthenticateResult.Fail("A bearer token is required.");
-
-            ClaimsPrincipal validated;
-            try
-            {
-                validated = new JwtSecurityTokenHandler { MapInboundClaims = false }.ValidateToken(
-                    header.Parameter,
-                    new TokenValidationParameters
-                    {
-                        ValidateIssuer = true,
-                        ValidIssuer = Authority,
-                        ValidateAudience = true,
-                        ValidAudience = Audience,
-                        ValidateLifetime = true,
-                        ValidateIssuerSigningKey = true,
-                        IssuerSigningKey = state.SigningKey,
-                        RequireSignedTokens = true,
-                        RequireExpirationTime = true,
-                        ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
-                        ClockSkew = TimeSpan.FromSeconds(30),
-                        NameClaimType = "name",
-                        RoleClaimType = "role",
-                    },
-                    out _);
-            }
-            catch (Exception)
-            {
-                return AuthenticateResult.Fail("The bearer token is invalid.");
-            }
-
-            if (!string.Equals(validated.FindFirst("token_use")?.Value, "access_token", StringComparison.Ordinal))
-                return AuthenticateResult.Fail("Only access tokens are accepted.");
-
-            var clientId = validated.FindFirst("client_id")?.Value;
-            if (string.IsNullOrWhiteSpace(clientId) || !state.AllowedClientIds.Contains(clientId))
-                return AuthenticateResult.Fail("The token client is not allowed.");
-
-            if (!await tokenValidator.IsActiveAsync(validated, Context.RequestAborted))
-                return AuthenticateResult.Fail("The token is inactive.");
-
-            var subject = validated.FindFirst("sub")?.Value
-                ?? validated.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrWhiteSpace(subject))
-                return AuthenticateResult.Fail("The token subject is missing.");
-
-            var claims = validated.Claims.ToList();
-            if (validated.FindFirst("sub") is null)
-                claims.Add(new Claim("sub", subject));
-            if (validated.FindFirst(ClaimTypes.NameIdentifier) is null)
-                claims.Add(new Claim(ClaimTypes.NameIdentifier, subject));
-            var principal = new ClaimsPrincipal(new ClaimsIdentity(
-                claims,
-                Scheme.Name,
-                "name",
-                "role"));
-            return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
-        }
-
-        protected override Task HandleChallengeAsync(AuthenticationProperties properties)
-        {
-            // Preserve the fixture's existing Swagger browser redirect while API endpoints stay 401.
-            if (Request.Path.StartsWithSegments("/swagger"))
-                Response.Redirect($"{Request.Scheme}://{Request.Host}/api/auth/login");
-            else
-                Response.StatusCode = StatusCodes.Status401Unauthorized;
-            return Task.CompletedTask;
-        }
-
-        protected override Task HandleForbiddenAsync(AuthenticationProperties properties)
-        {
-            Response.StatusCode = StatusCodes.Status403Forbidden;
-            return Task.CompletedTask;
-        }
+        lock (blacklistedJtis)
+            return blacklistedJtis.Contains(jti);
     }
 
     private sealed class TestTokenClient(string clientId) : IWorkbenchTokenClient
     {
+        private readonly List<(string Token, string TokenTypeHint)> revocations = [];
+        private readonly object sync = new();
+
+        public IReadOnlyList<(string Token, string TokenTypeHint)> RevokedTokens
+        {
+            get
+            {
+                lock (sync)
+                    return revocations.ToArray();
+            }
+        }
+
+        public void ResetRevocations()
+        {
+            lock (sync)
+                revocations.Clear();
+        }
+
         public Task<WorkbenchTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct) =>
             throw new NotSupportedException();
 
@@ -345,7 +285,11 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                 subject is null ? null : clientId));
         }
 
-        public Task RevokeTokenAsync(string token, string tokenTypeHint, CancellationToken ct) =>
-            Task.CompletedTask;
+        public Task RevokeTokenAsync(string token, string tokenTypeHint, CancellationToken ct)
+        {
+            lock (sync)
+                revocations.Add((token, tokenTypeHint));
+            return Task.CompletedTask;
+        }
     }
 }

@@ -4,11 +4,6 @@ using System.Text;
 
 namespace NexusAuth.Workbench.Api.Authentication.Tokens;
 
-public interface IWorkbenchTokenRefreshCoordinator
-{
-    Task<WorkbenchTokenResult> RefreshAsync(string refreshToken, CancellationToken ct);
-}
-
 /// <summary>Shares a rotation result briefly across requests, owning a scope for the actual exchange.</summary>
 public sealed class WorkbenchTokenRefreshCoordinator(IServiceScopeFactory scopes) : IWorkbenchTokenRefreshCoordinator
 {

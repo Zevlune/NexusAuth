@@ -581,7 +581,7 @@ public sealed class WorkbenchLoginLifecycleTests
             // 这些用例精确统计登录请求触发的发现次数；预热本身由独立测试覆盖。
             var descriptors = services
                 .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
-                    && descriptor.ImplementationType?.DeclaringType == typeof(OpenIdConnectMetadataWarmupExtensions))
+                    && descriptor.ImplementationType?.FullName == "NexusAuth.Extension.MetadataWarmupService")
                 .ToArray();
             foreach (var descriptor in descriptors)
                 services.Remove(descriptor);

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Services.OpenApi;
 using NexusAuth.Workbench.Api.Filters;
+using NexusAuth.Workbench.Api.Models.Requests;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
@@ -28,6 +29,3 @@ public sealed class OpenApiCredentialsController(IOpenApiCredentialService crede
     public async Task<IActionResult> Revoke(Guid id, CancellationToken ct = default) =>
         await credentialService.RevokeAsync(id, ct) ? NoContent() : NotFound();
 }
-
-public sealed record CreateOpenApiCredentialRequest(string Name, string TargetType, DateTimeOffset? ExpiresAt);
-public sealed record UpdateOpenApiCredentialRequest(string Name, DateTimeOffset? ExpiresAt, bool IsActive);

@@ -16,7 +16,7 @@ NexusAuth 仓库里还有另一个独立应用：[NexusAuth.Host](NexusAuth.Host
 - [4. 从源码本地运行](#4-从源码本地运行)
 - [5. Workbench API 配置](#5-workbench-api-配置)
 - [6. 认证与自身 Bootstrap](#6-认证与自身-bootstrap)
-- [7. BFF 会话、Cookie、刷新与退出](#7-bff-会话cookie刷新与退出)
+- [7. BFF 会话、Cookie、Bearer、刷新与退出](#7-bff-会话cookiebearer刷新与退出)
 - [8. Dashboard 菜单、路由与操作](#8-dashboard-菜单路由与操作)
 - [9. 管理对象与操作步骤](#9-管理对象与操作步骤)
 - [10. 权限边界](#10-权限边界)
@@ -30,7 +30,7 @@ Workbench 由以下项目和进程组成：
 
 | 组件 | 项目路径（仓库根目录为基准） | 作用 | 容器名 |
 | --- | --- | --- | --- |
-| Workbench API | `admin/src/NexusAuth.Workbench.Api` | OIDC BFF（登录、回调、Cookie、刷新、登出）+ 管理 API + Swagger | `admin-api` |
+| Workbench API | `admin/src/NexusAuth.Workbench.Api` | OIDC BFF（登录、回调、Cookie、刷新、登出）+ JWT Bearer + 管理 API + Swagger | `admin-api` |
 | Dashboard | `admin/src/NexusAuth.Workbench.Dashboard` | React 管理界面，只通过 BFF 的 `/api` 同源访问 | `dashboard` |
 | OIDC 扩展 | `admin/src/NexusAuth.Extension` | 流程状态、Basic 后台请求适配与原生元数据预热；不管理会话 Cookie、登录端点、PKCE 或协议校验 | 随 API 编译 |
 
@@ -44,7 +44,7 @@ Workbench 还依赖两个外部组件：
 角色分工要记住两点：
 
 - Host 面向终端用户和业务系统，负责“这个用户是谁、能不能登录、能拿到什么令牌”。
-- Workbench 面向运维和管理员，负责“有哪些用户、客户端、资源、凭证、审计记录，怎么管理它们”。客户端密钥只留在 Workbench API 服务端；access token 和 refresh token 位于 API 签发的加密 HttpOnly 票据 Cookie 中，浏览器 JavaScript 读不到明文。
+- Workbench 面向运维和管理员，负责“有哪些用户、客户端、资源、凭证、审计记录，怎么管理它们”。Dashboard 使用 Cookie BFF，客户端密钥只留在 Workbench API 服务端；access token 和 refresh token 位于 API 签发的加密 HttpOnly 票据 Cookie 中，浏览器 JavaScript 读不到明文。无头 API 客户端使用 `Authorization: Bearer`，不需要会话 Cookie。
 
 ## 2. 前置条件
 
@@ -75,7 +75,7 @@ Workbench 和 Host 指向同一个库和 schema。数据库必须先初始化：
 
 ### 2.3 必须先有一个可用的 Host
 
-Workbench 的 Cookie+OIDC BFF 需要 Host 提供 OIDC 登录。请先按 [NexusAuth.Host 使用手册](NexusAuth.Host使用手册.md) 把 Host 启动起来，至少满足：
+Workbench 的 Cookie BFF 和 Bearer API 调用都以 Host 为身份与令牌签发方。请先按 [NexusAuth.Host 使用手册](NexusAuth.Host使用手册.md) 把 Host 启动起来，至少满足：
 
 - Host 通过 OIDC Discovery（`<Authority>/.well-known/openid-configuration`）暴露授权、令牌、JWKS 和 introspection 端点。
 - Host 的 OIDC issuer 与 Workbench 配置的 `Auth:Authority` 完全一致；同一个 Authority 用于浏览器授权跳转、Discovery、令牌、JWKS、introspection 和 ID Token issuer 校验。
@@ -219,7 +219,7 @@ npm --prefix admin/src/NexusAuth.Workbench.Dashboard run dev
 | --- | --- | --- |
 | `ConnectionStrings:Default` | 基础配置为空；Development 为 `127.0.0.1:33210` 开发库 | PostgreSQL 连接串；生产使用私有值 |
 | `Auth:Authority` | 基础为空；Development 为 `http://localhost:5100` | Provider issuer 与 OIDC Discovery 基础地址 |
-| `Auth:Audience` | `nexusauth.workbench.api` | API resource audience，同时补入登录 scope |
+| `Auth:Audience` | `nexusauth.workbench.api` | API resource 与 Bearer access token 的 audience，同时补入登录 scope；OIDC ID token 的 audience 使用 `Auth:ClientId` |
 | `Auth:ClientId` | `nexusauth.workbench` | Workbench OAuth 客户端 ID |
 | `Auth:ClientSecret` | 空 | 首次运行或部署前必须填写；不提交真实值 |
 | `Auth:RedirectUri` | 基础为 `http://localhost:5051/signin-oidc`；Development 为 `http://localhost:5273/signin-oidc` | 浏览器实际访问的 OIDC 回调 |
@@ -227,6 +227,7 @@ npm --prefix admin/src/NexusAuth.Workbench.Dashboard run dev
 | `Auth:Scope` | `openid profile offline_access nexusauth.workbench.api` | 申请的 scope |
 | `Auth:RequireHttpsMetadata` | 基础 `true`；Development `false` | 非本地环境保持 `true` |
 | `Auth:SignOutProvider` | `true` | 是否生成 Provider 全局登出地址 |
+| `Auth:AllowedBearerClientIds` | `[]` | 额外允许调用 Workbench API 的 OAuth 客户端 ID；`Auth:ClientId` 始终默认允许 |
 | `Auth:FlowState:Provider` | `InMemory` | 多实例改为 `Redis` |
 | `Auth:FlowState:Lifetime` / `Capacity` | `00:10:00` / `10000` | 待完成登录流程有效期和容量 |
 | `Auth:FlowState:Redis:Configuration` | 空 | Redis 模式必填 |
@@ -335,13 +336,24 @@ Swagger 未显式配置时仅在 `Development` 环境注册；其他环境默认
 3. Workbench 流程状态默认 10 分钟过期、最多 10,000 个；登录发起端点按客户端 IP 限流。容量或频率超限返回 `429`。
 4. 启动后台服务预热 Discovery。预热失败只记录日志并按有限延迟重试，不阻塞应用启动；运行时元数据与 JWKS 由标准配置管理器刷新。
 5. Host 回调 `GET /signin-oidc`。OIDC handler 完成标准校验后，API 写入 `.NexusAuth.Workbench` HttpOnly Cookie，并跳转前端 `/auth/callback`。
-6. 之后的管理请求使用 Cookie。未登录返回 `401`，已登录但没有管理访问权限返回 `403`。
+6. Dashboard 之后的管理请求使用 Cookie。未认证返回 `401`，已认证但没有管理访问权限返回 `403`。
 7. Cookie 验证在 access token 接近过期时使用内部 `IWorkbenchTokenClient` 刷新，并复检 token 状态；失败则拒绝并清除 Cookie。
-8. `POST /api/auth/logout` 尽力撤销 refresh token 和 access token，返回前端所需的 JSON `logoutUrl`，并始终清除本地 Cookie。
+8. 无头 API 客户端改用 `Authorization: Bearer <access_token>`。请求只要出现任意 `Authorization` 头，默认策略就选择 Bearer；头为空、方案错误或 token 无效时不会回退到同请求中的 Cookie。
+9. Bearer 使用 `Auth:Authority` 作为 issuer、`Auth:Audience` 作为 audience，只接受 RS256 签名且 `token_use=access_token` 的 access token。`client_id` 等于 `Auth:ClientId` 或出现在 `Auth:AllowedBearerClientIds` 后，再由 `IUserTokenValidator` 检查禁用、撤销、token epoch 和 jti 黑名单。
+10. `POST /api/auth/logout` 对 Cookie 调用请求撤销 refresh token 和 access token，按配置发起 Provider 登出，返回 JSON `logoutUrl` 并清除本地 Cookie；Bearer 调用只请求 Provider revoke 本次保存的 access token，不清 Cookie、不发起 Provider 登出，`logoutUrl` 为空。revoke 失败只记录日志且接口仍返回 200，不保证远端撤销已完成。
 
-Workbench 只有 Cookie+OIDC BFF 一种登录模式。微软 `AddOpenIdConnect` 负责 Discovery、JWKS、授权码兑换、PKCE、nonce 和 ID Token 校验。Workbench 通过专用 `HttpClient` delegating handler 将 `client_secret_basic` 写入 token 请求头，不调用 `HandleCodeRedemption`，也不重复执行 `ProtocolValidator`。
+Workbench 同时支持 Cookie BFF 和 JWT Bearer，默认认证方案是 `Workbench` 策略方案。Dashboard 始终使用 Cookie BFF；无头 API 客户端只发送 Bearer，不依赖 Cookie。微软 `AddOpenIdConnect` 负责 Discovery、JWKS、授权码兑换、PKCE、nonce 和 ID Token 校验。Workbench 通过专用 `HttpClient` delegating handler 将 `client_secret_basic` 写入 token 请求头，不调用 `HandleCodeRedemption`，也不重复执行 `ProtocolValidator`。
 
-内部 `IWorkbenchTokenClient` 只承担 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。它不负责浏览器登录、PKCE 生成或 ID Token 校验。
+JWT Bearer 与 OIDC 登录复用标准 `OpenIdConnectOptions.ConfigurationManager`，Discovery 和 JWKS 只有一套框架缓存。OIDC ID token 的 audience 是 `Auth:ClientId`，只用于登录；Bearer access token 的 audience 是 `Auth:Audience`，不能与 ID token 混用。
+
+无头调用示例：
+
+```bash
+curl -H "Authorization: Bearer $NEXUSAUTH_ACCESS_TOKEN" \
+  http://localhost:5051/api/auth/me
+```
+
+内部 `IWorkbenchTokenClient` 只承担 refresh、introspection 和 revoke，并复用同一份标准 OIDC 元数据。它不负责浏览器登录、PKCE 生成、ID Token 校验或 Bearer 验签。
 
 默认 `UseInMemory()` 只适用于单实例或带粘性路由的部署。多实例应使用 Redis 流程存储，并共享 ASP.NET Core Data Protection key ring。
 
@@ -353,7 +365,7 @@ Workbench 只有 Cookie+OIDC BFF 一种登录模式。微软 `AddOpenIdConnect` 
 | `GET /api/auth/login` | 匿名 | 返回 `authorizeUrl` |
 | `GET /signin-oidc` | 匿名 | OIDC 回调处理 |
 | `GET /api/auth/me` | 匿名入口，内部执行 Workbench 默认访问策略 | 返回 `isAuthenticated`、最小用户信息和兼容字段 `isAdministrator` |
-| `POST /api/auth/logout` | 需登录（`WorkbenchAuthenticatedUser`） | 清除 Cookie，可能返回 `logoutUrl`；普通用户也可退出 |
+| `POST /api/auth/logout` | 需登录（`WorkbenchAuthenticatedUser`） | Cookie 调用清 Cookie、可能返回 `logoutUrl`；Bearer 调用只请求 Provider revoke 本次 access token，不清 Cookie、不发起 Provider 登出 |
 
 ### 6.2 自身 Bootstrap 登记了什么
 
@@ -370,7 +382,7 @@ Workbench API 启动时由 [`WorkbenchClientCredentialHostedService`](../admin/s
 
 ### 6.3 OIDC 后通道与流程状态扩展
 
-Workbench 的浏览器登录完全由标准 `AddOpenIdConnect` 和 Cookie 中间件处理。注册入口见 [`WorkbenchAuthenticationExtensions`](../admin/src/NexusAuth.Workbench.Api/Authentication/WorkbenchAuthenticationExtensions.cs)。内部 [`IWorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/Authentication/Tokens/IWorkbenchTokenClient.cs) 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。Basic 客户端认证由 Extension 的 `UseOpenIdConnectClientSecretBasic(scheme)` 为专用 `HttpClient` 适配；它不接管授权码兑换，也不重复验证 nonce 或 ID Token。
+Workbench 的浏览器登录完全由标准 `AddOpenIdConnect` 和 Cookie 中间件处理。注册入口见 [`WorkbenchAuthenticationExtensions`](../admin/src/NexusAuth.Workbench.Api/Authentication/WorkbenchAuthenticationExtensions.cs)。内部 [`IWorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/Authentication/Tokens/IWorkbenchTokenClient.cs) 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档；JWT Bearer 也使用同一个 metadata manager。Basic 客户端认证由 Extension 的 `UseOpenIdConnectClientSecretBasic(scheme)` 为专用 `HttpClient` 适配；它不接管授权码兑换，也不重复验证 nonce 或 ID Token。
 
 `admin/src/NexusAuth.Extension` 已不再是 OAuth/OIDC 协议 SDK。它提供可复用的 OIDC 流程状态、Basic 后台请求适配及原生元数据启动预热，并与标准 `AddOpenIdConnect` 组合使用，不依赖 `NexusAuth.Shared` 或 `NexusAuth.Workbench`，不提供登录端点，也不生成 PKCE。接入说明见 [Extension README](../admin/src/NexusAuth.Extension/README.md)，各注册项用途和复用边界见 [Workbench 认证注册说明](Workbench认证注册说明.md)。
 
@@ -380,6 +392,18 @@ services.AddOpenIdConnectFlowState().UseInMemory();
 services.AddOpenIdConnectFlowState().UseRedis(options =>
     configuration.GetSection("Auth:FlowState:Redis").Bind(options));
 ```
+
+`AddOpenIdConnectFlowState()` 会自动以 Scoped 注册轻量 `OpenIdConnectFlowStateEvents`。内置事件在 `MessageReceived` 自动校验流程，成功后调用 `base` 委托，失败时不执行后续用户委托；授权跳转和 Provider 登出跳转会检查端点，但不写应用的 callback、post-logout callback、会话或错误页。应用通过 `EventsType` 启用：
+
+```csharp
+services.AddAuthentication()
+    .AddOpenIdConnect("oidc", options =>
+    {
+        options.EventsType = typeof(OpenIdConnectFlowStateEvents);
+    });
+```
+
+Workbench 使用继承类型 `WorkbenchOpenIdConnectEvents`。它在调用基类检查后补充完整 `RedirectUri`、`PostLogoutRedirectUri`、24 小时会话、RS256 限制和前端错误跳转。自定义事件继承 `OpenIdConnectFlowStateEvents` 时，覆盖 `MessageReceived`、`RedirectToIdentityProvider` 或 `RedirectToIdentityProviderForSignOut` 应调用对应 `base` 方法，以保留流程和端点检查。
 
 ```json
 {
@@ -400,10 +424,9 @@ services.AddOpenIdConnectFlowState().UseRedis(options =>
 
 `OpenIdConnectFlowStateOptions` 提供 `Provider`、`Lifetime` 和 `Capacity`；`OpenIdConnectFlowState` 是扩展入口。`UseFlowStateStore<T>()` 可替换自定义存储。`Auth:FlowState:Provider` 默认 `InMemory`，多实例部署应改为 `Redis`。Redis 实现继续保证浏览器绑定、原子一次消费和跨实例共享容量；所有实例使用相同的 Lifetime、Capacity、Redis 数据库和 KeyPrefix。
 
-Workbench 使用 `AddOpenIdConnectFlowState().UseConfiguration(configuration.GetSection("Auth:FlowState"))` 一次完成接入；扩展通过 Options 绑定和启动校验选择存储，Workbench 不再维护 Provider switch 或重复的 Redis/TTL 校验。
+Workbench 使用 `AddOpenIdConnectFlowState().UseConfiguration(configuration.GetSection("Auth:FlowState"))` 一次完成接入；扩展通过 Options 绑定和启动校验选择存储，Workbench 不再维护 Provider switch 或重复的 Redis/TTL 校验。TTL、容量和浏览器绑定属于流程状态扩展；24 小时会话、刷新/内省、撤销检查和 JSON 登录/登出契约仍属于 Workbench Cookie 事件，不进入 SDK。
 
-
-扩展保留现有 TTL、容量、限流、安全、会话撤销和 JSON 持久化契约。多实例部署必须同时共享并持久化 ASP.NET Core Data Protection key ring；Redis 只共享流程状态，不能替代 Cookie 和 nonce/correlation 票据所需的 key ring。
+多实例部署必须同时共享并持久化 ASP.NET Core Data Protection key ring；Redis 只共享流程状态，不能替代 Cookie 和 nonce/correlation 票据所需的 key ring。
 
 ### 6.4 API 结果与错误边界
 
@@ -411,7 +434,7 @@ Workbench 使用 `AddOpenIdConnectFlowState().UseConfiguration(configuration.Get
 
 未识别异常统一返回 HTTP `500` 和固定安全文案，详细异常只写入服务端日志，不向客户端暴露堆栈、数据库错误或内部消息。已知的唯一键和并发冲突映射为 `409`，不会被包装成成功。
 
-## 7. BFF 会话、Cookie、刷新与退出
+## 7. BFF 会话、Cookie、Bearer、刷新与退出
 
 ### 7.1 Cookie
 
@@ -425,7 +448,24 @@ Workbench 的 24 小时会话与 Provider 登录页“几天内免登录”是�
 
 多副本部署必须共享并持久化 ASP.NET Core Data Protection key ring。否则一个实例签发的 Cookie 在另一个实例上无法解密，用户会随机被登出。仓库 Compose 已把 key ring 放到命名卷 `nexusauth-admin-keys`。
 
-### 7.2 刷新与状态检查
+### 7.2 Bearer
+
+- 默认认证方案 `Workbench` 检查请求是否存在 `Authorization` 头；没有时转发到 Cookie，存在任意值时只转发到 Bearer。
+- Bearer token 必须是 Host 签发、RS256 签名、未过期且 audience 为 `Auth:Audience` 的 access token；ID token 或缺少 `token_use=access_token` 的 token 会被拒绝。
+- `client_id` 默认允许 `Auth:ClientId`，其他客户端必须逐项加入 `Auth:AllowedBearerClientIds`。
+- 框架验签后，`WorkbenchJwtBearerEvents` 调用 `IUserTokenValidator` 检查用户禁用、会话撤销、token epoch 和 jti 黑名单。
+- Bearer 与 OIDC 登录共用标准 OIDC 的 metadata manager。Bearer 客户端不需要 Cookie，也不应把浏览器 Cookie 作为回退身份。
+
+无头 API 调用：
+
+```bash
+curl -H "Authorization: Bearer $NEXUSAUTH_ACCESS_TOKEN" \
+  http://localhost:5051/api/auth/me
+```
+
+Dashboard 不读取或转发 access token，仍只通过同源 Cookie 调用 `/api`。
+
+### 7.3 刷新与状态检查
 
 每次 Cookie 验证（[`WorkbenchCookieAuthenticationEvents.ValidatePrincipal`](../admin/src/NexusAuth.Workbench.Api/Authentication/Events/WorkbenchCookieAuthenticationEvents.cs)）都会检查保存的令牌：
 
@@ -434,17 +474,17 @@ Workbench 的 24 小时会话与 Provider 登录页“几天内免登录”是�
 - 刷新采用单飞（single-flight）合并：并发请求共享同一次刷新结果，避免同一 refresh token 被并发消费。
 - token 缺失、格式错误、用户不匹配、introspection 失败或 refresh 失败：拒绝并清 Cookie，前端下次受保护请求收到 401 后回登录页。
 
-### 7.3 退出
+### 7.4 退出
 
 `POST /api/auth/logout` 的行为：
 
-- 读取 Cookie 里的 `id_token`；
-- 在最长 5 秒的共享 best-effort 窗口内，依次尝试撤销 refresh token 和 access token；单个令牌撤销失败只记录日志，不阻止后续清理；
-- 若 `Auth:SignOutProvider=true` 且存在 `id_token`，从缓存的 Discovery 文档读取 `end_session_endpoint`，返回带 `id_token_hint` 和 `post_logout_redirect_uri` 的 `logoutUrl`；Discovery 或端点缺失不会阻止本地退出；
-- 无论撤销或 Discovery 是否失败，`finally` 分支始终清除本地 Workbench Cookie；
-- 接口通常返回 HTTP `200` 和 `{ "logoutUrl": "..." }`；前端拿到非空地址后继续跳转，完成 Provider 全局登出。
+- Cookie 调用读取 Cookie 里的 `id_token`，在最长 5 秒的共享 best-effort 窗口内，依次尝试撤销 refresh token 和 access token；单个令牌撤销失败只记录日志，不阻止后续清理。
+- Cookie 调用在 `Auth:SignOutProvider=true` 且存在 `id_token` 时，从缓存的 Discovery 文档读取 `end_session_endpoint`，返回带 `id_token_hint` 和 `post_logout_redirect_uri` 的 `logoutUrl`；Discovery 或端点缺失不会阻止本地退出。
+- 无论撤销或 Discovery 是否失败，Cookie 调用的 `finally` 分支始终清除本地 Workbench Cookie。
+- Bearer 调用只请求 Provider revoke 本次保存的 access token，不清 Cookie、不发起 Provider 登出，并返回空 `logoutUrl`。revoke 失败只记录日志且接口仍返回 200，不保证远端撤销已完成。同一浏览器已有的 Cookie 会话保持可用。
+- 两类调用通常都返回 HTTP `200` 和 `{ "logoutUrl": "..." }`；Dashboard 仅在 Cookie 退出拿到非空地址后继续跳转，完成 Provider 全局登出。
 
-只清本地 Cookie 不等于结束 Host 的全局登录。要彻底退出需要在 `logoutUrl` 上确认 Host 的登出；如果该地址为空，本地会话已经清除，但 Provider 全局会话仍需通过其他方式结束。
+Dashboard 的 Cookie 退出只清本地 Cookie 不等于结束 Host 的全局登录。要彻底退出需要在 `logoutUrl` 上确认 Host 的登出；如果该地址为空，本地会话已经清除，但 Provider 全局会话仍需通过其他方式结束。Bearer 退出只处理当前 access token，不代表浏览器 Cookie 会话或 Provider 全局会话结束。
 
 ## 8. Dashboard 菜单、路由与操作
 
@@ -563,7 +603,7 @@ Workbench API 站点采用**默认拒绝**的授权边界。这些注册仅在 `
 - 没有 `[Authorize]` 或 `[AllowAnonymous]` 的端点使用 `FallbackPolicy`；
 - 只有裸 `[Authorize]` 的端点使用 `DefaultPolicy`。
 
-该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略使用各自声明的规则，公开入口应逐项审查。API 匿名请求返回 `401`；已登录但未通过访问评估的请求返回 `403`。Swagger 也受该策略保护，访问者需要通过 Workbench Cookie 登录并具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 `404`。
+该策略要求用户已通过认证，并包含一个 `WorkbenchAccessRequirement`。默认方案 `Workbench` 在无 `Authorization` 头时使用 Cookie，出现任意 `Authorization` 头时只使用 Bearer。因此，新增到 Workbench API 的控制器和 action 会默认受保护；公开入口通过显式标注 `[AllowAnonymous]` 放行；命名策略使用各自声明的规则，公开入口应逐项审查。API 未认证请求返回 `401`；已认证但未通过访问评估的请求返回 `403`。Swagger 也受该策略保护，访问者可通过 Workbench Cookie 或 Bearer 认证并具备管理访问权限。不存在的路径同样先经过 fallback，只有通过授权后才返回 `404`。
 
 访问权限规则直接位于 `WorkbenchAccessAuthorizationHandler` 中。它继承框架原生的 `AuthorizationHandler<WorkbenchAccessRequirement>`，并通过 scoped 的 `IAuthorizationHandler` 注册参与 ASP.NET Core 授权；其直接依赖 `IUserRepository`，按 `sub`（或 `NameIdentifier`）查询数据库，只允许 `IsActive=true` 且 `IsSystemAccount=true` 的系统账号。handler 和端点授权不能依赖 `/api/auth/me` 的返回值或该端点的鉴权元数据来判断 UI 或 API 访问；`/me` 只是当前身份与兼容字段的查询入口。
 
@@ -616,7 +656,7 @@ builder.Services.AddScoped<IAuthorizationHandler,
 
 `/api/auth/me` 虽然允许匿名访问，但已登录请求会通过框架的 `IAuthorizationService`，对 `IOptions<AuthorizationOptions>.Value.DefaultPolicy` 执行同一访问规则。兼容字段 `isAdministrator` 表示当前 Workbench 管理访问规则是否通过，不再表示某个单独的管理员策略或控制器内判断；Dashboard 可用它展示提示，但该字段不能代替服务端端点授权。默认 fallback、匿名入口和仅要求认证的命名策略保持不变，Workbench 的这些策略也不会影响独立的 Host 站点。
 
-Workbench 管理请求统一使用 `.NexusAuth.Workbench` Cookie。Workbench 不注册 JWT Bearer 认证方案，也不接受外部 access token。`Auth:Audience` 只用于请求 Workbench API resource scope 和 Bootstrap resource audience。
+Workbench 管理请求支持两种身份入口：Dashboard 使用 `.NexusAuth.Workbench` Cookie；无头客户端使用 Bearer access token。只要请求存在任意 `Authorization` 头，认证就只走 Bearer，不会回退到 Cookie。Bearer 必须满足 `Auth:Audience` audience、`token_use=access_token`、客户端白名单和 `IUserTokenValidator` 的撤销检查；OIDC ID token 的 audience 仍是 `Auth:ClientId`。
 
 ## 11. 构建与部署
 
@@ -645,7 +685,8 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 - 生产配置使用 HTTPS Authority、`Auth:RequireHttpsMetadata=true` 和 `Security:CookieSecurePolicy=Always`。本地 Compose 通过 `docker-compose.local.yml` 选择 `docker/workbench.local.appsettings.json` 并显式使用 HTTP，该文件不进入生产。
 - Provider 登记的 `redirect_uri`、`post_logout_redirect_uri` 与 API 配置逐字符一致，且使用 HTTPS。
 - `Auth:Authority` 使用浏览器和 Workbench API 进程都能直接访问的 HTTPS 地址，并与 Provider issuer 和 token 的 `iss` 完全一致；通过 DNS 或入口路由保证该地址在两端可达。
-- `Auth:Audience` 与 Workbench API resource 的 audience 一致。
+- `Auth:Audience` 与 Workbench API resource 和 Bearer access token 的 audience 一致；OIDC ID token 使用 `Auth:ClientId`。
+- 无头调用方使用的客户端 ID 默认必须等于 `Auth:ClientId`，其他可信客户端要显式加入 `Auth:AllowedBearerClientIds`。不要让任意客户端仅凭能签发 access token 就获得 Workbench 管理权限。
 - 多副本共享 Data Protection key ring；默认内存 flow 必须使用粘性路由，或将 `Auth:FlowState:Provider` 设为 `Redis` 并使用共享的 Redis 配置。数据库使用持久卷并备份。
 - `/api` 与 `/signin-oidc` 在应用侧强制 `no-store`，反向代理也应为这两个路径禁用响应缓存。
 - 不提交或在镜像里固化真实 `ClientSecret`；生产只挂载私有 `appsettings.Production.json`，不使用 `docker/workbench.local.appsettings.json` 或仓库内置开发值，也不执行 `demo/seed.sql`。
@@ -663,6 +704,7 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 | API 报无法访问 Provider Discovery | 容器内把 `localhost` 当成 Host，或网络 DNS/入口路由不可达 | 使用浏览器和 Workbench API 都能直达的同一 Authority；容器内不要用 `localhost` 或容器服务名替代 |
 | 多实例下回调偶尔失败 | 登录流程保存在默认进程内存储，回调落到了其他实例 | 使用粘性路由，或将 `Auth:FlowState:Provider` 设为 `Redis` |
 | 管理接口返回 403 | 当前访问授权 handler 未通过 | 默认授权 handler 下用启用状态的系统账号登录；替换授权 handler 时核对其判定（见第 10 节） |
+| Bearer 请求返回 401，但同一浏览器 Cookie 仍有效 | 请求存在 `Authorization` 头时只验证 Bearer，不回退 Cookie；也可能是 audience、`token_use`、client ID、用户状态或 token 撤销状态不符合要求 | 去掉 `Authorization` 才走 Cookie；Bearer 调用核对 `Auth:Audience`、`token_use=access_token`、`Auth:AllowedBearerClientIds` 和 `IUserTokenValidator` |
 | 多实例下用户随机被登出 | Data Protection key ring 未共享 | 共享并持久化 key ring |
 | 无法查看已创建的 SCIM/开放 API 凭证明文 | 明文只在创建时返回一次 | 重新创建凭证并立即保存 |
 

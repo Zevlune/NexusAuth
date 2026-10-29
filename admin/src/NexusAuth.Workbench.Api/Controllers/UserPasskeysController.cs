@@ -1,9 +1,9 @@
-using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Workbench.Api.Filters;
+using NexusAuth.Workbench.Api.Models.Requests;
 
 namespace NexusAuth.Workbench.Api.Controllers;
 
@@ -38,5 +38,3 @@ public sealed class UserPasskeysController(IPasskeyManagementService passkeys, I
         ? id : Guid.Empty;
 
 }
-
-public sealed record RevokePasskeyRequest([Required, StringLength(500)] string Reason);

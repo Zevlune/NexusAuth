@@ -6,6 +6,7 @@ using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Repositories;
 using NexusAuth.Workbench.Api.Controllers;
+using NexusAuth.Workbench.Api.Models.Requests;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
