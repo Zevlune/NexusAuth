@@ -1,5 +1,5 @@
 using NexusAuth.Workbench.Api.Authentication;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Extension;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -28,8 +28,8 @@ public sealed class WorkbenchMetadataStartupTests
         Assert.True(options.SaveTokens);
         using var first = factory.Services.CreateScope();
         using var second = factory.Services.CreateScope();
-        var firstClient = first.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
-        var secondClient = second.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
+        var firstClient = first.ServiceProvider.GetRequiredService<INexusAuthTokenClient>();
+        var secondClient = second.ServiceProvider.GetRequiredService<INexusAuthTokenClient>();
         Assert.NotSame(firstClient, secondClient);
         var callsBeforeRefresh = metadata.CallCount;
         var refreshed = await firstClient.RefreshTokensAsync("refresh", CancellationToken.None);
@@ -79,7 +79,7 @@ public sealed class WorkbenchMetadataStartupTests
             {
                 services.PostConfigure<OpenIdConnectOptions>(WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
                     options => options.ConfigurationManager = metadata);
-                services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
+                services.AddHttpClient(WorkbenchAuthenticationDefaults.BackchannelHttpClient)
                     .ConfigurePrimaryHttpMessageHandler(() => new TokenResponseHandler());
             });
         });

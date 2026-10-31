@@ -1,208 +1,170 @@
 # NexusAuth.Extension
 
-`NexusAuth.Extension` 为 ASP.NET Core 标准 OpenID Connect 提供可选扩展：流程状态存储、轻量 `OpenIdConnectFlowStateEvents`、`client_secret_basic` 后台请求适配和原生元数据启动预热。它保存登录往返期间待消费的临时状态，并自行签发 HttpOnly 的浏览器绑定 Cookie；它不管理登录会话 Cookie，也不承担 OAuth/OIDC 协议客户端、登录端点、令牌兑换或身份校验职责。
+`NexusAuth.Extension` 是对接 NexusAuth.Host 的 ASP.NET Core 客户端 SDK。新项目引用它并填写 `Auth` 配置节，即可获得与 Workbench 相同的登录能力：
 
-旧版 `AddNexusAuth`、`INexusAuthClient` 及其协议模型已经移除。项目不再依赖 `NexusAuth.Shared` 或 `NexusAuth.Workbench`，也不会注册登录端点、生成 PKCE、兑换授权码或重复校验 ID Token；这些工作全部由应用的 `AddOpenIdConnect` 和 Cookie 认证完成。
+- 标准 `AddOpenIdConnect` 授权码 + PKCE(S256) 登录，`client_secret_basic` 或 `client_secret_post` 后台认证；
+- HttpOnly Cookie BFF 会话：滑动续期、临近过期自动刷新、每次请求内省以感知撤销；
+- 可选 JWT Bearer：只接受 Access Token，限定受众与调用客户端，与 OIDC 共享元数据和签名密钥缓存；
+- `GET config`、`GET login`、`POST logout`、`GET me` 端点，登出时撤销令牌并结束 Provider 会话；
+- 一次性浏览器绑定的登录流程状态（InMemory / Redis），以及多实例部署所需的 Redis 连接、Data Protection 密钥环与跨实例刷新协调。
+
+协议本身（state、nonce、PKCE verifier、授权码兑换、ID Token 验签）全部由框架的 OIDC 中间件完成，SDK 不重复实现。
+
+## 快速接入
+
+```csharp
+using NexusAuth.Extension;
+
+builder.Services.AddNexusAuthClient(builder.Configuration); // 绑定 Auth 配置节
+builder.Services.AddAuthorization();
+
+var app = builder.Build();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapNexusAuthEndpoints(); // /api/auth/config、login、logout、me
+```
+
+```json
+{
+  "Auth": {
+    "Authority": "https://sso.example.com",
+    "ClientId": "my-app",
+    "ClientSecret": "<secret>",
+    "Audience": "my-app.api",
+    "RedirectUri": "https://my-app.example.com/signin-oidc",
+    "PostLogoutRedirectUri": "https://my-app.example.com/",
+    "Scope": "openid profile offline_access"
+  }
+}
+```
+
+在 NexusAuth.Host（或 Workbench 应用管理）中登记同一个客户端：授权码 + refresh_token 授权、上述 RedirectUri 与 PostLogoutRedirectUri、`ClientSecretBasic` 认证，并关联 `Audience` 对应的 API 资源。`Audience` 会自动补入 Scope。
+
+前端流程：
+
+1. `GET /api/auth/login` 返回 `{ authorizeUrl }`，前端 `window.location = authorizeUrl`。可带 `?returnUrl=/some/page`，只接受站内路径。
+2. NexusAuth.Host 回调 `RedirectUri`（默认 `/signin-oidc`，由 OIDC 中间件处理），成功后写入会话 Cookie 并跳回 `Frontend:BaseUri + Frontend:CallbackPath`（默认 `PostLogoutRedirectUri` + `/auth/callback`）。
+3. 失败时跳到 `{前端}/login?error=invalid_callback|token_exchange_failed`；Provider 拒绝（例如 `access_denied`）跳到 `{Authority}/oauth/error`。
+4. `GET /api/auth/me` 查询登录状态，`POST /api/auth/logout` 返回 `{ logoutUrl }`，前端跳转以结束 Provider 会话。
+
+服务端渲染应用可让登录接口直接 302：`app.MapNexusAuthEndpoints(configure: o => o.LoginResponse = NexusAuthLoginResponse.Redirect)`。
+
+## 配置项
+
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `Authority` | 必填 | NexusAuth.Host Issuer，须与发现文档 issuer 完全一致 |
+| `ClientId` / `ClientSecret` | 必填 | 机密客户端凭据，只用于后台通道 |
+| `Audience` | 启用 Bearer 时必填 | Access Token 受众；自动加入 Scope |
+| `RedirectUri` | 必填 | 完整回调地址，路径即 CallbackPath |
+| `PostLogoutRedirectUri` | 必填 | Provider 登出后返回地址，也是默认前端根地址 |
+| `Scope` | 必填 | 会话续期依赖 `offline_access` |
+| `RequireHttpsMetadata` | `true` | 本地 HTTP 调试才关闭 |
+| `SignOutProvider` | `true` | 登出时同时结束 Provider 会话 |
+| `ClientAuthentication` | `ClientSecretBasic` | 或 `ClientSecretPost` |
+| `ValidAlgorithms` | `["RS256"]` | ID Token 与 Access Token 允许的签名算法 |
+| `AllowedBearerClientIds` | `[]` | 除本应用外允许调用 API 的客户端 |
+| `Session:CookieName` | `.NexusAuth.Session` | 同域多个应用须各不相同 |
+| `Session:CookieSecurePolicy` | `Always` | 本地 HTTP 调试可设 `SameAsRequest` |
+| `Session:Lifetime` | `1.00:00:00` | 滑动会话有效期 |
+| `Session:RefreshBeforeExpiry` | `00:01:00` | Access Token 剩余时间低于该值时刷新 |
+| `Session:ValidateWithIntrospection` | `true` | 每次请求内省，管理员撤销后立即失效 |
+| `Frontend:BaseUri` | 空（取 `PostLogoutRedirectUri`） | 前端根地址 |
+| `Frontend:CallbackPath` / `LoginPath` | `/auth/callback` / `/login` | 登录成功与失败的前端路由 |
+| `FlowState:*` | `InMemory` | 见下文“集群部署” |
+| `Redis:Configuration` / `KeyPrefix` | 空 / `NexusAuth` | SDK 共享的 Redis 连接 |
+| `TokenRefresh:Provider` | `InMemory` | 或 `Redis` |
+| `DataProtection:Provider` | `None` | 或 `Redis`、`FileSystem` |
+
+所有配置在启动时校验，错误信息带完整配置路径，例如 `Auth:Authority is required in appsettings configuration.`。
+
+## 集群部署
+
+单实例只需上述配置。多实例（含滚动发布、负载均衡无会话粘滞）时，以下三类状态必须跨实例共享：
+
+| 状态 | 不共享的后果 | 配置 |
+| --- | --- | --- |
+| Data Protection 密钥环 | PKCE code_verifier 随加密的 `state` 往返，回调落到另一实例时无法解密，登录失败；会话 Cookie 也无法互认 | `DataProtection:Provider=Redis` 或 `FileSystem`，并设置相同的 `ApplicationName` |
+| 登录流程状态 | 浏览器绑定只存在发起登录的实例，回调落到其他实例被判为 `invalid_callback` | `FlowState:Provider=Redis` |
+| 刷新协调 | 多个实例同时用同一 refresh token 刷新，旋转令牌被重复消费，Provider 判定重放并撤销整个令牌族，用户被登出 | `TokenRefresh:Provider=Redis` |
+
+```json
+{
+  "Auth": {
+    "Redis": { "Configuration": "redis:6379,password=<secret>", "KeyPrefix": "NexusAuth:my-app" },
+    "FlowState": { "Provider": "Redis" },
+    "TokenRefresh": { "Provider": "Redis" },
+    "DataProtection": { "Provider": "Redis", "ApplicationName": "my-app" }
+  }
+}
+```
+
+- `Auth:Redis` 注册一个共享的 `IConnectionMultiplexer`，流程状态、刷新协调与密钥环都复用它；应用已自行注册 `IConnectionMultiplexer` 时可留空。旧配置 `FlowState:Redis:Configuration` 仍然有效。
+- Redis 刷新协调：同一 refresh token 只由持有锁的实例兑换，结果用 Data Protection 加密后在 Redis 保存 `TokenRefresh:ResultLifetime`（默认 30 秒），其余实例直接复用。键中只出现令牌的 SHA-256 摘要，不保存明文令牌。
+- 密钥环选 `FileSystem` 时，`KeyPath` 必须是所有实例挂载的同一共享目录。需要静态加密密钥时，可在调用 SDK 后继续使用 `services.AddDataProtection().ProtectKeysWith...()`。
+- `DataProtection:Provider=None` 表示由应用自行调用 `AddDataProtection()`，适合已有统一密钥管理的项目。
+- 反向代理部署时，`RedirectUri` 使用对外的完整地址，SDK 会把它原样写入授权请求，不依赖节点自身的 Host/Scheme。Cookie 的 Secure 判断依赖 `Request.IsHttps`，TLS 在代理终止时应用需配置 `ForwardedHeaders`。
+
+## 扩展点
+
+`AddNexusAuthClient` 的第二个参数在注册阶段调整方案名称和事件类型：
+
+```csharp
+builder.Services.AddNexusAuthClient(builder.Configuration, setup =>
+{
+    setup.CookieScheme = "MyApp.Cookie";       // 默认 NexusAuth.Cookie
+    setup.EnableBearer = false;                // 纯浏览器应用可关闭 Bearer，此时 Audience 可选
+    setup.JwtBearerEventsType = typeof(MyJwtBearerEvents);
+});
+```
+
+| 类型 | 用途 |
+| --- | --- |
+| `NexusAuthOpenIdConnectEvents` | 回调地址、签名算法、refresh token 要求、精简 Principal、错误跳转；覆盖 `CreatePrincipal` 可加入应用 claim |
+| `NexusAuthCookieAuthenticationEvents` | 会话内省与刷新 |
+| `NexusAuthJwtBearerEvents` | Access Token 与客户端校验；覆盖 `IsActiveAsync` 加入应用自己的撤销检查 |
+| `INexusAuthTokenClient` | refresh、introspection、revoke，可在业务代码中注入使用 |
+| `INexusAuthTokenRefreshCoordinator` | 刷新单飞；`NexusAuthTokenRefreshCoordinator` 或 `RedisTokenRefreshCoordinator` |
+
+覆盖事件方法时应调用 `base`，以保留流程绑定与端点检查。`MapNexusAuthEndpoints` 返回路由组，可继续追加约定；登录接口限流使用 `options.LoginRateLimitPolicy`，需要自定义 `/me` 返回时设 `options.MapCurrentUser = false` 并自行实现。
+
+## 底层组件
+
+快速接入已包含以下组件，也可以在自己组装的 `AddOpenIdConnect` 上单独使用。
+
+### Basic 认证与元数据预热
+
+```csharp
+services.AddHttpClient("client.oidc", client => client.Timeout = TimeSpan.FromSeconds(30))
+    .UseOpenIdConnectClientSecretBasic("oidc");
+services.AddOptions<OpenIdConnectOptions>("oidc")
+    .Configure<IHttpClientFactory>((options, http) => options.Backchannel = http.CreateClient("client.oidc"));
+services.AddOpenIdConnectMetadataWarmup();
+```
+
+`UseOpenIdConnectClientSecretBasic(scheme)` 在请求阶段读取该方案的 `OpenIdConnectOptions`，把表单中的客户端凭据改为 Basic 认证头；GET 发现文档和 JWKS 请求不附带凭据。`AddOpenIdConnectMetadataWarmup()` 在后台预热所有 OIDC 方案的原生 `ConfigurationManager`，失败每 30 秒重试，不阻塞启动。`OpenIdConnectEndpointValidator.Validate(uri, requireHttps)` 拒绝相对地址、非 HTTP(S)、内嵌凭据和片段。
+
+### 流程状态
+
+```csharp
+services.AddOpenIdConnectFlowState()
+    .UseConfiguration(configuration.GetSection("Auth:FlowState"));
+services.AddAuthentication()
+    .AddOpenIdConnect("oidc", options => options.EventsType = typeof(OpenIdConnectFlowStateEvents));
+```
+
+发起 challenge 前调用 `OpenIdConnectFlowState.BeginAsync`，失败时调用 `CancelAsync`。`MessageReceived` 原子消费流程并核对浏览器绑定 Cookie，缺失、过期、重放或绑定不匹配时让回调失败。`Provider` 区分大小写，只接受 `InMemory` 和 `Redis`；默认 TTL 10 分钟、容量 10,000，Redis 默认 KeyPrefix 为 `NexusAuth:oidc:flow`。容量耗尽时 `BeginAsync` 抛出 `FlowStateCapacityExceededException`，SDK 登录接口返回 `429`。
 
 ## 目录
 
 ```text
 NexusAuth.Extension/
-├── Authentication/
-│   ├── ClientSecretBasicHandler.cs
-│   ├── MetadataWarmupService.cs
-│   ├── OpenIdConnectBackchannelExtensions.cs
-│   ├── OpenIdConnectEndpointValidator.cs
-│   ├── OpenIdConnectFlowStateEvents.cs
-│   └── OpenIdConnectMetadataWarmupExtensions.cs
-├── Flows/
-│   ├── ConfiguredFlowStateStore.cs
-│   ├── FlowState.cs
-│   ├── FlowStateCapacityExceededException.cs
-│   ├── IFlowStateStore.cs
-│   ├── InMemoryFlowStateStore.cs
-│   ├── InMemoryFlowStateStoreEntry.cs
-│   ├── OpenIdConnectFlowStateBuilder.cs
-│   ├── OpenIdConnectFlowStateExtensions.cs
-│   ├── OpenIdConnectFlowStateOptions.cs
-│   ├── OpenIdConnectFlowStateOptionsValidator.cs
-│   ├── OpenIdConnectFlowStateProvider.cs
-│   ├── RedisFlowStateExtensions.cs
-│   ├── RedisFlowStateOptions.cs
-│   ├── RedisFlowStateOptionsValidator.cs
-│   └── RedisFlowStateStore.cs
-├── NexusAuth.Extension.csproj
+├── Authentication/      Basic 后台认证、端点校验、元数据预热、流程状态事件
+├── Client/              AddNexusAuthClient、配置与校验、端点、Principal
+│   ├── Cluster/         共享 Redis 连接、Data Protection 密钥环、Redis 刷新协调
+│   ├── Events/          OIDC、Cookie、JWT Bearer 事件
+│   └── Tokens/          令牌客户端、结果模型与刷新单飞
+├── Flows/               流程状态存储（InMemory / Redis）
 ├── OpenIdConnectFlowState.cs
 └── README.md
 ```
-
-## Basic 认证与元数据预热
-
-这两个扩展可以独立使用，不要求注册流程状态存储，也不要求引用 Workbench。
-
-```csharp
-using Microsoft.AspNetCore.Authentication.OpenIdConnect;
-using NexusAuth.Extension;
-
-const string scheme = "oidc";
-const string backchannel = "client.oidc";
-
-services.AddHttpClient(backchannel, client => client.Timeout = TimeSpan.FromSeconds(30))
-    .UseOpenIdConnectClientSecretBasic(scheme);
-services.AddAuthentication("session")
-    .AddCookie("session")
-    .AddOpenIdConnect(scheme, options =>
-    {
-        // 与普通 AddOpenIdConnect 接入相同；ClientId、ClientSecret 等配置仍走原生 Options。
-        // 请按当前应用填写 Authority、ClientId、ClientSecret、CallbackPath、Scope 等。
-        options.ResponseType = "code";
-        options.UsePkce = true;
-    });
-services.AddOptions<OpenIdConnectOptions>(scheme)
-    .Configure<IHttpClientFactory>((options, http) => options.Backchannel = http.CreateClient(backchannel));
-services.AddOpenIdConnectMetadataWarmup();
-```
-
-`UseOpenIdConnectClientSecretBasic(scheme)` 在请求阶段读取该方案的 `OpenIdConnectOptions`，把表单中的客户端凭据改为 Basic 认证头；GET 发现文档和 JWKS 请求不附带凭据。它不决定 Cookie、scope、签名算法或令牌校验策略，不自行兑换授权码。只应将它加到专用于该 OIDC 方案的后台客户端；不同方案使用不同的命名 HttpClient。Provider 要求 `client_secret_post` 时不使用此扩展。
-
-`AddOpenIdConnectMetadataWarmup()` 在后台分别预热所有已注册 OIDC 方案的原生 `ConfigurationManager`；显式提供静态 `Configuration` 的方案无需发现请求。成功后结束预热，失败的方案每 30 秒重试，不阻塞其他方案和应用启动；后续刷新由标准中间件负责。此扩展是可选的启动优化，未启用时框架仍会按需加载元数据。重复注册不会重复创建预热服务。
-
-`OpenIdConnectEndpointValidator.Validate(uri, requireHttps)` 供后台请求和浏览器跳转共用地址检查，默认要求 HTTPS，拒绝相对地址、非 HTTP(S)、内嵌凭据和片段。
-
-## 流程状态注册
-
-扩展与标准 OIDC 中间件组合使用。应用仍需自行调用 `AddAuthentication().AddOpenIdConnect(...)`，并负责授权、回调和 Cookie 策略。
-
-```csharp
-using NexusAuth.Extension;
-
-services.AddOpenIdConnectFlowState()
-    .UseConfiguration(configuration.GetSection("Auth:FlowState"));
-```
-
-`AddOpenIdConnectFlowState()` 同时把 `OpenIdConnectFlowStateEvents` 注册为 Scoped。应用使用内置事件时，只需把标准 OIDC 方案指向该类型；`MessageReceived` 会自动校验流程，授权跳转和 Provider 登出跳转会自动检查端点。
-
-`UseConfiguration` 只绑定传入的配置节。默认使用进程内存储：
-
-```json
-{
-  "Auth": {
-    "FlowState": {
-      "Provider": "InMemory",
-      "Lifetime": "00:10:00",
-      "Capacity": 10000
-    }
-  }
-}
-```
-
-多实例部署将 `Provider` 设为 `Redis`，让回调可以落到任意实例：
-
-```json
-{
-  "Auth": {
-    "FlowState": {
-      "Provider": "Redis",
-      "Redis": {
-        "Configuration": "localhost:6379",
-        "KeyPrefix": "NexusAuth:oidc:flow",
-        "Database": -1
-      }
-    }
-  }
-}
-```
-
-`Provider` 区分大小写，只接受 `InMemory` 和 `Redis`。容量、TTL、Provider 与 Redis 配置会在应用启动时校验；未选择 Redis 时不会创建 Redis 连接。已经注册 `IConnectionMultiplexer` 时，Redis 存储会复用该连接，`Redis.Configuration` 可以留空。
-
-`UseInMemory()`、`UseRedis(...)` 和 `UseFlowStateStore<T>()` 仍可用于代码注册。自定义 `IFlowStateStore` 默认注册为 Scoped，也可以显式选择 Singleton。`UseRedis(...)` 提供跨实例共享、原子一次消费和共享容量，默认 KeyPrefix 为 `NexusAuth:oidc:flow`。
-
-`OpenIdConnectFlowStateOptions` 提供 `Provider`、`Lifetime` 和 `Capacity`；`OpenIdConnectFlowState` 是组合标准 OIDC 流程状态的服务入口。默认 TTL 为 10 分钟，默认容量为 10,000 个待完成流程。应用应将 `Lifetime` 与 `AddOpenIdConnect` 的远程认证超时保持一致，并在容量或请求限流触发时返回明确的 `429`。
-
-## 与 AddOpenIdConnect 接线
-
-注册扩展不会接管应用的登录入口、challenge 或回调结果。应用仍需在发起 challenge 前调用 `BeginAsync`，失败时调用 `CancelAsync`，并通过 `EventsType` 启用流程状态事件：
-
-```csharp
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.OpenIdConnect;
-using NexusAuth.Extension;
-
-services.AddOpenIdConnectFlowState()
-    .UseConfiguration(configuration.GetSection("Auth:FlowState"));
-
-services.AddAuthentication()
-    .AddOpenIdConnect("oidc", options =>
-    {
-        // 配置 Authority、ClientId、ClientSecret、Scope、CallbackPath 等标准选项。
-        options.EventsType = typeof(OpenIdConnectFlowStateEvents);
-    });
-```
-
-发起登录时先登记流程，再 challenge。`BeginAsync` 会把流程标识写入 `AuthenticationProperties`，并发出本次流程专用的浏览器绑定 Cookie：
-
-```csharp
-app.MapGet("/auth/login", async (HttpContext httpContext, CancellationToken ct) =>
-{
-    var properties = new AuthenticationProperties
-    {
-        RedirectUri = "/auth/callback",
-        IsPersistent = true,
-    };
-    var flows = httpContext.RequestServices.GetRequiredService<OpenIdConnectFlowState>();
-
-    try
-    {
-        await flows.BeginAsync(httpContext, properties, "oidc", ct);
-        await httpContext.ChallengeAsync("oidc", properties);
-    }
-    catch
-    {
-        await flows.CancelAsync(httpContext, properties, "oidc", CancellationToken.None);
-        throw;
-    }
-});
-```
-
-内置事件的职责保持轻量：
-
-- `MessageReceived` 调用 `ValidateAsync`，原子消费待处理流程，核对浏览器绑定并清理绑定 Cookie；校验成功后调用 `base` 委托，缺失、过期、重放或绑定不匹配时让标准 OIDC 回调失败，且不执行后续用户委托。
-- `RedirectToIdentityProvider` 与 `RedirectToIdentityProviderForSignOut` 只按当前 `OpenIdConnectOptions.RequireHttpsMetadata` 检查授权端点和 Provider 登出端点，不写应用的 `RedirectUri`、`PostLogoutRedirectUri`、会话或错误页。
-- challenge 或回调前处理失败时仍由应用调用 `CancelAsync`，同时移除服务端流程和浏览器绑定 Cookie。
-
-需要应用自己的事件逻辑时，可以继承 `OpenIdConnectFlowStateEvents` 并继续使用 `EventsType`：
-
-```csharp
-using Microsoft.AspNetCore.Authentication.OpenIdConnect;
-using NexusAuth.Extension;
-
-public sealed class AppOpenIdConnectEvents(OpenIdConnectFlowState flows)
-    : OpenIdConnectFlowStateEvents(flows)
-{
-    public override async Task RedirectToIdentityProvider(RedirectContext context)
-    {
-        await base.RedirectToIdentityProvider(context);
-        context.ProtocolMessage.RedirectUri = "https://app.example.com/signin-oidc";
-    }
-
-    public override async Task RedirectToIdentityProviderForSignOut(RedirectContext context)
-    {
-        await base.RedirectToIdentityProviderForSignOut(context);
-        context.ProtocolMessage.PostLogoutRedirectUri = "https://app.example.com/";
-    }
-}
-
-services.AddAuthentication()
-    .AddOpenIdConnect("oidc", options =>
-    {
-        options.EventsType = typeof(AppOpenIdConnectEvents);
-    });
-```
-
-自定义事件覆盖 `MessageReceived`、两个 redirect 事件或其它需要保留检查的方法时，应调用对应的 `base` 方法。应用的 callback、post-logout callback、会话策略和错误跳转仍由应用事件负责。
-
-Workbench 继承 `OpenIdConnectFlowStateEvents`，在保留流程和端点检查的基础上叠加自己的 24 小时 Cookie 会话、RS256 限制、token 兑换错误分类和前端错误跳转。Workbench Cookie 事件中的业务刷新、introspection、撤销检查及 JSON 登出契约属于应用策略，不进入本扩展。
-
-迁移后使用 `NexusAuth.Extension` 命名空间和 `AddOpenIdConnectFlowState()` 注册入口。Redis 默认前缀从 `NexusAuth:workbench:flow` 改为 `NexusAuth:oidc:flow`，浏览器绑定 Cookie 名称也已调整；升级前尚未完成的登录需要重新发起。
-
-多实例还必须共享并持久化 ASP.NET Core Data Protection key ring。Redis 只共享流程状态；OIDC correlation cookie、nonce cookie 和会话 Cookie 仍依赖相同的 key ring 才能跨实例解密。

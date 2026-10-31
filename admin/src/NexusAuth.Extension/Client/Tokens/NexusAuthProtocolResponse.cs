@@ -1,30 +1,30 @@
 using System.Net;
 using System.Text.Json;
 
-namespace NexusAuth.Workbench.Api.Authentication.Tokens;
+namespace NexusAuth.Extension;
 
-internal static class WorkbenchProtocolResponse
+internal static class NexusAuthProtocolResponse
 {
-    public static WorkbenchProtocolException InvalidResponse(
+    public static NexusAuthProtocolException InvalidResponse(
         HttpStatusCode statusCode,
         Exception? innerException = null)
     {
-        return new WorkbenchProtocolException("invalid_response", statusCode, innerException);
+        return new NexusAuthProtocolException("invalid_response", statusCode, innerException);
     }
 
     public static void ThrowIfOAuthError(string body, HttpStatusCode statusCode)
     {
         if (TryReadOAuthError(body, out var error))
-            throw new WorkbenchProtocolException(error, statusCode);
+            throw new NexusAuthProtocolException(error, statusCode);
     }
 
-    public static WorkbenchProtocolException FromResponse(
+    public static NexusAuthProtocolException FromResponse(
         string body,
         HttpStatusCode statusCode)
     {
         return TryReadOAuthError(body, out var error)
-            ? new WorkbenchProtocolException(error, statusCode)
-            : new WorkbenchProtocolException("http_error", statusCode);
+            ? new NexusAuthProtocolException(error, statusCode)
+            : new NexusAuthProtocolException("http_error", statusCode);
     }
 
     private static bool TryReadOAuthError(string body, out string error)

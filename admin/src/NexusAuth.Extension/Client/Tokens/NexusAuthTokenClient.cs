@@ -2,27 +2,27 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
-using NexusAuth.Workbench.Api.Authentication;
 
-namespace NexusAuth.Workbench.Api.Authentication.Tokens;
+namespace NexusAuth.Extension;
 
-/// <summary>Additional token operations needed by the BFF session, using the standard OIDC metadata.</summary>
-public sealed class WorkbenchTokenClient(
+/// <summary>BFF 会话的附加令牌操作，复用标准 OIDC 方案的元数据缓存与后台 HttpClient。</summary>
+public sealed class NexusAuthTokenClient(
     IHttpClientFactory httpClientFactory,
-    IOptionsMonitor<OpenIdConnectOptions> options) : IWorkbenchTokenClient
+    IOptionsMonitor<OpenIdConnectOptions> options,
+    IOptions<NexusAuthClientOptions> clientOptions,
+    NexusAuthClientSetup setup) : INexusAuthTokenClient
 {
-    public const string HttpClientName = "Workbench.Oidc";
-
     private async Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken ct)
     {
-        var oidc = options.Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
+        var oidc = options.Get(setup.OpenIdConnectScheme);
         var configuration = await oidc.ConfigurationManager!.GetConfigurationAsync(ct).WaitAsync(ct);
         if (!string.Equals(configuration.Issuer, oidc.Authority, StringComparison.Ordinal))
             throw new InvalidOperationException("Discovery issuer must equal the configured Authority.");
         return configuration;
     }
 
-    public async Task<WorkbenchTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct)
+    /// <inheritdoc />
+    public async Task<NexusAuthTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(refreshToken);
         var configuration = await GetConfigurationAsync(ct);
@@ -35,7 +35,7 @@ public sealed class WorkbenchTokenClient(
     }
 
     /// <inheritdoc />
-    public async Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(
+    public async Task<NexusAuthIntrospectionResult> IntrospectAccessTokenAsync(
         string accessToken,
         CancellationToken ct)
     {
@@ -50,24 +50,24 @@ public sealed class WorkbenchTokenClient(
         var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
-            throw WorkbenchProtocolResponse.FromResponse(body, response.StatusCode);
-        WorkbenchProtocolResponse.ThrowIfOAuthError(body, response.StatusCode);
+            throw NexusAuthProtocolResponse.FromResponse(body, response.StatusCode);
+        NexusAuthProtocolResponse.ThrowIfOAuthError(body, response.StatusCode);
 
         try
         {
             using var document = JsonDocument.Parse(body);
             var payload = document.RootElement;
             if (payload.ValueKind != JsonValueKind.Object)
-                throw WorkbenchProtocolResponse.InvalidResponse(response.StatusCode);
+                throw NexusAuthProtocolResponse.InvalidResponse(response.StatusCode);
             var active = payload.TryGetProperty("active", out var activeProperty)
                 && activeProperty.ValueKind == JsonValueKind.True;
             var subject = ReadOptionalString(payload, "sub");
             var clientId = ReadOptionalString(payload, "client_id");
-            return new WorkbenchIntrospectionResult(active, subject, clientId);
+            return new NexusAuthIntrospectionResult(active, subject, clientId);
         }
         catch (JsonException)
         {
-            throw WorkbenchProtocolResponse.InvalidResponse(response.StatusCode);
+            throw NexusAuthProtocolResponse.InvalidResponse(response.StatusCode);
         }
     }
 
@@ -87,10 +87,10 @@ public sealed class WorkbenchTokenClient(
             return;
 
         var body = await response.Content.ReadAsStringAsync(ct);
-        throw WorkbenchProtocolResponse.FromResponse(body, response.StatusCode);
+        throw NexusAuthProtocolResponse.FromResponse(body, response.StatusCode);
     }
 
-    private async Task<WorkbenchTokenResult> SendTokenRequestAsync(
+    private async Task<NexusAuthTokenResult> SendTokenRequestAsync(
         string endpoint,
         Dictionary<string, string> form,
         CancellationToken ct)
@@ -99,18 +99,18 @@ public sealed class WorkbenchTokenClient(
         var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
-            throw WorkbenchProtocolResponse.FromResponse(body, response.StatusCode);
-        WorkbenchProtocolResponse.ThrowIfOAuthError(body, response.StatusCode);
+            throw NexusAuthProtocolResponse.FromResponse(body, response.StatusCode);
+        NexusAuthProtocolResponse.ThrowIfOAuthError(body, response.StatusCode);
 
         try
         {
             using var document = JsonDocument.Parse(body);
             var payload = document.RootElement;
             if (payload.ValueKind != JsonValueKind.Object)
-                throw WorkbenchProtocolResponse.InvalidResponse(response.StatusCode);
+                throw NexusAuthProtocolResponse.InvalidResponse(response.StatusCode);
             var accessToken = ReadOptionalString(payload, "access_token");
             if (string.IsNullOrEmpty(accessToken))
-                throw WorkbenchProtocolResponse.InvalidResponse(response.StatusCode);
+                throw NexusAuthProtocolResponse.InvalidResponse(response.StatusCode);
 
             var expiresIn = 0;
             if (payload.TryGetProperty("expires_in", out var expiresInProperty))
@@ -119,11 +119,11 @@ public sealed class WorkbenchTokenClient(
                     || !expiresInProperty.TryGetInt32(out expiresIn)
                     || expiresIn < 0)
                 {
-                    throw WorkbenchProtocolResponse.InvalidResponse(response.StatusCode);
+                    throw NexusAuthProtocolResponse.InvalidResponse(response.StatusCode);
                 }
             }
 
-            return new WorkbenchTokenResult(
+            return new NexusAuthTokenResult(
                 accessToken,
                 ReadOptionalString(payload, "refresh_token"),
                 ReadOptionalString(payload, "id_token"),
@@ -131,7 +131,7 @@ public sealed class WorkbenchTokenClient(
         }
         catch (JsonException)
         {
-            throw WorkbenchProtocolResponse.InvalidResponse(response.StatusCode);
+            throw NexusAuthProtocolResponse.InvalidResponse(response.StatusCode);
         }
     }
 
@@ -140,12 +140,16 @@ public sealed class WorkbenchTokenClient(
         Dictionary<string, string> form,
         CancellationToken ct)
     {
+        // 统一写入表单凭据；ClientSecretBasic 模式下由后台客户端的 handler 改写为 Basic 认证头。
+        var settings = clientOptions.Value;
+        form["client_id"] = settings.ClientId;
+        form["client_secret"] = settings.ClientSecret;
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new FormUrlEncodedContent(form)
         };
 
-        using var client = httpClientFactory.CreateClient(HttpClientName);
+        using var client = httpClientFactory.CreateClient(setup.BackchannelHttpClientName);
         return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
     }
 

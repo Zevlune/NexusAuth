@@ -24,7 +24,7 @@
 | 部分 | 如何参考 |
 | --- | --- |
 | 标准认证注册 | 对照 `WorkbenchAuthenticationExtensions` 配置 Cookie、OIDC；需要接收 access token 的 API 再注册 Bearer 和对应 audience |
-| 前后端接口契约 | 参考 `AuthController`、`CurrentIdentityController` 以及 Dashboard 的登录/落地页；回调由中间件处理 |
+| 前后端接口契约 | 参考 SDK 的 `MapNexusAuthEndpoints`、Workbench 的 `CurrentIdentityController` 以及 Dashboard 的登录/落地页；回调由中间件处理 |
 | Extension | 按需复用 Basic 适配、额外的一次性流程存储和元数据预热；它们不替代标准认证中间件 |
 | 刷新与 Cookie 事件 | 当前示例包含 24 小时滑动会话、提前一分钟刷新、每次内省等应用策略；按新应用的会话要求选择 |
 | Workbench Bootstrap | 自动创建自身客户端和资源是管理台的部署便利；普通 SSO 客户端在 Provider 登记好客户端即可，不需要接入 Provider 数据库 |
@@ -53,14 +53,14 @@ Bearer access token 的 audience 必须是 `Auth:Audience`，OIDC ID token 的 a
 
 ## 登录链路
 
-1. [`AuthController.Login`](../admin/src/NexusAuth.Workbench.Api/Controllers/AuthController.cs) 先在流程状态存储中登记本次登录，再调用标准 OIDC challenge。微软 `AddOpenIdConnect` 生成 state、nonce 和 PKCE verifier/challenge，返回 `authorizeUrl` 给前端。
+1. SDK 登录接口 [`NexusAuthEndpoints`](../admin/src/NexusAuth.Extension/Client/NexusAuthEndpoints.cs) 先在流程状态存储中登记本次登录，再调用标准 OIDC challenge。微软 `AddOpenIdConnect` 生成 state、nonce 和 PKCE verifier/challenge，返回 `authorizeUrl` 给前端。
 2. 浏览器访问 Provider 的授权端点。用户完成登录后，Provider 按登记的 `redirect_uri` 回到 `/signin-oidc`。
 3. 标准 OIDC handler 消费 correlation/state、PKCE 和 nonce，兑换授权码，并从 Discovery 获取 JWKS，校验 ID Token 的签名、issuer、audience、时效和 nonce。
 4. 成功后，标准 handler 把令牌写入受保护的 `.NexusAuth.Workbench` HttpOnly Cookie，并跳转 Dashboard 的 `/auth/callback`。浏览器 JavaScript 无法读取 Cookie 中的明文令牌。
 
 Workbench 为 OIDC 后通道配置专用 `HttpClient` delegating handler。该 handler 只把 token 请求中的客户端凭据改为 `Authorization: Basic ...` 请求头，以匹配 Bootstrap 登记的 `client_secret_basic`。它不调用 `HandleCodeRedemption`，也不重复执行 `ProtocolValidator`。
 
-内部 [`IWorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/Authentication/Tokens/IWorkbenchTokenClient.cs) 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。它不负责登录端点、PKCE 或 ID Token 校验。
+内部 [`INexusAuthTokenClient`](../admin/src/NexusAuth.Extension/Client/Tokens/INexusAuthTokenClient.cs) 只提供 refresh、introspection 和 revoke，并复用标准 `OpenIdConnectOptions.ConfigurationManager` 中缓存的发现文档。它不负责登录端点、PKCE 或 ID Token 校验。
 
 ## 流程状态
 
@@ -90,7 +90,7 @@ services.AddOpenIdConnectFlowState()
 
 `AddOpenIdConnectFlowState()` 自动 Scoped 注册 `OpenIdConnectFlowStateEvents`。内置事件在 `MessageReceived` 中原子消费流程并核对浏览器绑定；校验成功后调用 `base` 委托，校验失败则不执行后续用户委托。授权和 Provider 登出 redirect 只检查端点，不写应用 callback、post-logout callback、会话或错误页。自定义事件继承该类并覆盖相关方法时应调用 `base`，以保留检查。
 
-应用仍须在 challenge 前调用 `BeginAsync`，处理失败时调用 `CancelAsync`。Workbench 使用继承类型 `WorkbenchOpenIdConnectEvents`，保留 24 小时会话、RS256 限制和前端错误跳转。Cookie 事件中的业务刷新、introspection 与撤销检查留在 Workbench，不进入 Extension。
+应用仍须在 challenge 前调用 `BeginAsync`，处理失败时调用 `CancelAsync`。SDK 的 `NexusAuthOpenIdConnectEvents` 继承该类，提供可配置的会话时长（默认 24 小时）、签名算法限制（默认 RS256）和前端错误跳转；Cookie 会话的刷新与 introspection 由 `NexusAuthCookieAuthenticationEvents` 提供。Workbench 直接使用这两个 SDK 事件。
 
 扩展不依赖 `NexusAuth.Shared` 或 `NexusAuth.Workbench`，不提供登录端点，不生成 PKCE，不新增协议客户端，也不接管 ID Token 校验。多副本还必须共享并持久化 ASP.NET Core Data Protection key ring，否则 correlation、nonce 和会话 Cookie 无法跨实例解密。
 
@@ -113,10 +113,10 @@ curl -H "Authorization: Bearer $NEXUSAUTH_ACCESS_TOKEN" \
 
 Dashboard 仍只使用 Cookie，不读取、保存或转发 access token。无头客户端不需要会话 Cookie。
 
-[`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/Authentication/Events/WorkbenchCookieAuthenticationEvents.cs) 在 Cookie 验证时检查保存的 access token：
+[`NexusAuthCookieAuthenticationEvents`](../admin/src/NexusAuth.Extension/Client/Events/NexusAuthCookieAuthenticationEvents.cs) 在 Cookie 验证时检查保存的 access token：
 
 - 距离过期超过一分钟时，通过 introspection 确认令牌仍有效，且 subject、client_id 与当前会话匹配；
-- 接近过期时使用 `IWorkbenchTokenClient` 刷新，再对新 token 执行 introspection；
+- 接近过期时使用 `INexusAuthTokenClient` 刷新，再对新 token 执行 introspection；
 - 成功后保存轮换后的 access/refresh token，并续到新的 24 小时本地会话窗口；
 - 任一步失败时拒绝 Principal 并清除 Cookie。
 
@@ -133,12 +133,12 @@ Bearer logout 与 Cookie logout 都不会承诺跨客户端或 Provider 全局�
 
 ## 对照实现
 
-- [`AuthController`](../admin/src/NexusAuth.Workbench.Api/Controllers/AuthController.cs)：发起标准 OIDC challenge、返回登录地址，并按 Cookie/Bearer 入口执行不同登出语义。
+- [`NexusAuthEndpoints`](../admin/src/NexusAuth.Extension/Client/NexusAuthEndpoints.cs)：发起标准 OIDC challenge、返回登录地址，并按 Cookie/Bearer 入口执行不同登出语义。
 - [`WorkbenchAuthenticationExtensions`](../admin/src/NexusAuth.Workbench.Api/Authentication/WorkbenchAuthenticationExtensions.cs)：默认策略、Cookie、OpenID Connect、JWT Bearer、流程状态和 Basic 后通道配置。
 - [`WorkbenchJwtBearerEvents`](../admin/src/NexusAuth.Workbench.Api/Authentication/Events/WorkbenchJwtBearerEvents.cs)：Bearer 的 `token_use`、客户端白名单和用户撤销检查。
 - [`UseOpenIdConnectClientSecretBasic`](../admin/src/NexusAuth.Extension/Authentication/OpenIdConnectBackchannelExtensions.cs)：为指定原生 OIDC 方案适配后台表单请求的 Basic 认证头。
-- [`WorkbenchTokenClient`](../admin/src/NexusAuth.Workbench.Api/Authentication/Tokens/WorkbenchTokenClient.cs)：refresh、introspection 和 revoke。
-- [`WorkbenchCookieAuthenticationEvents`](../admin/src/NexusAuth.Workbench.Api/Authentication/Events/WorkbenchCookieAuthenticationEvents.cs)：会话 introspection 与 refresh token 轮换。
+- [`NexusAuthTokenClient`](../admin/src/NexusAuth.Extension/Client/Tokens/NexusAuthTokenClient.cs)：refresh、introspection 和 revoke。
+- [`NexusAuthCookieAuthenticationEvents`](../admin/src/NexusAuth.Extension/Client/Events/NexusAuthCookieAuthenticationEvents.cs)：会话 introspection 与 refresh token 轮换。
 - [`CurrentIdentityController`](../admin/src/NexusAuth.Workbench.Api/Controllers/CurrentIdentityController.cs)：`GET /api/auth/me`。
 - [`Models/Requests`](../admin/src/NexusAuth.Workbench.Api/Models/Requests)：控制器请求模型，每类型一文件。
 

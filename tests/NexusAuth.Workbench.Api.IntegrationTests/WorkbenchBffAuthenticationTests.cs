@@ -17,7 +17,6 @@ using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api;
 using NexusAuth.Workbench.Api.Authentication;
 using NexusAuth.Workbench.Api.Authentication.Events;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
 using Xunit;
 
 namespace NexusAuth.Workbench.Api.IntegrationTests;
@@ -61,10 +60,10 @@ public sealed class WorkbenchBffAuthenticationTests
         var cookie = factory.Services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(WorkbenchAuthenticationDefaults.CookieScheme);
-        Assert.Equal(typeof(WorkbenchCookieAuthenticationEvents), cookie.EventsType);
+        Assert.Equal(typeof(NexusAuthCookieAuthenticationEvents), cookie.EventsType);
 
         using var scope = factory.Services.CreateScope();
-        Assert.NotNull(scope.ServiceProvider.GetService<IWorkbenchTokenClient>());
+        Assert.NotNull(scope.ServiceProvider.GetService<INexusAuthTokenClient>());
         Assert.NotNull(scope.ServiceProvider.GetService<IFlowStateStore>());
         Assert.NotNull(scope.ServiceProvider.GetService<IOptions<OpenIdConnectFlowStateOptions>>());
     }
@@ -76,9 +75,9 @@ public sealed class WorkbenchBffAuthenticationTests
         using var firstScope = factory.Services.CreateScope();
         using var secondScope = factory.Services.CreateScope();
 
-        var first = firstScope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
-        var sameScope = firstScope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
-        var otherScope = secondScope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
+        var first = firstScope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>();
+        var sameScope = firstScope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>();
+        var otherScope = secondScope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>();
 
         Assert.Same(first, sameScope);
         Assert.NotSame(first, otherScope);

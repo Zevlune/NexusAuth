@@ -4,7 +4,7 @@
 
 - **Workbench API**：`admin/src/NexusAuth.Workbench.Api`，支持 ASP.NET Core OpenID Connect + Cookie 的 BFF 登录和 JWT Bearer，另含管理 API 与 Swagger。
 - **Dashboard**：`admin/src/NexusAuth.Workbench.Dashboard`，React 管理界面，见 [Dashboard README](./src/NexusAuth.Workbench.Dashboard/README.md)。
-- **OIDC 扩展**：`admin/src/NexusAuth.Extension`，与标准 ASP.NET Core `AddOpenIdConnect` 组合使用的流程状态存储、Scoped 流程事件、Basic 后台请求适配与元数据预热，见 [Extension README](./src/NexusAuth.Extension/README.md)。
+- **客户端 SDK**：`admin/src/NexusAuth.Extension`，对接 NexusAuth.Host 的 `AddNexusAuthClient` + `MapNexusAuthEndpoints`：授权码 + PKCE 登录、Cookie BFF 会话、JWT Bearer、令牌刷新/内省/撤销，以及 Redis 流程状态、Data Protection 密钥环和跨实例刷新协调。Workbench 与后续项目统一通过它接入，见 [Extension README](./src/NexusAuth.Extension/README.md)。
 
 两套应用的分工：**Workbench API + Dashboard 是一套管理工作台；[NexusAuth.Host](../src/NexusAuth.Host) 是独立的身份认证服务器。** Host 提供登录、授权、令牌和身份协议，可单独运行；Workbench 通过 OIDC 委托 Host 完成人员登录，再管理用户、客户端、资源、凭证和审计。当前实现下两者共用同一个 `nexusauth` 数据库和 schema。
 
@@ -63,6 +63,7 @@ Workbench API 的业务配置统一放在 `appsettings.json` 和按 `ASPNETCORE_
 | `ConnectionStrings` | `Default` | PostgreSQL 连接串；Compose 和生产文件使用占位密码或私有值 |
 | `Auth` | `Authority`、`ClientId`、`ClientSecret`、`RedirectUri`、`PostLogoutRedirectUri`、`Audience`、`AllowedBearerClientIds`、`Scope` | OIDC 登录、BFF 会话、Bearer 信任边界与 Bootstrap 客户端 |
 | `Auth:FlowState` | `Provider`、`Lifetime`、`Capacity`、`Redis` | 登录流程状态；多实例使用 Redis |
+| `Auth:Redis`、`Auth:TokenRefresh`、`Auth:DataProtection` | `Configuration`、`Provider`、`ApplicationName` | 多实例共享的 Redis 连接、跨实例刷新协调与密钥环，见 [Extension README](./src/NexusAuth.Extension/README.md#集群部署) |
 | `Security` | `CookieSecurePolicy`、`ForwardedHeadersEnabled`、`ForwardLimit`、`KnownProxies`、`KnownNetworks` | Cookie 与可信代理 |
 | `Swagger` | `Enabled` | 非 Development 环境是否开放 Swagger |
 | `Bootstrap` | `ResourceName`、`ResourceDisplayName`、`ClientName` 等 | Workbench 启动时登记自身的资源和客户端 |
@@ -76,11 +77,11 @@ Workbench API 的业务配置统一放在 `appsettings.json` 和按 `ASPNETCORE_
 
 ### 单一 Authority
 
-`Auth:Authority` 是 Workbench 唯一使用的 Provider 基础地址。微软 OIDC handler 用它完成 Discovery、JWKS 获取、授权跳转、授权码兑换和 ID Token 校验；Workbench 内部 `IWorkbenchTokenClient` 也从同一发现文档读取 refresh、introspection 和 revoke 端点。它必须与 Provider 的 issuer 完全一致。基础配置为空且 `Auth:RequireHttpsMetadata=true`；其他环境必须使用 HTTPS Authority。
+`Auth:Authority` 是 Workbench 唯一使用的 Provider 基础地址。微软 OIDC handler 用它完成 Discovery、JWKS 获取、授权跳转、授权码兑换和 ID Token 校验；SDK 的 `INexusAuthTokenClient` 也从同一发现文档读取 refresh、introspection 和 revoke 端点。它必须与 Provider 的 issuer 完全一致。基础配置为空且 `Auth:RequireHttpsMetadata=true`；其他环境必须使用 HTTPS Authority。
 
 JWT Bearer 与 OIDC 登录共用标准框架的 metadata manager。Bearer access token 的 issuer 是 `Auth:Authority`、audience 是 `Auth:Audience`；OIDC ID token 的 audience 是 `Auth:ClientId`。这两个 audience 不能混用。
 
-Workbench 配置通过 [`IOptions<WorkbenchAuthenticationOptions>`](./src/NexusAuth.Workbench.Api/Options/WorkbenchAuthenticationOptions.cs)、`IOptions<WorkbenchSecurityOptions>`、`IOptions<WorkbenchSwaggerOptions>` 和 `IOptions<WorkbenchBootstrapOptions>` 获取。认证选项统一绑定、规范化并在启动时校验，不直接注册配置对象单例。`IWorkbenchTokenClient` 仅处理刷新、内省和撤销；发现文档由标准 OIDC handler 的配置管理器共享缓存，没有额外的发现服务注册。目录职责见 [Workbench API README](./src/NexusAuth.Workbench.Api/README.md)。
+Workbench 配置通过 SDK 的 [`IOptions<NexusAuthClientOptions>`](./src/NexusAuth.Extension/Client/NexusAuthClientOptions.cs)、`IOptions<WorkbenchSecurityOptions>`、`IOptions<WorkbenchSwaggerOptions>` 和 `IOptions<WorkbenchBootstrapOptions>` 获取。认证选项统一绑定、规范化并在启动时校验，不直接注册配置对象单例。`INexusAuthTokenClient` 仅处理刷新、内省和撤销；发现文档由标准 OIDC handler 的配置管理器共享缓存，没有额外的发现服务注册。目录职责见 [Workbench API README](./src/NexusAuth.Workbench.Api/README.md)。
 
 
 浏览器和 Workbench API 进程都必须能直接访问同一个 `Auth:Authority`。容器内的 `localhost` 指向容器自身；跨容器部署应使用浏览器和各工作负载都能访问的同一域名或 IP，并通过网络 DNS 或入口路由把它解析到 Provider。不要把 `Auth:Authority` 改成容器服务名，也不要再额外配置内网地址或 HTTP 地址改写。
@@ -143,7 +144,7 @@ curl -H "Authorization: Bearer $NEXUSAUTH_ACCESS_TOKEN" \
 
 Dashboard 不读取或转发 access token，仍通过同源 Cookie 调用 `/api`。
 
-Workbench 使用 `NexusAuth.Extension` 的流程状态扩展：`services.AddOpenIdConnectFlowState().UseInMemory()` 为默认方式，`UseRedis(...)` 用于多实例共享。注册入口会自动以 Scoped 注册 `OpenIdConnectFlowStateEvents`，Workbench 通过 `EventsType` 指向继承该类的应用事件。内置事件在 `MessageReceived` 自动校验流程，成功后调用 `base` 委托，失败时不执行后续用户委托；授权和登出 redirect 检查端点，但不写应用回调。配置位于 `Auth:FlowState`；Redis 连接、KeyPrefix 和 Database 位于 `Auth:FlowState:Redis`。Redis 实现继续保证浏览器绑定、原子一次消费和跨实例共享容量。多实例部署还必须共享 ASP.NET Core Data Protection key ring。
+Workbench 通过 `NexusAuth.Extension` SDK 的 `AddNexusAuthClient` 接入，自身只保留方案名称、会话 Cookie 名称、Bearer 用户撤销检查、`/api/auth/me` 管理员判定与 Bootstrap。流程状态配置位于 `Auth:FlowState`，默认进程内存储。多实例部署需同时开启 `Auth:FlowState:Provider=Redis`、`Auth:TokenRefresh:Provider=Redis` 与共享 Data Protection 密钥环（`Auth:DataProtection`），原因与配置见 [Extension README 集群部署](./src/NexusAuth.Extension/README.md#集群部署)。
 
 ## 构建与部署
 

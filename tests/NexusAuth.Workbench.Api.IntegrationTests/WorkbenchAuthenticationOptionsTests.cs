@@ -1,3 +1,4 @@
+using NexusAuth.Extension;
 using NexusAuth.Workbench.Api.Authentication;
 using NexusAuth.Workbench.Api.Options;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -26,8 +27,8 @@ public sealed class WorkbenchAuthenticationOptionsTests
         services.AddWorkbenchAuthentication(configuration);
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
 
-        Assert.Null(provider.GetService<WorkbenchAuthenticationOptions>());
-        var authentication = provider.GetRequiredService<IOptions<WorkbenchAuthenticationOptions>>().Value;
+        Assert.Null(provider.GetService<NexusAuthClientOptions>());
+        var authentication = provider.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
         var oidc = provider.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
             .Get(WorkbenchAuthenticationDefaults.OpenIdConnectScheme);
         Assert.Equal("https://issuer.test", authentication.Authority);

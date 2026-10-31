@@ -1,25 +1,23 @@
 using System.Globalization;
 using System.Security.Claims;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Options;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
-using NexusAuth.Workbench.Api.Authentication;
-using NexusAuth.Workbench.Api.Options;
 
-namespace NexusAuth.Workbench.Api.Authentication.Events;
+namespace NexusAuth.Extension;
 
 /// <summary>
-/// 校验 Workbench 会话有效性，并在令牌临近过期时刷新受保护票据中的令牌。
+/// 校验会话有效性，并在 Access Token 临近过期时刷新受保护票据中的令牌。
+/// 刷新经 <see cref="INexusAuthTokenRefreshCoordinator"/> 合并，集群部署时可切换为 Redis 协调。
 /// </summary>
-public class WorkbenchCookieAuthenticationEvents(
-    IWorkbenchTokenClient tokenClient,
-    IOptions<WorkbenchAuthenticationOptions> authenticationOptions,
-    IWorkbenchTokenRefreshCoordinator refreshCoordinator) : CookieAuthenticationEvents
+public class NexusAuthCookieAuthenticationEvents(
+    INexusAuthTokenClient tokenClient,
+    IOptions<NexusAuthClientOptions> clientOptions,
+    INexusAuthTokenRefreshCoordinator refreshCoordinator) : CookieAuthenticationEvents
 {
-    private readonly WorkbenchAuthenticationOptions settings = authenticationOptions.Value;
+    private readonly NexusAuthClientOptions settings = clientOptions.Value;
 
-    private static readonly TimeSpan AccessTokenRefreshWindow = TimeSpan.FromMinutes(1);
+    /// <inheritdoc />
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {
         if (context.Principal is null)
@@ -49,21 +47,15 @@ public class WorkbenchCookieAuthenticationEvents(
             return;
         }
 
-        if (expiresAt > DateTimeOffset.UtcNow.Add(AccessTokenRefreshWindow))
+        if (expiresAt > DateTimeOffset.UtcNow.Add(settings.Session.RefreshBeforeExpiry))
         {
+            if (!settings.Session.ValidateWithIntrospection)
+                return;
             // 未过期也需要内省：管理员撤销会话或禁用用户后，不允许继续凭旧 Cookie 访问。
             try
             {
-                var introspection = await tokenClient.IntrospectAccessTokenAsync(
-                    accessToken,
-                    context.HttpContext.RequestAborted);
-                var subject = context.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (!introspection.Active
-                    || !string.Equals(introspection.Subject, subject, StringComparison.Ordinal)
-                    || !string.Equals(introspection.ClientId, settings.ClientId, StringComparison.Ordinal))
-                {
+                if (!await IsActiveAsync(context, accessToken))
                     await RejectAndSignOutAsync(context);
-                }
             }
             catch
             {
@@ -88,11 +80,7 @@ public class WorkbenchCookieAuthenticationEvents(
             }
 
             // 并发请求可能复用刚完成的刷新结果；再次内省，避免复用管理员刚撤销的令牌。
-            var introspection = await tokenClient.IntrospectAccessTokenAsync(
-                refreshed.AccessToken, context.HttpContext.RequestAborted);
-            if (!introspection.Active
-                || !string.Equals(introspection.Subject, context.Principal.FindFirstValue(ClaimTypes.NameIdentifier), StringComparison.Ordinal)
-                || !string.Equals(introspection.ClientId, settings.ClientId, StringComparison.Ordinal))
+            if (settings.Session.ValidateWithIntrospection && !await IsActiveAsync(context, refreshed.AccessToken))
                 throw new InvalidOperationException("The refreshed token is no longer active.");
 
             var refreshedExpiresAt = DateTimeOffset.UtcNow.AddSeconds(refreshed.ExpiresIn);
@@ -107,10 +95,10 @@ public class WorkbenchCookieAuthenticationEvents(
                 ]);
             context.Properties.StoreTokens(tokens);
 
-            // 同时更新本应用会话窗口与票据，保持 Cookie 滑动续期和令牌刷新一致。
+            // 同时更新会话窗口与票据，保持 Cookie 滑动续期和令牌刷新一致。
             var now = DateTimeOffset.UtcNow;
             context.Properties.IssuedUtc = now;
-            context.Properties.ExpiresUtc = now.AddHours(24);
+            context.Properties.ExpiresUtc = now.Add(settings.Session.Lifetime);
             context.Properties.AllowRefresh = true;
             context.ShouldRenew = true;
         }
@@ -120,9 +108,18 @@ public class WorkbenchCookieAuthenticationEvents(
         }
     }
 
+    private async Task<bool> IsActiveAsync(CookieValidatePrincipalContext context, string accessToken)
+    {
+        var introspection = await tokenClient.IntrospectAccessTokenAsync(
+            accessToken, context.HttpContext.RequestAborted);
+        return introspection.Active
+            && string.Equals(introspection.Subject, context.Principal!.FindFirstValue(ClaimTypes.NameIdentifier), StringComparison.Ordinal)
+            && string.Equals(introspection.ClientId, settings.ClientId, StringComparison.Ordinal);
+    }
+
     private static async Task RejectAndSignOutAsync(CookieValidatePrincipalContext context)
     {
         context.RejectPrincipal();
-        await context.HttpContext.SignOutAsync(WorkbenchAuthenticationDefaults.CookieScheme);
+        await context.HttpContext.SignOutAsync(context.Scheme.Name);
     }
 }

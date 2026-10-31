@@ -9,14 +9,17 @@ namespace NexusAuth.Extension;
 
 internal sealed class ClientSecretBasicHandler(
     IOptionsMonitor<OpenIdConnectOptions> options,
-    string authenticationScheme) : DelegatingHandler
+    string authenticationScheme,
+    Func<bool>? useBasic = null) : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         // 延迟到请求阶段读取，避免配置 OIDC Backchannel 时再次构造同一份 Options。
         var settings = options.Get(authenticationScheme);
         OpenIdConnectEndpointValidator.Validate(request.RequestUri, settings.RequireHttpsMetadata);
-        if (request.Method == HttpMethod.Post
+        // useBasic 返回 false 时只校验端点，保留表单凭据（client_secret_post）。
+        if ((useBasic?.Invoke() ?? true)
+            && request.Method == HttpMethod.Post
             && request.Content?.Headers.ContentType?.MediaType == "application/x-www-form-urlencoded")
         {
             var form = QueryHelpers.ParseQuery(await request.Content.ReadAsStringAsync(ct));
