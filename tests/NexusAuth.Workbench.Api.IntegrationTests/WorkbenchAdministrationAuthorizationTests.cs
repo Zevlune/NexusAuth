@@ -37,7 +37,6 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
             .Where(type => !type.IsAbstract
                 && type.Namespace == typeof(UsersController).Namespace
                 && typeof(ControllerBase).IsAssignableFrom(type)
-                && type != typeof(AuthController)
                 && type != typeof(CurrentIdentityController))
             .ToArray();
 

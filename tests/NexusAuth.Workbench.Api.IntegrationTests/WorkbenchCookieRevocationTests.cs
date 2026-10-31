@@ -1,7 +1,7 @@
 using FrameworkOptions = Microsoft.Extensions.Options.Options;
 using NexusAuth.Workbench.Api.Authentication;
 using NexusAuth.Workbench.Api.Authentication.Events;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Extension;
 using NexusAuth.Workbench.Api.Options;
 using System.Globalization;
 using System.Security.Claims;
@@ -101,15 +101,15 @@ public sealed class WorkbenchCookieRevocationTests
         public string? Failure { get; init; }
         public int SignOutCount { get; private set; }
         public int RefreshCount { get; private set; }
-        public WorkbenchCookieAuthenticationEvents Events { get; }
+        public NexusAuthCookieAuthenticationEvents Events { get; }
 
         public Harness()
         {
-            var oidc = RecordingDispatchProxy.Create<IWorkbenchTokenClient>((method, _) => method.Name switch
+            var oidc = RecordingDispatchProxy.Create<INexusAuthTokenClient>((method, _) => method.Name switch
             {
                 "get_ClientId" => "workbench-client",
-                nameof(IWorkbenchTokenClient.RefreshTokensAsync) => Refresh(),
-                nameof(IWorkbenchTokenClient.IntrospectAccessTokenAsync) => Introspect(),
+                nameof(INexusAuthTokenClient.RefreshTokensAsync) => Refresh(),
+                nameof(INexusAuthTokenClient.IntrospectAccessTokenAsync) => Introspect(),
                 _ => throw new NotSupportedException(method.Name),
             });
             var authentication = RecordingDispatchProxy.Create<IAuthenticationService>((method, _) =>
@@ -120,10 +120,10 @@ public sealed class WorkbenchCookieRevocationTests
             services = new ServiceCollection()
                 .AddSingleton(authentication)
                 .AddSingleton(oidc)
-                .AddSingleton<IWorkbenchTokenRefreshCoordinator, WorkbenchTokenRefreshCoordinator>()
+                .AddSingleton<INexusAuthTokenRefreshCoordinator, NexusAuthTokenRefreshCoordinator>()
                 .BuildServiceProvider();
-            Events = new WorkbenchCookieAuthenticationEvents(oidc,
-                FrameworkOptions.Create(new WorkbenchAuthenticationOptions
+            Events = new NexusAuthCookieAuthenticationEvents(oidc,
+                FrameworkOptions.Create(new NexusAuthClientOptions
                 {
                     Authority = "https://issuer.test",
                     Audience = "workbench.api",
@@ -135,20 +135,20 @@ public sealed class WorkbenchCookieRevocationTests
                     SignOutProvider = true,
                     RequireHttpsMetadata = true
                 }),
-                services.GetRequiredService<IWorkbenchTokenRefreshCoordinator>());
+                services.GetRequiredService<INexusAuthTokenRefreshCoordinator>());
         }
 
-        private WorkbenchTokenResult Refresh()
+        private NexusAuthTokenResult Refresh()
         {
             RefreshCount++;
-            return new WorkbenchTokenResult("new-access", OmitOptionalTokens ? null : "new-refresh",
+            return new NexusAuthTokenResult("new-access", OmitOptionalTokens ? null : "new-refresh",
                 OmitOptionalTokens ? null : "new-id", 300);
         }
 
-        private WorkbenchIntrospectionResult Introspect()
+        private NexusAuthIntrospectionResult Introspect()
         {
             if (Failure == "exception") throw new HttpRequestException("Provider unavailable.");
-            return new WorkbenchIntrospectionResult(Active,
+            return new NexusAuthIntrospectionResult(Active,
                 Failure == "subject" ? "different-user" : subject,
                 Failure == "client" ? "different-client" : "workbench-client");
         }

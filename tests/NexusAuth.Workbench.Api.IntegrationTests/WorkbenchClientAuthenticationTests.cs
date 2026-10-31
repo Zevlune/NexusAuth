@@ -1,6 +1,6 @@
 using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Workbench.Api.Authentication;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Extension;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -11,7 +11,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using NexusAuth.Application.Clients;
-using NexusAuth.Extension;
 using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api;
 using Xunit;
@@ -34,7 +33,7 @@ public sealed class WorkbenchClientAuthenticationTests
         using var handler = new CapturingHandler();
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
+        var client = scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>();
 
         switch (operation)
         {
@@ -143,7 +142,7 @@ public sealed class WorkbenchClientAuthenticationTests
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
 
-        var result = await scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+        var result = await scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>()
             .RefreshTokensAsync("refresh-token", CancellationToken.None);
 
         Assert.Equal("access", result.AccessToken);
@@ -162,8 +161,8 @@ public sealed class WorkbenchClientAuthenticationTests
         using var provider = CreateProvider(handler);
         using var scope = provider.CreateScope();
 
-        var exception = await Assert.ThrowsAsync<WorkbenchProtocolException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+        var exception = await Assert.ThrowsAsync<NexusAuthProtocolException>(() =>
+            scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>()
                 .RefreshTokensAsync("refresh-token", CancellationToken.None));
 
         Assert.Equal("invalid_response", exception.Error);
@@ -178,7 +177,7 @@ public sealed class WorkbenchClientAuthenticationTests
         services.AddScoped<IUserTokenValidator>(_ =>
             RecordingDispatchProxy.Create<IUserTokenValidator>((_, _) => false));
         services.AddWorkbenchAuthentication(CreateConfiguration());
-        services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
+        services.AddHttpClient(WorkbenchAuthenticationDefaults.BackchannelHttpClient)
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

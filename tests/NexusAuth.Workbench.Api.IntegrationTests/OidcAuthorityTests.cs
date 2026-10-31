@@ -1,6 +1,6 @@
 using NexusAuth.Application.Services.Tokens;
 using NexusAuth.Workbench.Api.Authentication;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Extension;
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -50,7 +50,7 @@ public sealed class OidcAuthorityTests
             """{"access_token":"access","refresh_token":"rotated","id_token":"id","expires_in":120}""");
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
+        var client = scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>();
 
         var result = await client.RefreshTokensAsync("refresh", CancellationToken.None);
 
@@ -82,7 +82,7 @@ public sealed class OidcAuthorityTests
             """{"active":true,"sub":"user-1","client_id":"workbench"}""");
         using var provider = CreateProvider(recorder);
         using var scope = provider.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>();
+        var client = scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>();
 
         var result = await client.IntrospectAccessTokenAsync("access-token", CancellationToken.None);
 
@@ -113,7 +113,7 @@ public sealed class OidcAuthorityTests
         using var scope = provider.CreateScope();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+            scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>()
                 .RefreshTokensAsync("refresh", CancellationToken.None));
 
         Assert.Contains("issuer", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -203,7 +203,7 @@ public sealed class OidcAuthorityTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+            scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>()
                 .RefreshTokensAsync("refresh", cancellation.Token));
     }
 
@@ -215,7 +215,7 @@ public sealed class OidcAuthorityTests
         using var scope = provider.CreateScope();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+            scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>()
                 .RefreshTokensAsync("refresh", CancellationToken.None));
 
         Assert.DoesNotContain("client-secret", exception.ToString(), StringComparison.Ordinal);
@@ -234,7 +234,7 @@ public sealed class OidcAuthorityTests
         using var scope = provider.CreateScope();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            scope.ServiceProvider.GetRequiredService<IWorkbenchTokenClient>()
+            scope.ServiceProvider.GetRequiredService<INexusAuthTokenClient>()
                 .RefreshTokensAsync("refresh", CancellationToken.None));
 
         Assert.DoesNotContain("client-secret", exception.ToString(), StringComparison.Ordinal);
@@ -247,7 +247,7 @@ public sealed class OidcAuthorityTests
         using var recorder = new RequestRecorder(DiscoveryJson);
         using var provider = CreateProvider(recorder);
         using var client = provider.GetRequiredService<IHttpClientFactory>()
-            .CreateClient(WorkbenchTokenClient.HttpClientName);
+            .CreateClient(WorkbenchAuthenticationDefaults.BackchannelHttpClient);
 
         Assert.Equal(TimeSpan.FromSeconds(30), client.Timeout);
     }
@@ -262,7 +262,7 @@ public sealed class OidcAuthorityTests
         services.AddScoped<IUserTokenValidator>(_ =>
             RecordingDispatchProxy.Create<IUserTokenValidator>((_, _) => false));
         services.AddWorkbenchAuthentication(CreateConfiguration(authority, requireHttpsMetadata));
-        services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
+        services.AddHttpClient(WorkbenchAuthenticationDefaults.BackchannelHttpClient)
             .ConfigurePrimaryHttpMessageHandler(() => recorder);
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

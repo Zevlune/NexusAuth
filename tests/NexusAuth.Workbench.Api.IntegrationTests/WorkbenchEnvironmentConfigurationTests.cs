@@ -1,3 +1,4 @@
+using NexusAuth.Extension;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using NexusAuth.Workbench.Api.Options;
@@ -76,8 +77,8 @@ public sealed class WorkbenchEnvironmentConfigurationTests
             Assert.Equal("environment-client", configuration["Auth:ClientId"]);
 
             var authentication = configuration
-                .GetSection(WorkbenchAuthenticationOptions.SectionName)
-                .Get<WorkbenchAuthenticationOptions>();
+                .GetSection(NexusAuthClientOptions.SectionName)
+                .Get<NexusAuthClientOptions>();
             var bootstrap = configuration
                 .GetSection(WorkbenchBootstrapOptions.SectionName)
                 .Get<WorkbenchBootstrapOptions>();
@@ -136,8 +137,8 @@ public sealed class WorkbenchEnvironmentConfigurationTests
             using var configuration = builder.Configuration;
             var authority = configuration["Auth:Authority"];
             var options = configuration
-                .GetSection(WorkbenchAuthenticationOptions.SectionName)
-                .Get<WorkbenchAuthenticationOptions>();
+                .GetSection(NexusAuthClientOptions.SectionName)
+                .Get<NexusAuthClientOptions>();
 
             Assert.Equal("https://json.example.test", authority);
             Assert.NotNull(options);

@@ -10,6 +10,7 @@
   <ItemGroup>
     <None Update="README.md" Pack="true" PackagePath="/" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
     <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>

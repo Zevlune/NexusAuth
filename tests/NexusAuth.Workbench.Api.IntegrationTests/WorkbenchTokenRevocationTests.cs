@@ -1,5 +1,5 @@
 using NexusAuth.Workbench.Api.Authentication;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Extension;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
@@ -155,8 +155,8 @@ public sealed class WorkbenchTokenRevocationTests
                         if (method.Name == nameof(ISsoSessionService.RevokeAllForUserAsync)) SessionRevocations.Add((Guid)args![0]!);
                         return null;
                     }));
-                    services.RemoveAll<IWorkbenchTokenClient>();
-                    services.AddScoped<IWorkbenchTokenClient>(provider =>
+                    services.RemoveAll<INexusAuthTokenClient>();
+                    services.AddScoped<INexusAuthTokenClient>(provider =>
                         new IntrospectionClient(token => IntrospectAsync(token,
                             provider.GetRequiredService<IUserTokenValidator>())));
                     services.PostConfigure<OpenIdConnectOptions>(WorkbenchAuthenticationDefaults.OpenIdConnectScheme,
@@ -201,7 +201,7 @@ public sealed class WorkbenchTokenRevocationTests
             return client;
         }
 
-        private async Task<WorkbenchIntrospectionResult> IntrospectAsync(string token, IUserTokenValidator validator)
+        private async Task<NexusAuthIntrospectionResult> IntrospectAsync(string token, IUserTokenValidator validator)
         {
             var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
             var principal = handler.ValidateToken(token, new TokenValidationParameters
@@ -209,18 +209,18 @@ public sealed class WorkbenchTokenRevocationTests
                 ValidIssuer = Issuer, ValidAudience = Audience, IssuerSigningKey = signingKey,
                 ValidateLifetime = true, ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
             }, out _);
-            return new WorkbenchIntrospectionResult(await validator.IsActiveAsync(principal),
+            return new NexusAuthIntrospectionResult(await validator.IsActiveAsync(principal),
                 principal.FindFirst("sub")!.Value, ClientId);
         }
 
         public void Dispose() { factory.Dispose(); rsa.Dispose(); }
     }
 
-    private sealed class IntrospectionClient(Func<string, Task<WorkbenchIntrospectionResult>> introspect)
-        : IWorkbenchTokenClient
+    private sealed class IntrospectionClient(Func<string, Task<NexusAuthIntrospectionResult>> introspect)
+        : INexusAuthTokenClient
     {
-        public Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(string token, CancellationToken ct) => introspect(token);
-        public Task<WorkbenchTokenResult> RefreshTokensAsync(string token, CancellationToken ct) => throw new NotSupportedException();
+        public Task<NexusAuthIntrospectionResult> IntrospectAccessTokenAsync(string token, CancellationToken ct) => introspect(token);
+        public Task<NexusAuthTokenResult> RefreshTokensAsync(string token, CancellationToken ct) => throw new NotSupportedException();
         public Task RevokeTokenAsync(string token, string hint, CancellationToken ct) => throw new NotSupportedException();
     }
 }

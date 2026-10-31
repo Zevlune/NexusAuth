@@ -10,21 +10,9 @@
 NexusAuth.Workbench.Api/
 ├── Authentication/
 │   ├── Events/
-│   │   ├── WorkbenchCookieAuthenticationEvents.cs
-│   │   ├── WorkbenchJwtBearerEvents.cs
-│   │   └── WorkbenchOpenIdConnectEvents.cs
-│   ├── Tokens/
-│   │   ├── IWorkbenchTokenClient.cs
-│   │   ├── IWorkbenchTokenRefreshCoordinator.cs
-│   │   ├── WorkbenchIntrospectionResult.cs
-│   │   ├── WorkbenchProtocolException.cs
-│   │   ├── WorkbenchProtocolResponse.cs
-│   │   ├── WorkbenchTokenClient.cs
-│   │   ├── WorkbenchTokenRefreshCoordinator.cs
-│   │   └── WorkbenchTokenResult.cs
+│   │   └── WorkbenchJwtBearerEvents.cs
 │   ├── WorkbenchAuthenticationDefaults.cs
-│   ├── WorkbenchAuthenticationExtensions.cs
-│   └── WorkbenchPrincipalFactory.cs
+│   └── WorkbenchAuthenticationExtensions.cs
 ├── Authorization/
 │   ├── WorkbenchAccessAuthorizationHandler.cs
 │   ├── WorkbenchAccessRequirement.cs
@@ -34,7 +22,6 @@ NexusAuth.Workbench.Api/
 │   └── WorkbenchClientCredentialHostedService.cs
 ├── Controllers/
 │   ├── ApiResourcesController.cs
-│   ├── AuthController.cs
 │   ├── ClientMetadataController.cs
 │   ├── ClientsController.cs
 │   ├── CurrentIdentityController.cs
@@ -55,8 +42,6 @@ NexusAuth.Workbench.Api/
 │       ├── UpdateOpenApiCredentialRequest.cs
 │       └── UpdateScimCredentialRequest.cs
 ├── Options/
-│   ├── WorkbenchAuthenticationOptions.cs
-│   ├── WorkbenchAuthenticationOptionsValidator.cs
 │   ├── WorkbenchBootstrapOptions.cs
 │   ├── WorkbenchSecurityOptions.cs
 │   └── WorkbenchSwaggerOptions.cs
@@ -74,13 +59,12 @@ NexusAuth.Workbench.Api/
 
 | 目录 | 职责 |
 | --- | --- |
-| [`Authentication`](./Authentication) | Cookie、OIDC、JWT Bearer 方案组装、默认策略选择、Principal 转换和 BFF 令牌操作 |
-| [`Authentication/Events`](./Authentication/Events) | Cookie 刷新/内省、JWT 信任与撤销检查、OIDC 流程和前端登录/错误契约 |
-| [`Authentication/Tokens`](./Authentication/Tokens) | refresh、introspection、revoke 的模型、响应/异常、客户端和并发刷新协调 |
+| [`Authentication`](./Authentication) | 调用 SDK `AddNexusAuthClient`，固定 Workbench 的方案与 Cookie 名称，并沿用 `Security:CookieSecurePolicy` |
+| [`Authentication/Events`](./Authentication/Events) | 在 SDK Bearer 校验之上追加用户禁用、会话撤销与黑名单检查 |
 | [`Bootstrap`](./Bootstrap) | 启动时幂等登记 Workbench 自己的 OAuth 客户端与 API resource |
-| [`Options`](./Options) | `IOptions<T>` 配置模型和认证配置校验 |
+| [`Options`](./Options) | Security、Swagger、Bootstrap 的 `IOptions<T>` 配置模型 |
 | [`Authorization`](./Authorization) | 默认访问策略、requirement 和授权 handler |
-| [`Controllers`](./Controllers) | 登录生命周期与管理 API |
+| [`Controllers`](./Controllers) | `/api/auth/me` 与管理 API；登录、登出和配置接口由 SDK `MapNexusAuthEndpoints` 提供 |
 | [`Filters`](./Filters) | 管理 API 统一结果和错误边界 |
 | [`Models/Requests`](./Models/Requests) | 控制器请求模型，每类型一文件 |
 

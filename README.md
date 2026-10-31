@@ -20,7 +20,7 @@ Host 的应用配置从 `appsettings.json` 和 `appsettings.{环境}.json` 读�
 ## 安全默认值与本地运行
 
 - Workbench 基础配置中的 `Auth:Authority` 为空，`Auth:RequireHttpsMetadata=true`；仓库的 Development 配置为本机开发显式覆盖为 `http://localhost:5100` 和 `false`。配置层允许任何环境显式设为 `false`，但规范上仅限隔离本地开发显式关闭。
-- Workbench 固定使用 `ClientSecretBasic` 客户端认证；登录流程状态默认保存在当前进程内。多实例部署应改用 Redis 流程存储并共享 Data Protection key ring。
+- Workbench 固定使用 `ClientSecretBasic` 客户端认证；登录流程状态默认保存在当前进程内。多实例部署应开启 Redis 流程存储、Redis 刷新协调并共享 Data Protection key ring，见 [Extension README](./admin/src/NexusAuth.Extension/README.md#集群部署)。
 - Cookie 的基础 `Security:CookieSecurePolicy=Always`；Development 显式覆盖为 `SameAsRequest`。部署时不要在 HTTP 环境静默降低生产默认值。
 - Swagger 仅在 Development 环境或显式设置 `Swagger:Enabled=true` 时启用。
 - 转发头默认关闭。启用时必须配置明确的 `Security:KnownProxies` 或 `Security:KnownNetworks`；应用只信任这些代理或网络。
@@ -46,7 +46,7 @@ src/
 admin/src/
   NexusAuth.Workbench.Api/          管理工作台 API 与 BFF
   NexusAuth.Workbench.Dashboard/    管理工作台界面
-  NexusAuth.Extension/              OIDC 流程状态扩展
+  NexusAuth.Extension/              对接 NexusAuth.Host 的客户端 SDK
 
 demo/                              各类业务接入示例
 tests/                             自动化测试

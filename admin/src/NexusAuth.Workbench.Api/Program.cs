@@ -4,6 +4,7 @@ using Luck.AspNetCore.Extensions;
 using Luck.Logging.Serilog;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
+using NexusAuth.Extension;
 using NexusAuth.Persistence;
 using NexusAuth.Workbench.Api;
 using System.Threading.RateLimiting;
@@ -75,6 +76,12 @@ try
     }
 
     app.MapControllers();
+    // 登录、登出与配置接口由 SDK 提供；/api/auth/me 保留 Workbench 自身的管理员判定。
+    app.MapNexusAuthEndpoints(configure: options =>
+    {
+        options.LoginRateLimitPolicy = "workbench-login";
+        options.MapCurrentUser = false;
+    });
 
     app.Run();
 }

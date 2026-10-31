@@ -1,5 +1,5 @@
 using NexusAuth.Workbench.Api.Authentication;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Extension;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
@@ -25,7 +25,6 @@ using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Repositories;
-using NexusAuth.Extension;
 using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api;
 
@@ -147,8 +146,8 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                         ? new PagedResult<ManagedUserDto>([], 0, 1, 10)
                         : null));
 
-                services.RemoveAll<IWorkbenchTokenClient>();
-                services.AddScoped<IWorkbenchTokenClient>(_ => tokenClient);
+                services.RemoveAll<INexusAuthTokenClient>();
+                services.AddScoped<INexusAuthTokenClient>(_ => tokenClient);
                 services.PostConfigure<JwtBearerOptions>(
                     WorkbenchAuthenticationDefaults.BearerScheme,
                     options => options.ConfigurationManager = metadata);
@@ -249,7 +248,7 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
             return blacklistedJtis.Contains(jti);
     }
 
-    private sealed class TestTokenClient(string clientId) : IWorkbenchTokenClient
+    private sealed class TestTokenClient(string clientId) : INexusAuthTokenClient
     {
         private readonly List<(string Token, string TokenTypeHint)> revocations = [];
         private readonly object sync = new();
@@ -269,17 +268,17 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                 revocations.Clear();
         }
 
-        public Task<WorkbenchTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct) =>
+        public Task<NexusAuthTokenResult> RefreshTokensAsync(string refreshToken, CancellationToken ct) =>
             throw new NotSupportedException();
 
-        public Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(
+        public Task<NexusAuthIntrospectionResult> IntrospectAccessTokenAsync(
             string accessToken,
             CancellationToken ct)
         {
             var subject = accessToken.StartsWith("cookie-access:", StringComparison.Ordinal)
                 ? accessToken["cookie-access:".Length..]
                 : null;
-            return Task.FromResult(new WorkbenchIntrospectionResult(
+            return Task.FromResult(new NexusAuthIntrospectionResult(
                 subject is not null,
                 subject,
                 subject is null ? null : clientId));

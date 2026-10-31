@@ -1,3 +1,4 @@
+using NexusAuth.Extension;
 using FrameworkOptions = Microsoft.Extensions.Options.Options;
 using NexusAuth.Workbench.Api.Authentication;
 using NexusAuth.Workbench.Api.Bootstrap;
@@ -67,7 +68,7 @@ public sealed class WorkbenchBootstrapValidationTests
             .BuildServiceProvider();
         var service = new WorkbenchClientCredentialHostedService(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            FrameworkOptions.Create(new WorkbenchAuthenticationOptions
+            FrameworkOptions.Create(new NexusAuthClientOptions
             {
                 ClientId = "workbench",
                 ClientSecret = "bootstrap-secret",
@@ -159,7 +160,7 @@ public sealed class WorkbenchBootstrapValidationTests
             .BuildServiceProvider();
         var service = new WorkbenchClientCredentialHostedService(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            FrameworkOptions.Create(new WorkbenchAuthenticationOptions
+            FrameworkOptions.Create(new NexusAuthClientOptions
             {
                 ClientId = "workbench",
                 ClientSecret = "updated-secret",
@@ -217,7 +218,7 @@ public sealed class WorkbenchBootstrapValidationTests
     {
         var service = new WorkbenchClientCredentialHostedService(
             null!,
-            FrameworkOptions.Create(new WorkbenchAuthenticationOptions()),
+            FrameworkOptions.Create(new NexusAuthClientOptions()),
             FrameworkOptions.Create(new WorkbenchBootstrapOptions()),
             new ProductionEnvironment(), NullLogger<WorkbenchClientCredentialHostedService>.Instance);
 
@@ -245,7 +246,7 @@ public sealed class WorkbenchBootstrapValidationTests
         services.AddWorkbenchAuthentication(configuration);
         using var provider = services.BuildServiceProvider();
 
-        var options = provider.GetRequiredService<IOptions<WorkbenchAuthenticationOptions>>().Value;
+        var options = provider.GetRequiredService<IOptions<NexusAuthClientOptions>>().Value;
 
         Assert.Equal("https://issuer.test/identity", options.Authority);
         Assert.Equal("workbench.api", options.Audience);

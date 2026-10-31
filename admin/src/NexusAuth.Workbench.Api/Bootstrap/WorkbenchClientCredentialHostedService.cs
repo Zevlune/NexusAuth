@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Extension;
 using NexusAuth.Shared.OAuth;
 using NexusAuth.Workbench.Api.Options;
 
@@ -12,7 +13,7 @@ namespace NexusAuth.Workbench.Api.Bootstrap;
 /// </summary>
 public sealed class WorkbenchClientCredentialHostedService(
     IServiceScopeFactory scopeFactory,
-    IOptions<WorkbenchAuthenticationOptions> authenticationOptions,
+    IOptions<NexusAuthClientOptions> authenticationOptions,
     IOptions<WorkbenchBootstrapOptions> bootstrapOptions,
     IHostEnvironment environment,
     ILogger<WorkbenchClientCredentialHostedService> logger) : IHostedService

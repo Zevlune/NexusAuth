@@ -1,5 +1,5 @@
 using NexusAuth.Workbench.Api.Authentication;
-using NexusAuth.Workbench.Api.Authentication.Tokens;
+using NexusAuth.Extension;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
@@ -21,7 +21,6 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
-using NexusAuth.Extension;
 using NexusAuth.Workbench.Api;
 using Xunit;
 
@@ -485,18 +484,18 @@ public sealed class WorkbenchLoginLifecycleTests
                     .UseSetting("Auth:SignOutProvider", signOutProvider.ToString());
                 builder.ConfigureServices(services =>
                 {
-                    services.RemoveAll<IWorkbenchTokenClient>();
-                    services.AddScoped<IWorkbenchTokenClient>(_ => Provider);
+                    services.RemoveAll<INexusAuthTokenClient>();
+                    services.AddScoped<INexusAuthTokenClient>(_ => Provider);
                     services.Configure<OpenIdConnectFlowStateOptions>(options => options.Capacity = capacity);
                     services.AddSingleton(clock ?? TimeProvider.System);
-                    services.AddHttpClient(WorkbenchTokenClient.HttpClientName)
+                    services.AddHttpClient(WorkbenchAuthenticationDefaults.BackchannelHttpClient)
                         .ConfigurePrimaryHttpMessageHandler(() => backchannel);
                     services.AddOptions<OpenIdConnectOptions>(
                             WorkbenchAuthenticationDefaults.OpenIdConnectScheme)
                         .PostConfigure<IHttpClientFactory>((options, clients) =>
                         {
                             options.ConfigurationManager = metadata;
-                            options.Backchannel = clients.CreateClient(WorkbenchTokenClient.HttpClientName);
+                            options.Backchannel = clients.CreateClient(WorkbenchAuthenticationDefaults.BackchannelHttpClient);
                         });
                     RemoveDiscoveryWarmup(services);
                     services.PostConfigure<CookieAuthenticationOptions>(
@@ -591,7 +590,7 @@ public sealed class WorkbenchLoginLifecycleTests
     private sealed class ProviderStub(
         TestMetadataManager metadata,
         SecurityKey trustedKey,
-        SecurityKey untrustedKey) : IWorkbenchTokenClient
+        SecurityKey untrustedKey) : INexusAuthTokenClient
     {
         private readonly ConcurrentDictionary<string, string> nonces = new(StringComparer.Ordinal);
         private readonly object exchangeGate = new();
@@ -699,17 +698,17 @@ public sealed class WorkbenchLoginLifecycleTests
             };
         }
 
-        public Task<WorkbenchTokenResult> RefreshTokensAsync(
+        public Task<NexusAuthTokenResult> RefreshTokensAsync(
             string refreshToken,
-            CancellationToken ct) => Task.FromResult(new WorkbenchTokenResult(
+            CancellationToken ct) => Task.FromResult(new NexusAuthTokenResult(
                 "refreshed-access",
                 "refreshed-refresh",
                 null,
                 120));
 
-        public Task<WorkbenchIntrospectionResult> IntrospectAccessTokenAsync(
+        public Task<NexusAuthIntrospectionResult> IntrospectAccessTokenAsync(
             string accessToken,
-            CancellationToken ct) => Task.FromResult(new WorkbenchIntrospectionResult(
+            CancellationToken ct) => Task.FromResult(new NexusAuthIntrospectionResult(
                 true,
                 "alice",
                 ClientId));
