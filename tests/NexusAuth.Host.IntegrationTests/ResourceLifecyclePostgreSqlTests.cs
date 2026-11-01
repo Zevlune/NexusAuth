@@ -87,6 +87,109 @@ public sealed class ResourceLifecyclePostgreSqlTests
     [PostgreSqlTheory]
     [Trait("Category", "PostgreSql")]
     [InlineData(true)]
+    public async Task Deleting_a_legacy_reserved_resource_preserves_all_identity_scopes_and_removes_associations(bool _)
+    {
+        await using var context = CreateContext();
+        await using var transaction = await context.Database.BeginTransactionAsync();
+
+        var suffix = Guid.NewGuid().ToString("N");
+        var resource = await CreateLegacyResourceAsync(
+            context,
+            $"legacy-resource-{suffix}",
+            OidcScopes.OpenId);
+        var associatedClient = OAuthClient.Create(
+            $"legacy-associated-{suffix}",
+            "Legacy associated client",
+            allowedScopes: OidcScopes.All);
+        var unassociatedClient = OAuthClient.Create(
+            $"legacy-unassociated-{suffix}",
+            "Legacy unassociated client",
+            allowedScopes: OidcScopes.All);
+        var managedClient = OAuthClient.Create(
+            $"legacy-managed-{suffix}",
+            "Legacy managed client",
+            allowedScopes: OidcScopes.All);
+        managedClient.MarkAsSystemManaged();
+
+        context.AddRange(associatedClient, unassociatedClient, managedClient);
+        context.Add(ClientApiResource.Create(associatedClient.Id, resource.Id));
+        context.Add(ClientApiResource.Create(managedClient.Id, resource.Id));
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var persistedResource = await context.ApiResources.SingleAsync(value => value.Id == resource.Id);
+        await new ApiResourceRepository(new TestUnitOfWork(context)).DeleteAsync(persistedResource);
+        context.ChangeTracker.Clear();
+
+        Assert.False(await context.ApiResources.AnyAsync(value => value.Id == resource.Id));
+        Assert.False(await context.ClientApiResources.AnyAsync(value => value.ApiResourceId == resource.Id));
+
+        var scopesAfterDelete = await context.OAuthClients
+            .AsNoTracking()
+            .Where(value => value.Id == associatedClient.Id
+                || value.Id == unassociatedClient.Id
+                || value.Id == managedClient.Id)
+            .ToDictionaryAsync(value => value.Id, value => value.AllowedScopes);
+        Assert.Equal(OidcScopes.All, scopesAfterDelete[associatedClient.Id]);
+        Assert.Equal(OidcScopes.All, scopesAfterDelete[unassociatedClient.Id]);
+        Assert.Equal(OidcScopes.All, scopesAfterDelete[managedClient.Id]);
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Removing_all_resource_associations_preserves_identity_scopes(bool legacyReservedAudience)
+    {
+        await using var context = CreateContext();
+        await using var transaction = await context.Database.BeginTransactionAsync();
+
+        var (resource, client) = await SeedAssociatedClientAsync(
+            context,
+            $"remove-all-{Guid.NewGuid():N}",
+            legacyReservedAudience);
+
+        await new ClientApiResourceRepository(new TestUnitOfWork(context))
+            .RemoveByApiResourceIdAsync(resource.Id);
+        context.ChangeTracker.Clear();
+
+        Assert.True(await context.ApiResources.AnyAsync(value => value.Id == resource.Id));
+        Assert.False(await context.ClientApiResources.AnyAsync(value => value.ApiResourceId == resource.Id));
+        var storedClient = await context.OAuthClients
+            .AsNoTracking()
+            .SingleAsync(value => value.Id == client.Id);
+        Assert.Equal(OidcScopes.All, storedClient.AllowedScopes);
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Revoking_one_resource_association_preserves_identity_scopes(bool legacyReservedAudience)
+    {
+        await using var context = CreateContext();
+        await using var transaction = await context.Database.BeginTransactionAsync();
+
+        var (resource, client) = await SeedAssociatedClientAsync(
+            context,
+            $"remove-one-{Guid.NewGuid():N}",
+            legacyReservedAudience);
+
+        await new ClientApiResourceRepository(new TestUnitOfWork(context))
+            .RemoveAsync(client.Id, resource.Id);
+        context.ChangeTracker.Clear();
+
+        Assert.True(await context.ApiResources.AnyAsync(value => value.Id == resource.Id));
+        Assert.False(await context.ClientApiResources.AnyAsync(value => value.ApiResourceId == resource.Id));
+        var storedClient = await context.OAuthClients
+            .AsNoTracking()
+            .SingleAsync(value => value.Id == client.Id);
+        Assert.Equal(OidcScopes.All, storedClient.AllowedScopes);
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(true)]
     public async Task A_stale_client_snapshot_cannot_restore_audience_after_resource_deletion(bool _)
     {
         var suffix = Guid.NewGuid().ToString("N");
@@ -213,6 +316,52 @@ public sealed class ResourceLifecyclePostgreSqlTests
         return new AuthDbContext(new DbContextOptionsBuilder<AuthDbContext>()
             .UseNpgsql(connection)
             .Options);
+    }
+
+    private static async Task<ApiResource> CreateLegacyResourceAsync(
+        AuthDbContext context,
+        string name,
+        string reservedAudience)
+    {
+        var resource = ApiResource.Create(name, "Legacy resource", $"legacy-{Guid.NewGuid():N}.api");
+        context.Add(resource);
+        await context.SaveChangesAsync();
+
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE nexusauth.api_resources
+            SET audience = {reservedAudience}
+            WHERE id = {resource.Id};
+            """);
+        context.ChangeTracker.Clear();
+        return await context.ApiResources.SingleAsync(value => value.Id == resource.Id);
+    }
+
+    private static async Task<(ApiResource Resource, OAuthClient Client)> SeedAssociatedClientAsync(
+        AuthDbContext context,
+        string name,
+        bool legacyReservedAudience)
+    {
+        var resource = legacyReservedAudience
+            ? await CreateLegacyResourceAsync(context, $"{name}-resource", OidcScopes.OpenId)
+            : ApiResource.Create($"{name}-resource", "Resource", $"{name}.api");
+        if (!legacyReservedAudience)
+            context.Add(resource);
+
+        var allowedScopes = OidcScopes.All
+            .Append(resource.Audience)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var client = OAuthClient.Create(
+            $"{name}-client",
+            "Resource client",
+            allowedScopes: allowedScopes);
+        client.MarkAsSystemManaged();
+
+        context.Add(client);
+        context.Add(ClientApiResource.Create(client.Id, resource.Id));
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        return (resource, client);
     }
 
     private sealed class TestUnitOfWork(AuthDbContext context) : IUnitOfWork

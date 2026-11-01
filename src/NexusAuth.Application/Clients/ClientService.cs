@@ -363,7 +363,9 @@ public class ClientService(
             existingResources = await clientApiResourceRepository.GetResourcesByClientIdAsync(id, ct);
             var targetApiResourceIds = apiResourceIds ?? existingResources.Select(resource => resource.Id).ToList();
             var standardScopes = request.AllowedScopes
-                ?? client.AllowedScopes.Except(existingResources.Select(resource => resource.Audience), StringComparer.Ordinal);
+                ?? client.AllowedScopes.Except(
+                    existingResources.Select(resource => resource.Audience).Where(audience => !OidcScopes.IsStandard(audience)),
+                    StringComparer.Ordinal);
 
             allowedScopes = await MergeAllowedScopesAsync(standardScopes, targetApiResourceIds, ct);
         }

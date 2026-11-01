@@ -5,6 +5,7 @@ using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Persistence.Repositories;
 
@@ -84,7 +85,8 @@ public class ClientApiResourceRepository(IUnitOfWork unitOfWork) : IClientApiRes
                 _dbContext.Set<ClientApiResource>().Remove(entity);
 
             var remainingScopes = client.AllowedScopes
-                .Where(scope => !string.Equals(scope, resource.Audience, StringComparison.Ordinal))
+                .Where(scope => OidcScopes.IsStandard(scope)
+                    || !string.Equals(scope, resource.Audience, StringComparison.Ordinal))
                 .ToList();
             if (remainingScopes.Count != client.AllowedScopes.Count)
                 client.Update(allowedScopes: remainingScopes);
@@ -115,13 +117,16 @@ public class ClientApiResourceRepository(IUnitOfWork unitOfWork) : IClientApiRes
                 return;
             }
 
-            // Clear the audience from every client, including legacy rows whose
-            // AllowedScopes contains the audience without a join row.
-            await _dbContext.Database.ExecuteSqlInterpolatedAsync($"""
-                UPDATE nexusauth.oauth_clients
-                SET allowed_scopes = allowed_scopes - {resource.Audience}
-                WHERE allowed_scopes ? {resource.Audience};
-                """, ct);
+            // Preserve identity scopes when removing a legacy resource collision.
+            if (!OidcScopes.IsStandard(resource.Audience))
+            {
+                // Also clear legacy clients whose audience has no join row.
+                await _dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+                    UPDATE nexusauth.oauth_clients
+                    SET allowed_scopes = allowed_scopes - {resource.Audience}
+                    WHERE allowed_scopes ? {resource.Audience};
+                    """, ct);
+            }
 
             await _dbContext.Set<ClientApiResource>()
                 .Where(x => x.ApiResourceId == apiResourceId)

@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Persistence.Repositories;
 
@@ -144,13 +145,17 @@ public class ApiResourceRepository : EfCoreAggregateRootRepository<ApiResource, 
 
         try
         {
-            // Clear the audience from every client, including legacy rows whose
-            // AllowedScopes contains the audience without a join row.
-            await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
-                UPDATE nexusauth.oauth_clients
-                SET allowed_scopes = allowed_scopes - {resource.Audience}
-                WHERE allowed_scopes ? {resource.Audience};
-                """, ct);
+            // Legacy resources may collide with identity scopes. Deleting their
+            // associations must never revoke the clients' OIDC permissions.
+            if (!OidcScopes.IsStandard(resource.Audience))
+            {
+                // Also clear legacy clients whose audience has no join row.
+                await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+                    UPDATE nexusauth.oauth_clients
+                    SET allowed_scopes = allowed_scopes - {resource.Audience}
+                    WHERE allowed_scopes ? {resource.Audience};
+                    """, ct);
+            }
 
             await dbContext.Set<ClientApiResource>()
                 .Where(value => value.ApiResourceId == resource.Id)

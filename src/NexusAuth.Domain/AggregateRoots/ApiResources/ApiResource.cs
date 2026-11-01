@@ -1,4 +1,5 @@
 using Luck.DDD.Domain.Domain.AggregateRoots;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Domain.AggregateRoots.ApiResources;
 
@@ -29,7 +30,7 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        ValidateAudience(audience);
 
         return new ApiResource(Guid.NewGuid())
         {
@@ -53,6 +54,9 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
         string? description = null,
         bool? isActive = null)
     {
+        if (!string.IsNullOrWhiteSpace(audience))
+            ValidateAudience(audience);
+
         if (!string.IsNullOrWhiteSpace(displayName))
             DisplayName = displayName;
 
@@ -64,5 +68,12 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
 
         if (isActive is { } nextIsActive)
             IsActive = nextIsActive;
+    }
+
+    private static void ValidateAudience(string audience)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        if (OidcScopes.IsStandard(audience))
+            throw new ArgumentException($"Audience '{audience}' is reserved for a standard OIDC scope.", nameof(audience));
     }
 }

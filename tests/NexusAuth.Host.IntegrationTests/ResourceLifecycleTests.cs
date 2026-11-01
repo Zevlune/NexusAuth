@@ -14,6 +14,9 @@ namespace NexusAuth.Host.IntegrationTests;
 
 public sealed class ResourceLifecycleTests
 {
+    public static IEnumerable<object[]> StandardAudiences => OidcScopes.All
+        .Select(scope => new object[] { scope });
+
     [Fact]
     public async Task Register_rejects_a_duplicate_audience()
     {
@@ -24,6 +27,21 @@ public sealed class ResourceLifecycleTests
             "billing",
             "Billing",
             "orders.api"));
+
+        Assert.Empty(harness.Calls);
+    }
+
+    [Theory]
+    [MemberData(nameof(StandardAudiences))]
+    public async Task Register_rejects_a_reserved_audience(string audience)
+    {
+        var existing = ApiResource.Create("orders", "Orders", "orders.api");
+        using var harness = new ApiResourceServiceHarness(existing);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => harness.Service.RegisterAsync(
+            "reserved",
+            "Reserved",
+            audience));
 
         Assert.Empty(harness.Calls);
     }
@@ -62,6 +80,24 @@ public sealed class ResourceLifecycleTests
             [])));
 
         Assert.DoesNotContain("client.add", harness.Calls);
+    }
+
+    [Fact]
+    public async Task Client_management_removing_a_legacy_resource_preserves_standard_scopes()
+    {
+        var resource = CreateLegacyResource("legacy-resource", OidcScopes.OpenId);
+        var client = OAuthClient.Create(
+            "legacy-client",
+            "Legacy client",
+            allowedScopes: OidcScopes.All);
+        using var harness = new ClientServiceHarness(client, resource, associated: true);
+
+        await harness.Service.UpdateAsync(client.Id, new UpdateClientRequest(
+            null, null, null, null, null, null, null, null, null, null, null,
+            ApiResourceIds: []));
+
+        Assert.Equal(OidcScopes.All, client.AllowedScopes);
+        Assert.Equal(["client.update", "association.remove"], harness.Calls);
     }
 
     [Fact]
@@ -122,6 +158,15 @@ public sealed class ResourceLifecycleTests
         Assert.Equal(["association.add", "association.remove"], harness.Calls);
         await Assert.ThrowsAsync<KeyNotFoundException>(() => harness.Service.AssignToClientAsync(Guid.NewGuid(), resource.Id));
         await Assert.ThrowsAsync<KeyNotFoundException>(() => harness.Service.RevokeFromClientAsync(client.Id, Guid.NewGuid()));
+    }
+
+    private static ApiResource CreateLegacyResource(string name, string audience)
+    {
+        var resource = ApiResource.Create(name, "Legacy resource", $"{name}.api");
+        typeof(ApiResource)
+            .GetProperty(nameof(ApiResource.Audience))!
+            .SetValue(resource, audience);
+        return resource;
     }
 
     private sealed class ApiResourceServiceHarness : IDisposable
@@ -195,28 +240,57 @@ public sealed class ResourceLifecycleTests
     private sealed class ClientServiceHarness : IDisposable
     {
         private readonly ServiceProvider serviceProvider;
+        private readonly HashSet<(Guid ClientId, Guid ResourceId)> associations = [];
 
-        public ClientServiceHarness(OAuthClient? client = null, ApiResource? resource = null)
+        public ClientServiceHarness(
+            OAuthClient? client = null,
+            ApiResource? resource = null,
+            bool associated = false)
         {
+            if (associated && client is not null && resource is not null)
+                associations.Add((client.Id, resource.Id));
+
             var clients = HardeningProxy.Create<IOAuthClientRepository>((method, args) => method.Name switch
             {
                 nameof(IOAuthClientRepository.FindByClientIdAsync) when client is not null && (string)args![0]! == client.ClientId => client,
                 nameof(IOAuthClientRepository.GetByIdAsync) when client is not null && (Guid)args![0]! == client.Id => client,
                 nameof(IOAuthClientRepository.AddAsync) => Record("client.add"),
+                nameof(IOAuthClientRepository.UpdateAsync) => Record("client.update"),
                 _ => null,
             });
             var resources = HardeningProxy.Create<IApiResourceRepository>((method, args) => method.Name switch
             {
                 nameof(IApiResourceRepository.FindByIdsAsync) => resource is null
                     ? (IReadOnlyList<ApiResource>)[]
-                    : (IReadOnlyList<ApiResource>)[resource],
+                    : ((IEnumerable<Guid>)args![0]!).Contains(resource.Id)
+                        ? (IReadOnlyList<ApiResource>)[resource]
+                        : (IReadOnlyList<ApiResource>)[],
                 nameof(IApiResourceRepository.FindByAudienceAsync) when resource is not null && (string)args![0]! == resource.Audience => resource,
                 _ => null,
             });
-            var associations = HardeningProxy.Create<IClientApiResourceRepository>((method, _) => method.Name switch
+            var associationRepository = HardeningProxy.Create<IClientApiResourceRepository>((method, args) =>
             {
-                nameof(IClientApiResourceRepository.GetResourcesByClientIdAsync) => (IReadOnlyList<ApiResource>)[],
-                _ => null,
+                switch (method.Name)
+                {
+                    case nameof(IClientApiResourceRepository.GetResourcesByClientIdAsync):
+                        var clientId = (Guid)args![0]!;
+                        return resource is not null
+                            && associations.Contains((clientId, resource.Id))
+                            ? (IReadOnlyList<ApiResource>)[resource]
+                            : (IReadOnlyList<ApiResource>)[];
+                    case nameof(IClientApiResourceRepository.AddAsync):
+                        var association = (ClientApiResource)args![0]!;
+                        if (associations.Add((association.ClientId, association.ApiResourceId)))
+                            return Record("association.add");
+                        return null;
+                    case nameof(IClientApiResourceRepository.RemoveAsync):
+                        var key = ((Guid)args![0]!, (Guid)args![1]!);
+                        if (associations.Remove(key))
+                            return Record("association.remove");
+                        return null;
+                    default:
+                        return null;
+                }
             });
             var secrets = HardeningProxy.Create<IOAuthClientSecretRepository>((_, _) => null);
             var refreshTokens = HardeningProxy.Create<IRefreshTokenRepository>((_, _) => null);
@@ -230,7 +304,7 @@ public sealed class ResourceLifecycleTests
                 clients,
                 resources,
                 secrets,
-                associations,
+                associationRepository,
                 refreshTokens,
                 serviceProvider,
                 NullLogger<ClientService>.Instance);
