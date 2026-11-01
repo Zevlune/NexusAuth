@@ -31,7 +31,7 @@ public sealed class TwoFactorSetupModel(IUserService users, ITotpService totp,
         var pending = await LoadAsync(ct);
         if (pending is null) return Restart();
         var (user, flow) = pending.Value;
-        if (!await totp.ConfirmEnrollmentAsync(user.Id, Enrollment!.ProtectedSecret, Code, ct))
+        if (!await totp.ConfirmEnrollmentAsync(user.Id, Enrollment!.ProtectedSecret, Code, flow.TokenEpoch, ct))
         {
             Code = string.Empty;
             ModelState.Remove(nameof(Code));

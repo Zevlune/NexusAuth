@@ -56,6 +56,7 @@ public sealed class TotpService(
         Guid userId,
         string protectedSecret,
         string code,
+        long? expectedTokenEpoch = null,
         CancellationToken ct = default)
     {
         var user = await userRepository.FindByIdAsync(userId, ct);
@@ -68,7 +69,8 @@ public sealed class TotpService(
 
         user = attempt.User;
         var now = DateTimeOffset.UtcNow;
-        if (!user.IsActive || user.IsLoginLocked(now))
+        if (!user.IsActive || user.IsLoginLocked(now)
+            || (expectedTokenEpoch.HasValue && expectedTokenEpoch.Value != (user.TokenInvalidBefore?.UtcTicks ?? 0)))
             return false;
 
         var credential = await credentialRepository.FindPendingTotpAsync(userId, protectedSecret, ct);
@@ -95,6 +97,7 @@ public sealed class TotpService(
             protectedSecret,
             counter,
             now,
+            user.Version,
             ct);
     }
 

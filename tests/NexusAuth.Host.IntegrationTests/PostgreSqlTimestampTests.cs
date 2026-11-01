@@ -98,8 +98,8 @@ public sealed class PostgreSqlTimestampTests
         AssertUtcInstant(now.AddSeconds(1).AddMinutes(15), lockedUser.LockedUntil);
         AssertUtcInstant(now.AddSeconds(1), lockedUser.UpdatedAt);
 
-        Assert.True(await credentials.TryConfirmTotpAsync(totp.Id, user.Id, "test-protected-secret", 100, now));
-        Assert.False(await credentials.TryConfirmTotpAsync(totp.Id, user.Id, "test-protected-secret", 101, now));
+        Assert.True(await credentials.TryConfirmTotpAsync(totp.Id, user.Id, "test-protected-secret", 100, now, lockedUser.Version));
+        Assert.False(await credentials.TryConfirmTotpAsync(totp.Id, user.Id, "test-protected-secret", 101, now, lockedUser.Version));
         Assert.False(await credentials.TryUseTotpCounterAsync(totp.Id, user.Id, 100, now.AddSeconds(1)));
         Assert.True(await credentials.TryUseTotpCounterAsync(totp.Id, user.Id, 101, now.AddSeconds(2)));
         context.ChangeTracker.Clear();

@@ -107,7 +107,7 @@ public sealed class TwoFactorModel(
             return Page();
         }
 
-        if (!await totpService.ConfirmEnrollmentAsync(userId, pending.ProtectedSecret, Code, ct))
+        if (!await totpService.ConfirmEnrollmentAsync(userId, pending.ProtectedSecret, Code, ct: ct))
         {
             ShowEnrollment(pending);
             Code = string.Empty;

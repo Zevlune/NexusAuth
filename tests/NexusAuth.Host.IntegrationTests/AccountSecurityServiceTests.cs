@@ -82,6 +82,23 @@ public sealed class AccountSecurityServiceTests
         Assert.Null(await harness.Service.FindPendingEnrollmentAsync(Guid.NewGuid(), enrollment.ProtectedSecret));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Pending_enrollment_requires_the_original_security_epoch_before_enabling_a_factor(bool resetDuringAttempt)
+    {
+        var harness = new TotpHarness();
+        var enrollment = await harness.Service.BeginEnrollmentAsync(harness.User.Id);
+        harness.InvalidateDuringAttempt = resetDuringAttempt;
+        var code = TotpAlgorithm.ComputeCode(enrollment.ManualEntryKey, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30);
+
+        var confirmed = await harness.Service.ConfirmEnrollmentAsync(
+            harness.User.Id, enrollment.ProtectedSecret, code, expectedTokenEpoch: 0);
+
+        Assert.Equal(!resetDuringAttempt, confirmed);
+        Assert.Equal(resetDuringAttempt ? 0 : 1, harness.ConfirmedPendingCount);
+    }
+
     [Fact]
     public async Task Successful_password_check_does_not_reset_failures_before_the_login_completes()
     {
@@ -266,6 +283,7 @@ public sealed class AccountSecurityServiceTests
                     case nameof(IUserRepository.FindByIdAsync):
                         return (Guid)args![0]! == User.Id ? User : null;
                     case nameof(IUserRepository.BeginAuthenticationAttemptAsync):
+                        if (InvalidateDuringAttempt) User.InvalidateTokens(DateTimeOffset.UtcNow);
                         return new NoOpAuthenticationAttempt(User);
                     case nameof(IUserRepository.RegisterFailedLoginAsync):
                         var limit = (int)args![1]!;
@@ -292,6 +310,9 @@ public sealed class AccountSecurityServiceTests
                     case nameof(IUserCredentialRepository.FindPendingTotpAsync):
                         return pending.FirstOrDefault(item => item.UserId == (Guid)args![0]!
                             && item.PendingSecretProtected == (string)args[1]!);
+                    case nameof(IUserCredentialRepository.TryConfirmTotpAsync):
+                        return pending.Single(item => item.Id == (Guid)args![0]!)
+                            .ConfirmTotp((string)args![2]!, (long)args[3]!, (DateTimeOffset)args[4]!);
                     default:
                         throw new NotSupportedException(method.Name);
                 }
@@ -314,6 +335,8 @@ public sealed class AccountSecurityServiceTests
         public UserCredential Credential { get; }
         public TotpService Service { get; }
         public int CounterUses { get; private set; }
+        public bool InvalidateDuringAttempt { get; set; }
+        public int ConfirmedPendingCount => pending.Count(item => item.IsEnabled);
         public List<(int Limit, TimeSpan Duration)> FailedLoginRegistrations { get; } = [];
 
         public string CurrentCode() =>

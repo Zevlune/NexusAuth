@@ -14,6 +14,42 @@ public sealed class CredentialConcurrencyTests
     [PostgreSqlTheory]
     [Trait("Category", "PostgreSql")]
     [InlineData(0)]
+    public async Task Pending_totp_cannot_be_enabled_after_a_concurrent_security_change(int _)
+    {
+        var userId = await SeedUserAsync();
+        try
+        {
+            await using var context = CreateContext();
+            var user = await context.Users.SingleAsync(item => item.Id == userId);
+            var now = DateTimeOffset.UtcNow;
+            var pending = UserCredential.CreatePendingTotp(userId, "pending-test-secret", now.AddMinutes(10), now: now);
+            context.Add(pending);
+            await context.SaveChangesAsync();
+
+            await using var resetContext = CreateContext();
+            var resetUser = await resetContext.Users.SingleAsync(item => item.Id == userId);
+            resetUser.InvalidateTokens(now);
+            await resetContext.SaveChangesAsync();
+
+            var credentials = new UserCredentialRepository(new TestUnitOfWork(context));
+            Assert.False(await credentials.TryConfirmTotpAsync(pending.Id, userId, "pending-test-secret", 123, now, user.Version));
+            Assert.False(await context.UserCredentials.AsNoTracking().Where(item => item.Id == pending.Id)
+                .Select(item => item.IsEnabled).SingleAsync());
+
+            await context.Entry(user).ReloadAsync();
+            Assert.True(await credentials.TryConfirmTotpAsync(pending.Id, userId, "pending-test-secret", 123, now, user.Version));
+        }
+        finally
+        {
+            await using var cleanup = CreateContext();
+            await cleanup.UserCredentials.Where(item => item.UserId == userId).ExecuteDeleteAsync();
+            await DeleteUserAsync(userId);
+        }
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(0)]
     public async Task Authentication_attempt_is_non_blocking_per_user(int _)
     {
         var id = await SeedUserAsync();
