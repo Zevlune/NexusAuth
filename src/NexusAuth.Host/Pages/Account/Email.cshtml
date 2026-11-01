@@ -38,7 +38,7 @@
         </div>
         @if (Model.TotpEnabled)
         {
-            <label>身份验证器动态码<input class="password-input" asp-for="TotpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /></label>
+            <label>身份验证器动态码或恢复码<input class="password-input" asp-for="TotpCode" autocomplete="one-time-code" maxlength="80" /></label>
         }
         @if (!unbinding)
         {

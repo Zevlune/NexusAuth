@@ -13,4 +13,5 @@ public interface IUserCredentialRepository : IEntityRepository<UserCredential, G
     Task<bool> TryConfirmTotpAsync(Guid credentialId, Guid userId, string expectedProtectedSecret, long counter, DateTimeOffset now, CancellationToken ct = default);
     Task<bool> TryUseTotpCounterAsync(Guid credentialId, Guid userId, long counter, DateTimeOffset now, CancellationToken ct = default);
     Task<bool> DisableAsync(Guid credentialId, Guid userId, DateTimeOffset now, CancellationToken ct = default);
+    Task<int> DisableAllTotpAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default);
 }

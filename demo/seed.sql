@@ -58,13 +58,13 @@ BEGIN;
 -- ============================================================
 -- API resources with audience mapping
 -- requested resource scopes now use audience directly
--- demo-bff-api -> web BFF APIs
+-- demo-bff-api / demo-profile-api -> web BFF APIs
 -- demo-mobile-api -> mobile bearer APIs
 -- ============================================================
 INSERT INTO api_resources (id, name, display_name, audience, description, is_active, created_at)
 VALUES
     ('10000000-0000-0000-0000-000000000001', 'demo_api', 'Demo API', 'demo-bff-api', 'API scope for web BFF business endpoints', true, NOW()),
-    ('10000000-0000-0000-0000-000000000002', 'profile_api', 'Profile API', 'demo-bff-api', 'Profile-related API scope for web BFF', true, NOW()),
+    ('10000000-0000-0000-0000-000000000002', 'profile_api', 'Profile API', 'demo-profile-api', 'Profile-related API scope for web BFF', true, NOW()),
     ('10000000-0000-0000-0000-000000000003', 'mobile_api', 'Mobile API', 'demo-mobile-api', 'API scope for mobile bearer endpoints', true, NOW())
 ON CONFLICT DO NOTHING;
 
@@ -83,7 +83,7 @@ VALUES
     'A front-end/back-end separated demo client for authorization code + OIDC',
     '["http://localhost:5201/signin-oidc"]',
     '["http://localhost:5200/"]',
-    '["openid","profile","email","phone","offline_access","demo-bff-api"]',
+    '["openid","profile","email","phone","offline_access","demo-bff-api","demo-profile-api"]',
     '["authorization_code","refresh_token"]',
     true,
     true,
@@ -99,7 +99,7 @@ VALUES
     'A front-end/back-end separated demo client for authorization code + OIDC using client_secret_basic',
     '["http://localhost:5301/signin-oidc"]',
     '["http://localhost:5300/"]',
-    '["openid","profile","email","phone","offline_access","demo-bff-api"]',
+    '["openid","profile","email","phone","offline_access","demo-bff-api","demo-profile-api"]',
     '["authorization_code","refresh_token"]',
     true,
     true,
@@ -243,7 +243,7 @@ VALUES
 ON CONFLICT DO NOTHING;
 
 -- ============================================================
--- Optional mapping table seed (no foreign keys required)
+-- Optional mapping table seed
 -- ============================================================
 INSERT INTO client_api_resources (client_id, api_resource_id)
 VALUES

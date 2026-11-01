@@ -56,7 +56,19 @@ public class ScimServicePrincipalCredentialRepository(IUnitOfWork unitOfWork)
     {
         ArgumentNullException.ThrowIfNull(credential);
 
-        _dbContext.Set<ScimServicePrincipalCredential>().Update(credential);
+        // Management callers load the entity through this repository, so it is
+        // already tracked. Let EF persist only the properties changed by the
+        // caller and include the PostgreSQL xmin concurrency token in the WHERE.
         await _unitOfWork.CommitAsync(ct);
+    }
+
+    public async Task RecordUseAsync(Guid id, DateTimeOffset now, CancellationToken ct = default)
+    {
+        now = now.ToUniversalTime();
+        await _dbContext.Set<ScimServicePrincipalCredential>()
+            .Where(credential => credential.Id == id)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(credential => credential.LastUsedAt, (DateTimeOffset?)now),
+                ct);
     }
 }

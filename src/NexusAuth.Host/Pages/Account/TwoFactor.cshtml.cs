@@ -14,6 +14,7 @@ namespace NexusAuth.Host.Pages.Account;
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class TwoFactorModel(
     ITotpService totpService,
+    ISecondFactorRecoveryService recoveryService,
     IUserService userService,
     ISsoSessionService sessionService,
     IOptions<LoginFlowOptions> flowOptions) : PageModel
@@ -51,6 +52,7 @@ public sealed class TwoFactorModel(
     public bool IsEnrollmentPending { get; private set; }
 
     public IReadOnlyList<TotpCredentialSummary> Credentials { get; private set; } = [];
+    public IReadOnlyList<string> RecoveryCodes { get; private set; } = [];
 
     public bool CanDisable => !string.Equals(
         _flowOptions.FindStep(LoginFlowStepTypes.Totp)?.Requirement,
@@ -117,8 +119,23 @@ public sealed class TwoFactorModel(
         ProtectedEnrollmentSecret = string.Empty;
         Code = string.Empty;
         IsEnrollmentPending = false;
+        if (!IsEnabled)
+            RecoveryCodes = await recoveryService.GenerateCodesAsync(userId, ct);
         await LoadCredentialsAsync(ct);
         StatusMessage = "Authenticator verification is enabled.";
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRecoveryCodesAsync(CancellationToken ct)
+    {
+        if (!TryGetUserId(out var userId)) return Challenge(AppWebModule.AuthenticationScheme);
+        var user = await VerifyIdentityAsync(userId, ct);
+        if (user is not null && await totpService.IsEnabledAsync(userId, ct))
+        {
+            RecoveryCodes = await recoveryService.GenerateCodesAsync(userId, ct);
+            StatusMessage = "已生成新的单次恢复码，旧恢复码已失效。请立即保存。";
+        }
+        await LoadCredentialsAsync(ct);
         return Page();
     }
 
@@ -176,7 +193,10 @@ public sealed class TwoFactorModel(
         }
 
         if (await totpService.IsEnabledAsync(userId, ct)
-            && (string.IsNullOrWhiteSpace(totpCode) || !await totpService.ValidateAsync(userId, totpCode, ct)))
+            && (string.IsNullOrWhiteSpace(totpCode)
+                || !(totpCode.Length == 6 && totpCode.All(char.IsAsciiDigit)
+                    ? await totpService.ValidateAsync(userId, totpCode, ct)
+                    : await recoveryService.RedeemAsync(userId, totpCode, ct))))
         {
             ErrorMessage = "动态验证码无效或已经使用。";
             return null;

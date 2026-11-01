@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using NexusAuth.Application.Users;
 using NexusAuth.Workbench.Api.Models.Requests;
 
@@ -39,6 +40,23 @@ public sealed class UsersController(IUserManagementService userManagementService
     [HttpPost("{id:guid}/revoke-tokens")]
     public Task<IActionResult> RevokeTokens(Guid id, CancellationToken ct = default)
         => ExecuteAsync(async () => { await userManagementService.RevokeTokensAsync(id, ct); return NoContent(); }, ct);
+
+    [HttpPost("{id:guid}/reset-second-factor")]
+    public Task<IActionResult> ResetSecondFactor(
+        Guid id,
+        [FromBody] ResetSecondFactorRequest request,
+        [FromServices] ISecondFactorRecoveryService recoveryService,
+        CancellationToken ct = default)
+    {
+        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var actorId) || actorId == Guid.Empty)
+            return Task.FromResult<IActionResult>(Forbid());
+
+        return ExecuteAsync(async () =>
+        {
+            await recoveryService.ResetAsync(id, actorId, request.Reason, ct);
+            return NoContent();
+        }, ct);
+    }
 
     private async Task<IActionResult> ExecuteAsync(Func<Task<IActionResult>> action, CancellationToken ct)
     {

@@ -14,6 +14,8 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
 
     public bool IsActive { get; private set; }
 
+    public bool IsSystemManaged { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     /// <summary>
@@ -38,6 +40,11 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow,
         };
+    }
+
+    public void MarkAsSystemManaged()
+    {
+        IsSystemManaged = true;
     }
 
     public void Update(

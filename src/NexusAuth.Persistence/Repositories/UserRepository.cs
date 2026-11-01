@@ -3,6 +3,7 @@ using Luck.Framework.UnitOfWorks;
 using Microsoft.EntityFrameworkCore;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Repositories;
+using Npgsql;
 
 namespace NexusAuth.Persistence.Repositories;
 
@@ -43,6 +44,56 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
     public async Task<User?> FindByIdAsync(Guid id, CancellationToken ct = default)
     {
         return await FindAsync(id);
+    }
+
+    public async Task<IUserAuthenticationAttempt?> BeginAuthenticationAttemptAsync(
+        Guid userId,
+        CancellationToken ct = default)
+    {
+        var connectionString = _dbContext.Database.GetConnectionString()
+            ?? _dbContext.Database.GetDbConnection().ConnectionString;
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new InvalidOperationException("The authentication lock requires a PostgreSQL connection string.");
+
+        var connection = new NpgsqlConnection(connectionString);
+        var opened = false;
+        try
+        {
+            await connection.OpenAsync(ct);
+            opened = true;
+            if (!await TryAcquireAuthenticationLockAsync(connection, userId, ct))
+            {
+                await UserAuthenticationAttempt.ReleaseAsync(connection, userId);
+                return null;
+            }
+
+            var user = await ReloadUserAsync(userId, ct);
+            if (user is null)
+            {
+                await UserAuthenticationAttempt.ReleaseAsync(connection, userId);
+                return null;
+            }
+
+            return new UserAuthenticationAttempt(connection, userId, user);
+        }
+        catch
+        {
+            if (opened)
+                await UserAuthenticationAttempt.ReleaseAsync(connection, userId);
+            else
+            {
+                try
+                {
+                    await connection.DisposeAsync();
+                }
+                catch
+                {
+                    // Preserve the original open/cancellation exception.
+                }
+            }
+
+            throw;
+        }
     }
 
     public async Task<(IReadOnlyList<User> Items, int Total)> GetScimPagedAsync(
@@ -109,7 +160,12 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
 
     public async Task UpdateAsync(User user, CancellationToken ct = default)
     {
-        Update(user);
+        ArgumentNullException.ThrowIfNull(user);
+
+        // Callers load users through this repository, so EF is already
+        // tracking the entity. Do not mark every column modified: a stale
+        // snapshot must be rejected by the xmin concurrency token instead of
+        // overwriting a newer security change.
         await _unitOfWork.CommitAsync(ct);
     }
 
@@ -174,6 +230,51 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
                     .SetProperty(u => u.LockedUntil, (DateTimeOffset?)null)
                     .SetProperty(u => u.UpdatedAt, now),
                 ct);
+    }
+
+    public async Task<bool> TryResetLoginFailuresAsync(
+        Guid userId,
+        uint expectedVersion,
+        DateTimeOffset now,
+        CancellationToken ct = default)
+    {
+        now = now.ToUniversalTime();
+        var affected = await _dbContext.Set<User>()
+            .Where(user => user.Id == userId
+                && user.IsActive
+                && (user.LockedUntil == null || user.LockedUntil <= now)
+                && user.Version == expectedVersion)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(user => user.FailedLoginAttempts, 0)
+                    .SetProperty(user => user.LockedUntil, (DateTimeOffset?)null)
+                    .SetProperty(user => user.UpdatedAt, now),
+                ct);
+        return affected == 1;
+    }
+
+    private async Task<User?> ReloadUserAsync(Guid userId, CancellationToken ct)
+    {
+        var tracked = _dbContext.Set<User>().Local.FirstOrDefault(user => user.Id == userId);
+        if (tracked is not null)
+        {
+            await _dbContext.Entry(tracked).ReloadAsync(ct);
+            return _dbContext.Entry(tracked).State == EntityState.Detached ? null : tracked;
+        }
+
+        return await _dbContext.Set<User>().SingleOrDefaultAsync(user => user.Id == userId, ct);
+    }
+
+    private static async Task<bool> TryAcquireAuthenticationLockAsync(
+        NpgsqlConnection connection,
+        Guid userId,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = UserAuthenticationAttempt.TryLockSql;
+        command.Parameters.AddWithValue("user_id", userId.ToString("D"));
+        command.Parameters.AddWithValue("seed", UserAuthenticationAttempt.AdvisoryLockSeed);
+        return (bool)(await command.ExecuteScalarAsync(ct) ?? false);
     }
 
 }

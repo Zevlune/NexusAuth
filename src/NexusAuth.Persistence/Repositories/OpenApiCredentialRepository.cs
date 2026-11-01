@@ -17,5 +17,23 @@ public sealed class OpenApiCredentialRepository(IUnitOfWork unitOfWork)
     public async Task<OpenApiCredential?> FindByIdAsync(Guid id, CancellationToken ct = default) => await FindAsync(id);
     public async Task<IReadOnlyList<OpenApiCredential>> GetAllAsync(CancellationToken ct = default) => await FindAll().OrderByDescending(item => item.CreatedAt).ToListAsync(ct);
     public async Task AddAsync(OpenApiCredential credential, CancellationToken ct = default) { dbContext.Add(credential); await unitOfWork.CommitAsync(ct); }
-    public async Task UpdateAsync(OpenApiCredential credential, CancellationToken ct = default) { dbContext.Set<OpenApiCredential>().Update(credential); await unitOfWork.CommitAsync(ct); }
+    public async Task UpdateAsync(OpenApiCredential credential, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(credential);
+
+        // Management callers load the entity through this repository, so it is
+        // already tracked. Let EF persist only the properties changed by the
+        // caller and include the PostgreSQL xmin concurrency token in the WHERE.
+        await unitOfWork.CommitAsync(ct);
+    }
+
+    public async Task RecordUseAsync(Guid id, DateTimeOffset now, CancellationToken ct = default)
+    {
+        now = now.ToUniversalTime();
+        await dbContext.Set<OpenApiCredential>()
+            .Where(credential => credential.Id == id)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(credential => credential.LastUsedAt, (DateTimeOffset?)now),
+                ct);
+    }
 }

@@ -394,11 +394,12 @@ const ApiResourceManagementPage = () => {
           <Form.FormItem
             label={audienceLabel}
             name="audience"
-            help="令牌中的 aud 值，用于 API 校验访问令牌面向的资源。"
+            help="令牌中的 aud 值，全局唯一，创建后不可修改。"
             rules={[{ required: true, message: '请输入 Audience', type: 'error' }]}
           >
             <Input
               value={formData.audience}
+              disabled={Boolean(editingResource)}
               placeholder="如: my-api"
               onChange={(value) => setFormData((prev) => ({ ...prev, audience: value }))}
             />
@@ -495,9 +496,9 @@ const ApiResourceManagementPage = () => {
                 ]} />
 
                 <div className="management-card__footer api-resource-card__footer">
-                  <Button size="small" variant="outline" icon={<EditIcon />} onClick={() => void handleEdit(resource)}>编辑</Button>
+                  <Button size="small" variant="outline" disabled={resource.isSystemManaged} icon={<EditIcon />} onClick={() => void handleEdit(resource)}>{resource.isSystemManaged ? '配置托管' : '编辑'}</Button>
                   <Button size="small" variant="outline" icon={<ViewListIcon />} onClick={() => void handleView(resource)}>查看详情</Button>
-                  <Button size="small" variant="outline" theme="danger" icon={<DeleteIcon />} onClick={() => handleDelete(resource)}>删除</Button>
+                  <Button size="small" variant="outline" theme="danger" disabled={resource.isSystemManaged} icon={<DeleteIcon />} onClick={() => handleDelete(resource)}>删除</Button>
                 </div>
               </Card>
             ))}

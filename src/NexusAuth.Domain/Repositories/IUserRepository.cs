@@ -16,6 +16,10 @@ public interface IUserRepository : IAggregateRootRepository<User, Guid>, IScoped
 
     Task<User?> FindByIdAsync(Guid id, CancellationToken ct = default);
 
+    Task<IUserAuthenticationAttempt?> BeginAuthenticationAttemptAsync(
+        Guid userId,
+        CancellationToken ct = default);
+
     /// <summary>
     /// SCIM listing. System accounts are never returned to provisioning clients.
     /// </summary>
@@ -49,5 +53,11 @@ public interface IUserRepository : IAggregateRootRepository<User, Guid>, IScoped
         CancellationToken ct = default);
 
     Task ResetLoginFailuresAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default);
+
+    Task<bool> TryResetLoginFailuresAsync(
+        Guid userId,
+        uint expectedVersion,
+        DateTimeOffset now,
+        CancellationToken ct = default);
 
 }

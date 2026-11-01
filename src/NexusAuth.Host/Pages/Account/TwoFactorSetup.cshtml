@@ -1,0 +1,28 @@
+@page "/account/two-factor-setup"
+@model NexusAuth.Host.Pages.Account.TwoFactorSetupModel
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="referrer" content="no-referrer" /><title>设置双重验证 · NexusAuth</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;background:#f4f6fa;color:#182235;margin:0}main{max-width:520px;margin:8vh auto;padding:32px;background:white;border-radius:16px}input,button{font:inherit;padding:10px;margin:8px 0}button{background:#315ddd;color:white;border:0;border-radius:6px}code{overflow-wrap:anywhere}li{font-family:monospace}.error{color:#b42318}</style></head>
+<body><main>
+@if (Model.RecoveryCodes.Count > 0)
+{
+    <h1>请保存恢复码</h1><p>绑定成功。每个恢复码只能使用一次，请保存在安全的地方；丢失身份验证器时可代替动态验证码使用。</p>
+    <ul>@foreach (var code in Model.RecoveryCodes) { <li>@code</li> }</ul>
+    <a href="@Model.ContinueUrl">我已保存，继续</a>
+}
+else
+{
+    <h1>设置双重验证</h1><p>完成身份验证器绑定后才能登录。</p>
+    @if (Model.ErrorMessage is not null) { <p class="error" role="alert">@Model.ErrorMessage</p> }
+    @if (Model.Enrollment is { } enrollment)
+    {
+        <p>在身份验证器中输入密钥 <code>@enrollment.ManualEntryKey</code>，或<a href="@enrollment.OtpauthUri">打开身份验证器</a>。</p>
+        <form method="post"><label for="Code">六位动态验证码</label><br /><input asp-for="Code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /><br /><button type="submit">确认绑定并登录</button></form>
+    }
+    <p><a href="/account/login">返回登录</a></p>
+}
+</main></body></html>

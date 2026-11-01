@@ -7,4 +7,5 @@ public record ApiResourceDto(
     string Audience,
     string? Description,
     bool IsActive,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    bool IsSystemManaged = false);

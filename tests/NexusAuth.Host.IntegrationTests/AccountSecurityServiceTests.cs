@@ -265,6 +265,8 @@ public sealed class AccountSecurityServiceTests
                 {
                     case nameof(IUserRepository.FindByIdAsync):
                         return (Guid)args![0]! == User.Id ? User : null;
+                    case nameof(IUserRepository.BeginAuthenticationAttemptAsync):
+                        return new NoOpAuthenticationAttempt(User);
                     case nameof(IUserRepository.RegisterFailedLoginAsync):
                         var limit = (int)args![1]!;
                         var duration = (TimeSpan)args[2]!;
@@ -349,6 +351,7 @@ public sealed class AccountSecurityServiceTests
                     nameof(IUserRepository.FindByUsernameAsync) => (string)args![0]! == User.Username ? User : null,
                     nameof(IUserRepository.FindByEmailAsync) => string.Equals((string?)args![0], User.Email, StringComparison.OrdinalIgnoreCase) ? User : null,
                     nameof(IUserRepository.FindByPhoneNumberAsync) => (string?)args![0] == User.PhoneNumber ? User : null,
+                    nameof(IUserRepository.BeginAuthenticationAttemptAsync) => new NoOpAuthenticationAttempt(User),
                     nameof(IUserRepository.RegisterFailedLoginAsync) => User,
                     _ => null,
                 };
@@ -414,6 +417,13 @@ public sealed class AccountSecurityServiceTests
         public int TotpValidations { get; private set; }
         public string LastCode => CodeRegex.Match(Sender.Messages[^1]).Groups[1].Value;
         public string OtherCode() => LastCode == "000000" ? "000001" : "000000";
+    }
+
+    private sealed class NoOpAuthenticationAttempt(User user) : IUserAuthenticationAttempt
+    {
+        public User User { get; } = user;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class RecordingSender : IEmailSender

@@ -12,4 +12,5 @@ public interface IOpenApiCredentialRepository : IEntityRepository<OpenApiCredent
     Task<IReadOnlyList<OpenApiCredential>> GetAllAsync(CancellationToken ct = default);
     Task AddAsync(OpenApiCredential credential, CancellationToken ct = default);
     Task UpdateAsync(OpenApiCredential credential, CancellationToken ct = default);
+    Task RecordUseAsync(Guid id, DateTimeOffset now, CancellationToken ct = default);
 }

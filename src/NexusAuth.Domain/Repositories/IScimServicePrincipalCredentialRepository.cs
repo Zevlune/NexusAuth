@@ -26,4 +26,9 @@ public interface IScimServicePrincipalCredentialRepository
     Task UpdateAsync(
         ScimServicePrincipalCredential credential,
         CancellationToken ct = default);
+
+    Task RecordUseAsync(
+        Guid id,
+        DateTimeOffset now,
+        CancellationToken ct = default);
 }

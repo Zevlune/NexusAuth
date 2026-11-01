@@ -11,8 +11,6 @@ public class ClientService(
     IOAuthClientSecretRepository clientSecretRepository,
     IClientApiResourceRepository clientApiResourceRepository,
     IRefreshTokenRepository refreshTokenRepository,
-    IAuthorizationCodeRepository authorizationCodeRepository,
-    IDeviceAuthorizationRepository deviceAuthorizationRepository,
     IServiceProvider serviceProvider,
     ILogger<ClientService> logger) : IClientService
 {
@@ -233,6 +231,7 @@ public class ClientService(
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+        HashSet<Guid>? associatedResourceIds = null;
 
         foreach (var requestedScope in requestedScopes)
         {
@@ -245,6 +244,17 @@ public class ClientService(
             var resource = await apiResourceRepository.FindByAudienceAsync(requestedScope, ct);
             if (resource is null || !resource.IsActive)
                 return ScopeValidationResult.Failure("invalid_scope", $"Scope '{requestedScope}' does not correspond to an active resource.");
+
+            associatedResourceIds ??= (await clientApiResourceRepository
+                .GetResourcesByClientIdAsync(client.Id, ct))
+                .Select(associatedResource => associatedResource.Id)
+                .ToHashSet();
+            if (!associatedResourceIds.Contains(resource.Id))
+            {
+                return ScopeValidationResult.Failure(
+                    "invalid_scope",
+                    $"Scope '{requestedScope}' is not assigned to this client.");
+            }
         }
 
         // 中文注释：access token 只能携带一个资源 audience（TokenService.ResolveAudienceAsync 的规则）。
@@ -342,6 +352,7 @@ public class ClientService(
     public async Task<ClientDto> UpdateAsync(Guid id, UpdateClientRequest request, CancellationToken ct = default)
     {
         var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new KeyNotFoundException($"Client with id {id} not found.");
+        EnsureNotSystemManaged(client);
         var apiResourceIds = request.ApiResourceIds is null
             ? null
             : NormalizeApiResourceIds(request.ApiResourceIds);
@@ -411,6 +422,7 @@ public class ClientService(
     public async Task<ClientMutationResultDto> GenerateCredentialAsync(Guid id, GenerateClientCredentialRequest request, CancellationToken ct = default)
     {
         var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new KeyNotFoundException($"Client with id {id} not found.");
+        EnsureNotSystemManaged(client);
         var tokenEndpointAuthMethod = ResolveCredentialAuthMethod(client, request.TokenEndpointAuthMethod);
         EnsureSharedSecretCapacity(client, tokenEndpointAuthMethod);
         var generatedCredential = GenerateCredential(client.Id, tokenEndpointAuthMethod, request.AutoGenerateJwks, request.Description);
@@ -435,6 +447,7 @@ public class ClientService(
     public async Task<ClientMutationResultDto> ResetCredentialAsync(Guid id, GenerateClientCredentialRequest request, CancellationToken ct = default)
     {
         var client = await clientRepository.GetByIdAsync(id, ct) ?? throw new KeyNotFoundException($"Client with id {id} not found.");
+        EnsureNotSystemManaged(client);
         var tokenEndpointAuthMethod = ResolveCredentialAuthMethod(client, request.TokenEndpointAuthMethod);
         EnsureCredentialGenerationSupported(tokenEndpointAuthMethod);
 
@@ -471,13 +484,10 @@ public class ClientService(
         var client = await clientRepository.GetByIdAsync(id, ct);
         if (client is null)
             throw new KeyNotFoundException($"Client with id {id} not found.");
+        EnsureNotSystemManaged(client);
 
-        // 中文注释：refresh token / 授权码 / 设备码都按 client_id 字符串关联且没有外键，
-        // 删除客户端前先让这些授权失效，避免以相同 client_id 重建客户端时旧授权复活。
-        await refreshTokenRepository.RevokeAllForClientAsync(client.ClientId, ct);
-        await authorizationCodeRepository.InvalidateUnusedForClientAsync(client.ClientId, ct);
-        await deviceAuthorizationRepository.DenyOutstandingForClientAsync(client.ClientId, ct);
-        await clientApiResourceRepository.RemoveByClientIdAsync(client.Id, ct);
+        // 中文注释：授权、设备授权、资源映射和客户端删除由 repository 在同一事务中完成，
+        // 避免清理成功但客户端删除失败，或删除成功但旧授权仍可复活。
         await clientRepository.DeleteAsync(client, ct);
 
         logger.LogLuckInformation(
@@ -655,9 +665,10 @@ public class ClientService(
         IReadOnlyCollection<Guid> apiResourceIds,
         CancellationToken ct)
     {
-        var allowedScopes = standardScopes?
+        var requestedScopes = standardScopes?
             .Where(scope => !string.IsNullOrWhiteSpace(scope))
             .Select(scope => scope.Trim())
+            .Distinct(StringComparer.Ordinal)
             .ToList() ?? [];
 
         var resources = await apiResourceRepository.FindByIdsAsync(apiResourceIds, ct);
@@ -666,7 +677,25 @@ public class ClientService(
         if (missingResourceIds.Count > 0)
             throw new KeyNotFoundException($"Api resource with id {missingResourceIds[0]} not found.");
 
-        allowedScopes.AddRange(resources.Select(resource => resource.Audience));
+        if (resources.Any(resource => resource.IsSystemManaged))
+            throw new WorkbenchBusinessConflictException("Resources managed by Workbench configuration cannot be assigned through client management.");
+
+        var resourceAudiences = resources
+            .Select(resource => resource.Audience)
+            .ToHashSet(StringComparer.Ordinal);
+        var invalidScope = requestedScopes.FirstOrDefault(scope =>
+            !OidcScopes.IsStandard(scope) && !resourceAudiences.Contains(scope));
+        if (invalidScope is not null)
+        {
+            throw new ArgumentException(
+                $"Scope '{invalidScope}' must be a standard OIDC scope or the audience of a selected API resource.",
+                nameof(standardScopes));
+        }
+
+        var allowedScopes = requestedScopes
+            .Where(OidcScopes.IsStandard)
+            .ToList();
+        allowedScopes.AddRange(resourceAudiences);
 
         return [.. allowedScopes.Distinct(StringComparer.Ordinal)];
     }
@@ -711,7 +740,8 @@ public class ClientService(
             client.RequirePkce,
             client.IsActive,
             client.CreatedAt,
-            client.RequireConsent)
+            client.RequireConsent,
+            client.IsSystemManaged)
         {
             ApiResourceIds = [.. apiResourceIds],
         };
@@ -724,6 +754,12 @@ public class ClientService(
             secret.Type,
             secret.IsActive,
             secret.CreatedAt);
+    }
+
+    private static void EnsureNotSystemManaged(OAuthClient client)
+    {
+        if (client.IsSystemManaged)
+            throw new WorkbenchBusinessConflictException($"Client '{client.ClientId}' is managed by Workbench configuration (由 Workbench 配置托管).");
     }
 
     private sealed record GeneratedCredential(

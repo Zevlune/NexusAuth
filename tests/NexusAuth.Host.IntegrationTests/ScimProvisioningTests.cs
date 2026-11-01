@@ -256,6 +256,9 @@ public sealed class InMemoryScimUserRepository : IUserRepository
         }
     }
 
+    public Task<IUserAuthenticationAttempt?> BeginAuthenticationAttemptAsync(Guid userId, CancellationToken ct = default) =>
+        Task.FromResult<IUserAuthenticationAttempt?>(null);
+
     public Task<(IReadOnlyList<User> Items, int Total)> GetScimPagedAsync(string? userName, string? externalId,
         bool? isActive, string? email, int startIndex, int count, CancellationToken ct = default)
     {
@@ -293,6 +296,9 @@ public sealed class InMemoryScimUserRepository : IUserRepository
         DateTimeOffset now, CancellationToken ct = default) => throw new NotSupportedException();
 
     public Task ResetLoginFailuresAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
+    public Task<bool> TryResetLoginFailuresAsync(Guid userId, uint expectedVersion, DateTimeOffset now, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
     public User? Find(Guid primaryKey) => Snapshot().FirstOrDefault(user => user.Id == primaryKey);

@@ -49,6 +49,8 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
 
     public bool IsActive { get; private set; }
 
+    public bool IsSystemManaged { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     /// <summary>
@@ -109,6 +111,11 @@ public class OAuthClient : AggregateRootWithIdentity<Guid>
         };
 
         return client;
+    }
+
+    public void MarkAsSystemManaged()
+    {
+        IsSystemManaged = true;
     }
 
     public static OAuthClient Create(

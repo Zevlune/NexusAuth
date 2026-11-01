@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 
 namespace NexusAuth.Persistence.Configurations;
@@ -84,6 +85,12 @@ public class AuthorizationCodeConfiguration : IEntityTypeConfiguration<Authoriza
             .HasDatabaseName("ix_authorization_codes_consume");
         builder.HasIndex(a => a.ExpiresAt)
             .HasDatabaseName("ix_authorization_codes_expires_at");
+
+        builder.HasOne<OAuthClient>()
+            .WithMany()
+            .HasPrincipalKey(client => client.ClientId)
+            .HasForeignKey(code => code.ClientId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.ToTable(table => table.HasCheckConstraint(
             "ck_authorization_codes_code_hash_base64url",

@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using NexusAuth.Application.Services.ExternalIdentity;
+using NexusAuth.Domain.AggregateRoots.ApiResources;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
@@ -39,6 +40,10 @@ public sealed class OidcHardeningPostgreSqlTests
         var other = $"other-{Guid.NewGuid():N}";
         var user = Guid.NewGuid();
         var anotherUser = Guid.NewGuid();
+        var targetClient = OAuthClient.Create(target, "Target client");
+        var otherClient = OAuthClient.Create(other, "Other client");
+        var targetResource = ApiResource.Create("target-resource", "Target resource", $"target-{Guid.NewGuid():N}.api");
+        var otherResource = ApiResource.Create("other-resource", "Other resource", $"other-{Guid.NewGuid():N}.api");
 
         var targetTokens = new[] { RefreshToken.Create(target, user, OidcScopes.OpenId).Entity, RefreshToken.Create(target, user, OidcScopes.OpenId).Entity };
         var otherUserToken = RefreshToken.Create(target, anotherUser, OidcScopes.OpenId).Entity;
@@ -49,14 +54,15 @@ public sealed class OidcHardeningPostgreSqlTests
         var approved = DeviceAuthorization.Create(target, OidcScopes.OpenId).Entity;
         approved.Approve(user);
         var otherDevice = DeviceAuthorization.Create(other, OidcScopes.OpenId).Entity;
-        var targetClientId = Guid.NewGuid();
-        var otherClientId = Guid.NewGuid();
+        var targetClientId = targetClient.Id;
+        var otherClientId = otherClient.Id;
+        context.AddRange(targetClient, otherClient, targetResource, otherResource);
         context.AddRange(targetTokens);
         context.AddRange(otherUserToken, otherClientToken, unusedCode, otherCode, pending, approved, otherDevice);
         context.AddRange(
-            ClientApiResource.Create(targetClientId, Guid.NewGuid()),
-            ClientApiResource.Create(targetClientId, Guid.NewGuid()),
-            ClientApiResource.Create(otherClientId, Guid.NewGuid()));
+            ClientApiResource.Create(targetClientId, targetResource.Id),
+            ClientApiResource.Create(targetClientId, otherResource.Id),
+            ClientApiResource.Create(otherClientId, otherResource.Id));
         await context.SaveChangesAsync();
         context.ChangeTracker.Clear();
 
@@ -176,6 +182,7 @@ public sealed class OidcHardeningPostgreSqlTests
         var expired = now.AddDays(-10);
         var retained = now.AddDays(-1);
         var user = Guid.NewGuid();
+        var cleanupClient = OAuthClient.Create("cleanup-client", "Cleanup client");
 
         var expiredCode = AuthorizationCode.Create("cleanup-client", user, "https://client.example/cb", OidcScopes.OpenId).Entity;
         var retainedCode = AuthorizationCode.Create("cleanup-client", user, "https://client.example/cb", OidcScopes.OpenId).Entity;
@@ -225,6 +232,7 @@ public sealed class OidcHardeningPostgreSqlTests
         Set(context, retainedAudit, value => value.OccurredAt, now.AddDays(-179));
 
         context.AddRange(
+            cleanupClient,
             expiredCode,
             retainedCode,
             expiredRefresh,
@@ -259,7 +267,9 @@ public sealed class OidcHardeningPostgreSqlTests
         var deleteStatements = statements
             .Where(statement => statement.Contains("DELETE FROM", StringComparison.Ordinal))
             .ToArray();
-        Assert.Equal(7, deleteStatements.Length);
+        // Other integration tests may leave additional expired rows, requiring
+        // more than one bounded batch for a table.
+        Assert.InRange(deleteStatements.Length, 7, 70);
         Assert.All(deleteStatements, statement => Assert.Contains("LIMIT", statement, StringComparison.Ordinal));
         Assert.False(await context.AuthorizationCodes.AnyAsync(value => value.Id == expiredCode.Id));
         Assert.True(await context.AuthorizationCodes.AnyAsync(value => value.Id == retainedCode.Id));

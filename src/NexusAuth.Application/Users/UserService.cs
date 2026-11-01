@@ -84,15 +84,38 @@ public class UserService(
 
         user ??= await userRepository.FindByPhoneNumberAsync(identifier, ct);
 
-        if (user is null || !user.IsActive)
+        if (user is null)
         {
-            // Keep unknown/inactive accounts on the same expensive password
-            // verification path so response timing does not reveal usernames.
             BCrypt.Net.BCrypt.Verify(rawPassword, DummyPasswordHash);
 
             logger.LogLuckWarning(
                 "User authentication failed. Reason={ReasonCode} Outcome={Outcome}",
-                ["UserNotFoundOrInactive", "UserNotFoundOrInactive"]);
+                ["UserNotFound", "UserNotFound"]);
+
+            return null;
+        }
+
+        // Hold the per-account slot through the password check and failure
+        // counter update. A burst must fail fast instead of queueing on a DB
+        // lock or racing with a successful-login reset.
+        await using var attempt = await userRepository.BeginAuthenticationAttemptAsync(user.Id, ct);
+        if (attempt is null)
+        {
+            logger.LogLuckWarning(
+                "User authentication failed. UserId={UserId} Reason={ReasonCode} Outcome={Outcome}",
+                [user.Id, "AuthenticationBusy", "AuthenticationBusy"]);
+
+            return null;
+        }
+
+        user = attempt.User;
+        if (!user.IsActive)
+        {
+            BCrypt.Net.BCrypt.Verify(rawPassword, DummyPasswordHash);
+
+            logger.LogLuckWarning(
+                "User authentication failed. UserId={UserId} Reason={ReasonCode} Outcome={Outcome}",
+                [user.Id, "UserInactive", "UserInactive"]);
 
             return null;
         }
@@ -151,6 +174,10 @@ public class UserService(
 
         var user = await userRepository.FindByIdAsync(userId, ct)
             ?? throw new InvalidOperationException("User was not found.");
+
+        await using var attempt = await userRepository.BeginAuthenticationAttemptAsync(user.Id, ct)
+            ?? throw new InvalidOperationException(AccountLockedMessage);
+        user = attempt.User;
 
         if (!user.IsActive)
             throw new InvalidOperationException("Inactive users cannot change their password.");

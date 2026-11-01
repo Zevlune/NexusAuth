@@ -26,6 +26,9 @@ public sealed class OpenApiCredentialConfiguration : IEntityTypeConfiguration<Op
         builder.Property(item => item.LastUsedAt).HasColumnName("last_used_at");
         builder.Property(item => item.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(item => item.RevokedAt).HasColumnName("revoked_at");
+        // PostgreSQL's system xmin column detects a management update racing
+        // with a revoke or another edit without adding a regular schema column.
+        builder.Property<uint>("xmin").IsRowVersion();
         builder.HasIndex(item => item.Name).IsUnique().HasDatabaseName("ix_open_api_credentials_name");
         builder.HasIndex(item => item.TokenHash).IsUnique().HasDatabaseName("ix_open_api_credentials_token_hash");
         builder.ToTable(table => table.HasCheckConstraint("ck_open_api_credentials_target_type", "target_type IN ('application', 'service_resource')"));

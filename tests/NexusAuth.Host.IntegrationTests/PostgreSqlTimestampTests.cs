@@ -2,6 +2,7 @@ using Luck.Framework.UnitOfWorks;
 using Microsoft.EntityFrameworkCore;
 using NexusAuth.Application.Services.OpenApi;
 using NexusAuth.Application.Services.Scim;
+using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Persistence.Repositories;
@@ -166,10 +167,11 @@ public sealed class PostgreSqlTimestampTests
         var blacklist = new TokenBlacklistRepository(unitOfWork);
         var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(offsetHours));
         var userId = Guid.NewGuid();
+        var client = OAuthClient.Create("timestamp-client", "Timestamp client");
         var code = AuthorizationCode.Create("timestamp-client", userId, "https://client.example.test/callback", OidcScopes.OpenId, authenticatedAt: now).Entity;
         var token = RefreshToken.Create("timestamp-client", userId, OidcScopes.OpenId).Entity;
         var entry = TokenBlacklistEntry.Create(Guid.NewGuid().ToString("N"), "access_token", userId.ToString(), now.AddMinutes(1));
-        context.AddRange(code, token, entry);
+        context.AddRange(client, code, token, entry);
         await context.SaveChangesAsync();
         context.ChangeTracker.Clear();
 

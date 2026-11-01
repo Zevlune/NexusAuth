@@ -141,6 +141,7 @@ public class InMemoryCredentialRepository : DispatchProxy
             "FindByTokenHashAsync" => Task.FromResult(store.FirstOrDefault(item => tokenHash(item) == (string)args[0]!)),
             "GetAllAsync" => Task.FromResult<IReadOnlyList<TEntity>>(store.ToArray()),
             "AddAsync" => AddAsync(store, (TEntity)args[0]!),
+            "RecordUseAsync" => Task.CompletedTask,
             "UpdateAsync" => Task.CompletedTask,
             _ => throw new NotSupportedException(method),
         };

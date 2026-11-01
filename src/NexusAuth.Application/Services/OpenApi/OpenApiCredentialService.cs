@@ -10,10 +10,10 @@ public sealed class OpenApiCredentialService(IOpenApiCredentialRepository creden
     {
         if (string.IsNullOrWhiteSpace(rawToken)) return false;
         var normalizedTargetType = OpenApiCredential.NormalizeTargetType(targetType);
+        var now = DateTimeOffset.UtcNow;
         var credential = await credentialRepository.FindByTokenHashAsync(OpenApiCredential.Hash(rawToken), ct);
-        if (credential is null || !credential.CanAuthenticate(normalizedTargetType, OpenApiCredential.GetReadScope(normalizedTargetType))) return false;
-        credential.RecordUse();
-        await credentialRepository.UpdateAsync(credential, ct);
+        if (credential is null || !credential.CanAuthenticate(normalizedTargetType, OpenApiCredential.GetReadScope(normalizedTargetType), now)) return false;
+        await credentialRepository.RecordUseAsync(credential.Id, now, ct);
         return true;
     }
 

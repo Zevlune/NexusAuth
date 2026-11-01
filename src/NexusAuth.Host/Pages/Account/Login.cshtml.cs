@@ -23,6 +23,7 @@ public class LoginModel(
     ILoginAuditService loginAuditService,
     ISecurityPolicyService securityPolicyService,
     ITotpService totpService,
+    ISecondFactorRecoveryService recoveryService,
     IOAuthClientRepository clientRepository,
     ILogger<LoginModel> logger,
     ILoginFlowStateProtector flowStateProtector,
@@ -186,11 +187,9 @@ public class LoginModel(
                 StringComparison.OrdinalIgnoreCase);
             if (totpRequired && !totpEnabled)
             {
-                await RecordLoginAsync(user.Id, false, "TotpEnrollmentRequired");
-                ErrorMessage = "This account must configure an authenticator before it can sign in.";
-                await TryExtractClientNameAsync();
-                RefreshSliderCaptchaChallenge();
-                return Page();
+                return await TotpEnrollmentFlow.StartAsync(HttpContext, user, GetLocalReturnUrl(ReturnUrl),
+                    _flowOptions.AllowRememberMe && RememberMe, EmailLogin ? "email" : "pwd",
+                    _flowOptions, totpService, flowStateProtector, HttpContext.RequestAborted);
             }
 
             if (totpEnabled)
@@ -203,7 +202,7 @@ public class LoginModel(
                         ReturnUrl,
                         _flowOptions.AllowRememberMe && RememberMe,
                         DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                        EmailLogin ? "email" : "pwd"),
+                        EmailLogin ? "email" : "pwd", TokenEpoch: user.TokenInvalidBefore?.UtcTicks ?? 0),
                     TimeSpan.FromMinutes(_flowOptions.PendingStateLifetimeMinutes));
                 Password = string.Empty;
                 await TryExtractClientNameAsync();
@@ -260,7 +259,8 @@ public class LoginModel(
         }
 
         var user = await userService.FindByIdAsync(flowState.UserId, HttpContext.RequestAborted);
-        if (user is null || !user.IsActive || !securityPolicyService.CheckUser(user).IsSuccess)
+        if (user is null || !user.IsActive || !securityPolicyService.CheckUser(user).IsSuccess
+            || flowState.TokenEpoch is null || flowState.TokenEpoch != (user.TokenInvalidBefore?.UtcTicks ?? 0))
         {
             await RecordLoginAsync(flowState.UserId, false, "UserUnavailable");
             RequiresTotp = false;
@@ -282,7 +282,11 @@ public class LoginModel(
             return Page();
         }
 
-        if (!await totpService.ValidateAsync(user.Id, TotpCode, HttpContext.RequestAborted))
+        var isRecoveryCode = TotpCode.Length != 6 || !TotpCode.All(char.IsAsciiDigit);
+        var factorValid = isRecoveryCode
+            ? await recoveryService.RedeemAsync(user.Id, TotpCode, HttpContext.RequestAborted)
+            : await totpService.ValidateAsync(user.Id, TotpCode, HttpContext.RequestAborted);
+        if (!factorValid)
         {
             await RecordLoginAsync(user.Id, false, "InvalidTotp");
             TotpCode = string.Empty;
@@ -290,8 +294,15 @@ public class LoginModel(
             return Page();
         }
 
+        // Factor verification reloads the tracked user under the account lock.
+        // A reset between the initial flow check and that reload must not make
+        // an old primary-factor proof valid against the new user version.
+        if (flowState.TokenEpoch != (user.TokenInvalidBefore?.UtcTicks ?? 0))
+            return Redirect("/account/login");
+
         var authenticatedAt = DateTimeOffset.FromUnixTimeSeconds(flowState.AuthenticatedAtUnixSeconds);
-        return await CompleteLoginAsync(user, flowState.RememberMe, authenticatedAt, (flowState.AuthenticationMethods ?? "pwd") + " otp");
+        return await CompleteLoginAsync(user, flowState.RememberMe, authenticatedAt,
+            flowState.AuthenticationMethods + (isRecoveryCode ? " otp recovery" : " otp"));
     }
 
     public async Task<IActionResult> OnPostPasskeyOptionsAsync(
@@ -306,7 +317,7 @@ public class LoginModel(
             // Empty allowCredentials requests a discoverable credential and
             // lets the platform picker identify the account.
             AllowedCredentials = [],
-            UserVerification = _webAuthnOptions.UserVerification,
+            UserVerification = TotpIsRequired ? UserVerificationRequirement.Required : _webAuthnOptions.UserVerification,
         });
         var flowToken = await webAuthnService.CreateAuthenticationChallengeAsync(
             JsonSerializer.Serialize(options),
@@ -343,6 +354,8 @@ public class LoginModel(
         var options = JsonSerializer.Deserialize<AssertionOptions>(state.OptionsJson);
         if (options is null)
             return StatusCode(StatusCodes.Status500InternalServerError, new { error = "server_error" });
+        if (TotpIsRequired && options.UserVerification != UserVerificationRequirement.Required)
+            return JsonUnauthorized("Start a new passkey request with user verification.");
 
         try
         {
@@ -380,7 +393,8 @@ public class LoginModel(
 
         ReturnUrl = state.ReturnUrl;
         Username = user.Username;
-        var resultRedirect = await CompleteLoginAsync(user, state.RememberMe, DateTimeOffset.UtcNow, "webauthn");
+        var resultRedirect = await CompleteLoginAsync(user, state.RememberMe, DateTimeOffset.UtcNow,
+            options.UserVerification == UserVerificationRequirement.Required ? "webauthn uv" : "webauthn");
         var redirectUrl = resultRedirect is RedirectResult redirect ? redirect.Url : "/account";
         return new JsonResult(new { redirectUrl });
     }
@@ -392,14 +406,17 @@ public class LoginModel(
         string authenticationMethods)
     {
         Username = user.Username;
+        try
+        {
+            await webSignInService.SignInAsync(HttpContext, user, rememberMe, authenticatedAt,
+                authenticationMethods, HttpContext.RequestAborted);
+        }
+        catch (InvalidOperationException)
+        {
+            await RecordLoginAsync(user.Id, false, "AuthenticationStateChanged");
+            return Redirect("/account/login");
+        }
         await RecordLoginAsync(user.Id, true, null);
-        await webSignInService.SignInAsync(
-            HttpContext,
-            user,
-            rememberMe,
-            authenticatedAt,
-            authenticationMethods,
-            HttpContext.RequestAborted);
 
         if (!string.IsNullOrWhiteSpace(ReturnUrl) && Url.IsLocalUrl(ReturnUrl))
             return Redirect(ReturnUrl);
@@ -496,6 +513,9 @@ public class LoginModel(
     private string? GetLocalReturnUrl(string? returnUrl) => !string.IsNullOrWhiteSpace(returnUrl) && Url.IsLocalUrl(returnUrl)
         ? returnUrl
         : null;
+
+    private bool TotpIsRequired => string.Equals(_flowOptions.FindStep(LoginFlowStepTypes.Totp)?.Requirement,
+        LoginFlowRequirements.Required, StringComparison.OrdinalIgnoreCase);
 
     private static JsonResult JsonUnauthorized(string description) => new(
         new { error = "invalid_credential", error_description = description })

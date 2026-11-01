@@ -79,4 +79,20 @@ public sealed class UserCredentialRepository(IUnitOfWork unitOfWork)
                 .SetProperty(credential => credential.UpdatedAt, now), ct);
         return affected == 1;
     }
+
+    public Task<int> DisableAllTotpAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default)
+    {
+        now = now.ToUniversalTime();
+        return dbContext.Set<UserCredential>()
+            .Where(credential => credential.UserId == userId && credential.Type == UserCredential.TotpType
+                && (credential.IsEnabled || credential.PendingSecretProtected != null))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(credential => credential.IsEnabled, false)
+                .SetProperty(credential => credential.SecretProtected, (string?)null)
+                .SetProperty(credential => credential.PendingSecretProtected, (string?)null)
+                .SetProperty(credential => credential.PendingExpiresAt, (DateTimeOffset?)null)
+                .SetProperty(credential => credential.LastUsedCounter, (long?)null)
+                .SetProperty(credential => credential.DisabledAt, now)
+                .SetProperty(credential => credential.UpdatedAt, now), ct);
+    }
 }

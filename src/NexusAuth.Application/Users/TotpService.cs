@@ -58,7 +58,19 @@ public sealed class TotpService(
         string code,
         CancellationToken ct = default)
     {
+        var user = await userRepository.FindByIdAsync(userId, ct);
+        if (user is null)
+            return false;
+
+        await using var attempt = await userRepository.BeginAuthenticationAttemptAsync(user.Id, ct);
+        if (attempt is null)
+            return false;
+
+        user = attempt.User;
         var now = DateTimeOffset.UtcNow;
+        if (!user.IsActive || user.IsLoginLocked(now))
+            return false;
+
         var credential = await credentialRepository.FindPendingTotpAsync(userId, protectedSecret, ct);
         if (credential is null || credential.PendingExpiresAt <= now)
         {
@@ -68,6 +80,12 @@ public sealed class TotpService(
         if (!TryUnprotect(protectedSecret, out var secret)
             || !TotpAlgorithm.TryFindCounter(secret, code, now, out var counter))
         {
+            await userRepository.RegisterFailedLoginAsync(
+                userId,
+                Math.Max(1, _securityOptions.LoginFailureLimit),
+                TimeSpan.FromMinutes(Math.Max(1, _securityOptions.LoginLockoutMinutes)),
+                now,
+                ct);
             return false;
         }
 
@@ -90,10 +108,16 @@ public sealed class TotpService(
     public async Task<bool> ValidateAsync(Guid userId, string code, CancellationToken ct = default)
     {
         var user = await userRepository.FindByIdAsync(userId, ct);
-        if (user is not { IsActive: true })
-        {
+        if (user is null)
             return false;
-        }
+
+        await using var attempt = await userRepository.BeginAuthenticationAttemptAsync(user.Id, ct);
+        if (attempt is null)
+            return false;
+
+        user = attempt.User;
+        if (!user.IsActive)
+            return false;
 
         // 中文注释：动态码与密码共用持久化的失败计数和锁定窗口。锁定期间不再校验任何动态码，
         // 避免攻击者在已知密码后通过重放登录流程令牌无限次猜测六位验证码。
@@ -135,7 +159,10 @@ public sealed class TotpService(
                 credential.Id,
                 credential.DisplayName,
                 credential.IsEnabled,
-                credential.CreatedAt))
+                credential.CreatedAt,
+                !credential.IsEnabled
+                    || (!string.IsNullOrWhiteSpace(credential.SecretProtected)
+                        && TryUnprotect(credential.SecretProtected, out _))))
             .ToArray();
     }
 
