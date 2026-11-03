@@ -1,3 +1,4 @@
+using NexusAuth.Application.Services.Tokens;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Shared.DependencyInjection;
@@ -64,8 +65,10 @@ public class ClientCredentialsGrantStrategy(
                 null,
                 ct);
         }
-        catch (InvalidOperationException ex)
+        catch (TokenIssuanceException ex)
         {
+            // 中文注释：只有签发规则拒绝（如 scope 跨多个 audience）才回传说明；其他异常是服务端故障，
+            // 交给框架返回 500 并记录日志，不把内部消息当作 invalid_scope 返回给客户端。
             return new BadRequestObjectResult(new { error = "invalid_scope", error_description = ex.Message });
         }
 

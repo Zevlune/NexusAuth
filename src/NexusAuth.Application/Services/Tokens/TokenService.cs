@@ -62,7 +62,7 @@ public class TokenService(
         {
             var user = await userRepository.FindByIdAsync(userId.Value, ct);
             if (user is not { IsActive: true })
-                throw new InvalidOperationException("Active user not found for access token issuance.");
+                throw new TokenIssuanceException("Active user not found for access token issuance.");
             claims.Add(new("token_use", "access_token"));
             claims.Add(new(UserTokenValidator.EpochClaim,
                 (user.TokenInvalidBefore?.UtcTicks ?? 0).ToString(CultureInfo.InvariantCulture), ClaimValueTypes.Integer64));
@@ -106,8 +106,17 @@ public class TokenService(
         CancellationToken ct = default)
     {
         var user = await userRepository.FindByIdAsync(userId, ct)
-                   ?? throw new InvalidOperationException("User not found for id_token issuance.");
-        var requestedClaims = OidcRequestedClaims.Parse(claimsJson);
+                   ?? throw new TokenIssuanceException("User not found for id_token issuance.");
+        OidcRequestedClaims requestedClaims;
+        try
+        {
+            requestedClaims = OidcRequestedClaims.Parse(claimsJson);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.Text.Json.JsonException)
+        {
+            // 中文注释：授权码里保存的 claims 请求在升级后可能不再被接受，属于本次授权本身的问题。
+            throw new TokenIssuanceException("The stored claims request is no longer valid.", exception);
+        }
         // 中文注释：id_token 通过 at_hash 与同时签发的 access token 绑定，该 access token 的 scope
         // 就是本次实际授予的 scope；用户 claim 只能在这些 scope 覆盖范围内返回（claims 参数不能越权）。
         var grantedScopes = ReadGrantedScopes(accessToken);
@@ -744,7 +753,7 @@ public class TokenService(
             }
 
             if (!string.Equals(resolved, scopeName, StringComparison.Ordinal))
-                throw new InvalidOperationException("Requested scopes span multiple audiences. Please request one resource audience per token.");
+                throw new TokenIssuanceException("Requested scopes span multiple audiences. Please request one resource audience per token.");
         }
 
         return resolved ?? _jwtOptions.DefaultAudience;

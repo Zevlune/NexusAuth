@@ -38,6 +38,44 @@ public sealed class AuthorizeErrorResponseTests
     }
 
     [Theory]
+    [InlineData("client_id")]
+    [InlineData("redirect_uri")]
+    public async Task Repeated_client_or_redirect_parameters_are_rejected_locally(string parameter)
+    {
+        var controller = CreateController();
+        controller.HttpContext.Request.QueryString = new QueryString(
+            $"?{parameter}=first&{parameter}=second&response_type=code&state=state-123");
+
+        var result = await controller.Authorize(
+            OAuthResponseTypes.Code, "client-1", RedirectUri, OidcScopes.OpenId, state: "state-123");
+
+        var error = Assert.IsType<RedirectToPageResult>(result);
+        Assert.Equal("/OAuthError", error.PageName);
+        Assert.Equal("invalid_request", error.RouteValues!["error"]);
+    }
+
+    [Theory]
+    [InlineData("scope")]
+    [InlineData("claims")]
+    [InlineData("prompt")]
+    public async Task Other_repeated_parameters_are_returned_to_the_validated_redirect_uri(string parameter)
+    {
+        var controller = CreateController();
+        controller.HttpContext.Request.QueryString = new QueryString(
+            $"?client_id=client-1&{parameter}=a&{parameter}=b&state=state-123");
+
+        var result = await controller.Authorize(
+            OAuthResponseTypes.Code, "client-1", RedirectUri, OidcScopes.OpenId, state: "state-123");
+
+        var redirect = Assert.IsType<RedirectResult>(result);
+        Assert.StartsWith(RedirectUri, redirect.Url);
+        var query = QueryHelpers.ParseQuery(new Uri(redirect.Url!).Query);
+        Assert.Equal("invalid_request", query["error"]);
+        Assert.Contains(parameter, query["error_description"].ToString());
+        Assert.Equal("state-123", query["state"]);
+    }
+
+    [Theory]
     [InlineData("request", "request_not_supported")]
     [InlineData("request_uri", "request_uri_not_supported")]
     public async Task Unsupported_request_objects_are_rejected(string parameter, string expectedError)

@@ -116,6 +116,15 @@ class DeploymentDefaultsTests(unittest.TestCase):
                     self.assertEqual(security["KnownNetworks"], "172.30.56.0/28")
                     self.assertFalse(security.get("KnownProxies"))
 
+    def test_production_init_contains_every_cleanup_index(self) -> None:
+        init = read("production-init.sql")
+        cleanup = read("authentication-data-cleanup-production-init.sql")
+        indexes = re.findall(r"CREATE INDEX IF NOT EXISTS (\w+)", cleanup)
+        self.assertTrue(indexes)
+        for index in indexes:
+            with self.subTest(index=index):
+                self.assertRegex(init, rf"CREATE (?:UNIQUE )?INDEX (?:IF NOT EXISTS )?{index}\b")
+
     def test_local_compose_selects_local_http_configuration(self) -> None:
         settings = read_json("docker/workbench.local.appsettings.json")
 

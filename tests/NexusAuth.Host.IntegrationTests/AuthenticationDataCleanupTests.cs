@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Clients;
 using NexusAuth.Application.Services.DataRetention;
@@ -12,6 +14,21 @@ namespace NexusAuth.Host.IntegrationTests;
 
 public sealed class AuthenticationDataCleanupTests
 {
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    public void Expired_data_retention_below_one_day_is_rejected_at_startup(string days)
+    {
+        // client_assertion replay protection relies on the jti row outliving the
+        // assertion's clock skew; a zero-day retention could delete it inside that window.
+        using var factory = new WebApplicationFactory<AppWebModule>().WithWebHostBuilder(builder => builder
+            .UseEnvironment("Development")
+            .UseTestSetting("DataRetention:ExpiredDataRetentionDays", days));
+
+        var exception = Assert.ThrowsAny<Exception>(() => factory.Services);
+        Assert.Contains("ExpiredDataRetentionDays must be between 1 and 3650", exception.ToString());
+    }
+
     [Fact]
     public async Task Cleanup_service_applies_configured_retention_and_batch_limits()
     {

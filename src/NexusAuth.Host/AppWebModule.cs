@@ -110,8 +110,8 @@ public class AppWebModule : LuckAppModule
                 options => options.SweepIntervalMinutes is >= 1 and <= 1_440,
                 "DataRetention:SweepIntervalMinutes must be between 1 and 1440.")
             .Validate(
-                options => options.ExpiredDataRetentionDays is >= 0 and <= 3_650,
-                "DataRetention:ExpiredDataRetentionDays must be between 0 and 3650.")
+                options => options.ExpiredDataRetentionDays is >= 1 and <= 3_650,
+                "DataRetention:ExpiredDataRetentionDays must be between 1 and 3650.")
             .Validate(
                 options => options.LoginAuditRetentionDays is >= 1 and <= 36_500,
                 "DataRetention:LoginAuditRetentionDays must be between 1 and 36500.")

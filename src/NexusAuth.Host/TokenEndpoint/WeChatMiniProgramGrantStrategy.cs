@@ -1,3 +1,4 @@
+using NexusAuth.Application.Services.Tokens;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Application.Services.ExternalIdentity;
@@ -164,7 +165,7 @@ public class WeChatMiniProgramGrantStrategy(
                     ct: ct);
             }
         }
-        catch (InvalidOperationException)
+        catch (TokenIssuanceException)
         {
             return TokenIssuanceFailed();
         }
