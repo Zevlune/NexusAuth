@@ -46,6 +46,9 @@ services:
     volumes:
       - ./workbench.appsettings.json:/app/appsettings.Production.json:ro
       - workbench-protection:/root/.aspnet/DataProtection-Keys
+    networks:
+      - default
+      - workbench-proxy
     depends_on:
       db:
         condition: service_healthy
@@ -57,10 +60,27 @@ services:
     image: nexusauth-workbench-dashboard:latest
     ports:
       - "5560:80"
+    networks:
+      - workbench-edge
+      - workbench-proxy
     depends_on:
       admin-api:
         condition: service_healthy
     restart: unless-stopped
+
+networks:
+  default:
+  # The Dashboard nginx is the only workload on this network besides the
+  # Workbench API, which trusts X-Forwarded-For only from this subnet. Keep it
+  # equal to Security:KnownNetworks in the mounted Workbench appsettings.
+  workbench-proxy:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${NEXUSAUTH_WORKBENCH_PROXY_SUBNET:-172.30.56.0/28}
+  # Publishes the Dashboard port; the API is not attached to it, so nginx can
+  # reach the API only over workbench-proxy.
+  workbench-edge:
 
 volumes:
   database:

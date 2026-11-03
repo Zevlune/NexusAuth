@@ -233,9 +233,9 @@ npm --prefix admin/src/NexusAuth.Workbench.Dashboard run dev
 | `Auth:FlowState:Redis:Configuration` | 空 | Redis 模式必填 |
 | `Auth:FlowState:Redis:KeyPrefix` / `Database` | `NexusAuth:oidc:flow` / `-1` | Redis 键前缀与数据库编号；使用默认数据库时设为 `-1` |
 | `Security:CookieSecurePolicy` | 基础 `Always`；Development `SameAsRequest` | 会话 Cookie Secure 策略 |
-| `Security:ForwardedHeadersEnabled` | `false` | 默认不信任转发头 |
+| `Security:ForwardedHeadersEnabled` | `false`；随附 Compose 配置为 `true` | 代码默认不信任转发头；随附配置只信任 Dashboard 专用代理网络 |
 | `Security:ForwardLimit` | `1` | 可信代理链最大跳数，允许 1 到 10 |
-| `Security:KnownProxies` / `KnownNetworks` | 空 | 启用转发头时至少填写一项 |
+| `Security:KnownProxies` / `KnownNetworks` | 空；随附 Compose 配置 `KnownNetworks=172.30.56.0/28` | 启用转发头时至少填写一项；必须与 `NEXUSAUTH_WORKBENCH_PROXY_SUBNET` 一致 |
 | `Swagger:Enabled` | `null` | 未配置时仅 Development 开启；显式布尔值优先 |
 | `Bootstrap:ResourceName` | `nexusauth.workbench.api` | Bootstrap API resource 名称 |
 | `Bootstrap:ResourceDisplayName` | `NexusAuth Workbench API` | 资源显示名 |
@@ -322,6 +322,10 @@ Workbench 默认不处理 `X-Forwarded-For`、`X-Forwarded-Proto` 等转发头�
 - 只信任实际代理节点或专属代理网段，并让 Workbench API 端口只对可信代理开放。
 
 `KnownProxies` 和 `KnownNetworks` 使用逗号或分号分隔，不是 JSON 数组。启用转发头但没有明确代理或网络会阻止启动。入口代理应覆盖客户端自行提交的转发头；多级代理需要按实际链路配置可信节点和跳数。
+
+**随附 Compose 拓扑。** 根目录 `docker-compose.yml` 和 `deploy/direct/compose.yml` 让 Dashboard nginx 与 Workbench API 只通过内部网络 `workbench-proxy` 通信，子网默认 `172.30.56.0/28`，可用 `NEXUSAUTH_WORKBENCH_PROXY_SUBNET` 覆盖。Dashboard 另接 `workbench-edge` 发布端口，Workbench API 不接入该网络，也不发布端口。随附的 Workbench appsettings 因此启用转发头，并只把这一子网写入 `Security:KnownNetworks`；修改子网时两处必须一起改。不要把其他服务接入 `workbench-proxy`。
+
+匿名登录入口 `/api/auth/login` 按客户端地址限流，每个地址每分钟 20 次；IPv6 按 /64 前缀合并计数（#81）。限流使用应用处理转发头之后的地址。如果 Workbench API 只看到代理地址（例如没有信任代理，或 Dashboard 前面还有一层没有还原来源的负载均衡），所有浏览器会共用同一个计数，匿名请求即可让管理员无法登录。Dashboard 前面另有 TLS 入口或负载均衡时，应先在 Dashboard nginx 中用 `real_ip` 按该入口还原客户端地址，或者按实际跳数调整 `Security:ForwardLimit`，并在 `KnownProxies`/`KnownNetworks` 中加入这些入口节点。
 
 Swagger 未显式配置时仅在 `Development` 环境注册；其他环境默认不暴露 `/swagger`。确需启用时显式设置 `Swagger:Enabled=true`，并继续使用 Workbench 的默认授权边界保护。
 
@@ -681,7 +685,7 @@ Dashboard 的 `npm run build` 先跑 `tsc -b` 再跑 Vite build，没有单独�
 ### 11.3 生产要点
 
 - Dashboard 对外只暴露一个域名，由反向代理把 `/api` 和 `/signin-oidc` 转发到 Workbench API，保留 `Host`、`X-Forwarded-Proto` 和 Cookie；如需客户端 IP，同时转发 `X-Forwarded-For`。
-- 只有确需处理转发头时才启用 `Security:ForwardedHeadersEnabled`，并配置明确的 `Security:KnownProxies` 或 `Security:KnownNetworks`。应用端口只对可信代理开放，入口覆盖客户端伪造的转发头。
+- 只有确需处理转发头时才启用 `Security:ForwardedHeadersEnabled`，并配置明确的 `Security:KnownProxies` 或 `Security:KnownNetworks`。应用端口只对可信代理开放，入口覆盖客户端伪造的转发头。随附 Compose 已按专用代理网络配置（见 5.4）；自建拓扑须保证登录限流看到的是浏览器地址而不是代理地址。
 - 生产配置使用 HTTPS Authority、`Auth:RequireHttpsMetadata=true` 和 `Security:CookieSecurePolicy=Always`。本地 Compose 通过 `docker-compose.local.yml` 选择 `docker/workbench.local.appsettings.json` 并显式使用 HTTP，该文件不进入生产。
 - Provider 登记的 `redirect_uri`、`post_logout_redirect_uri` 与 API 配置逐字符一致，且使用 HTTPS。
 - `Auth:Authority` 使用浏览器和 Workbench API 进程都能直接访问的 HTTPS 地址，并与 Provider issuer 和 token 的 `iss` 完全一致；通过 DNS 或入口路由保证该地址在两端可达。
