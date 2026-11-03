@@ -6,8 +6,9 @@ namespace NexusAuth.Persistence.Repositories;
 
 /// <summary>
 /// Holds a PostgreSQL session advisory lock for one user authentication
-/// attempt. The lock is deliberately non-blocking so a burst cannot consume
-/// an unbounded number of database connections waiting for one account.
+/// attempt. The lock is acquired with a short bounded retry (never a blocking
+/// wait) so a burst cannot consume an unbounded number of database
+/// connections waiting for one account.
 /// </summary>
 internal sealed class UserAuthenticationAttempt(
     NpgsqlConnection connection,

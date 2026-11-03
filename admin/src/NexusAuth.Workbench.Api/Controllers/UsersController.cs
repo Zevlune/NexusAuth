@@ -48,7 +48,7 @@ public sealed class UsersController(IUserManagementService userManagementService
         [FromServices] ISecondFactorRecoveryService recoveryService,
         CancellationToken ct = default)
     {
-        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var actorId) || actorId == Guid.Empty)
+        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var actorId) || actorId == Guid.Empty)
             return Task.FromResult<IActionResult>(Forbid());
 
         return ExecuteAsync(async () =>

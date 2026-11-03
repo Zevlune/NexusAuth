@@ -55,14 +55,8 @@ public class ScimCredentialService(IScimServicePrincipalCredentialRepository cre
         return Map(credential);
     }
 
-    public async Task<bool> RevokeAsync(Guid id, CancellationToken ct = default)
-    {
-        var credential = await credentialRepository.FindByIdAsync(id, ct);
-        if (credential is null) return false;
-        credential.Revoke();
-        await credentialRepository.UpdateAsync(credential, ct);
-        return true;
-    }
+    public Task<bool> RevokeAsync(Guid id, CancellationToken ct = default) =>
+        credentialRepository.RevokeAsync(id, DateTimeOffset.UtcNow, ct);
 
     private static void EnsureScopesNotEmpty(IReadOnlyCollection<string>? scopes)
     {

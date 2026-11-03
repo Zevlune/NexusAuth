@@ -14,6 +14,12 @@
     <ul>@foreach (var code in Model.RecoveryCodes) { <li>@code</li> }</ul>
     <a href="@Model.ContinueUrl">我已保存，继续</a>
 }
+else if (Model.SignedIn)
+{
+    <h1>双重验证已启用</h1>
+    @if (Model.ErrorMessage is not null) { <p class="error" role="alert">@Model.ErrorMessage</p> }
+    <a href="@Model.ContinueUrl">继续</a>
+}
 else
 {
     <h1>设置双重验证</h1><p>完成身份验证器绑定后才能登录。</p>

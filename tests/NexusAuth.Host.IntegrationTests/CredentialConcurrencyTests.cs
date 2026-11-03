@@ -89,7 +89,7 @@ public sealed class CredentialConcurrencyTests
         {
             await using var staleContext = CreateContext();
             var stale = await staleContext.Users.SingleAsync(user => user.Id == id);
-            var expectedVersion = stale.Version;
+            var expectedEpoch = stale.TokenInvalidBefore;
 
             await using var concurrentContext = CreateContext();
             var concurrentUsers = new UserRepository(new TestUnitOfWork(concurrentContext));
@@ -100,7 +100,7 @@ public sealed class CredentialConcurrencyTests
                 DateTimeOffset.UtcNow);
 
             var reset = await new UserRepository(new TestUnitOfWork(staleContext))
-                .TryResetLoginFailuresAsync(id, expectedVersion, DateTimeOffset.UtcNow);
+                .TryResetLoginFailuresAsync(id, expectedEpoch, DateTimeOffset.UtcNow);
             Assert.False(reset);
 
             staleContext.ChangeTracker.Clear();
@@ -116,7 +116,7 @@ public sealed class CredentialConcurrencyTests
     [PostgreSqlTheory]
     [Trait("Category", "PostgreSql")]
     [InlineData(0)]
-    public async Task Stale_user_update_conflicts_after_a_concurrent_login_failure(int _)
+    public async Task User_update_survives_a_concurrent_login_failure_without_clearing_it(int _)
     {
         var id = await SeedUserAsync();
         try
@@ -131,6 +131,38 @@ public sealed class CredentialConcurrencyTests
                 lockoutDuration: TimeSpan.FromMinutes(5),
                 DateTimeOffset.UtcNow);
 
+            // Only the failure counter changed concurrently, so the update is
+            // rebased instead of failing (e.g. a password reset after a guess).
+            stale.UpdateNickname("rebased update");
+            await new UserRepository(new TestUnitOfWork(staleContext)).UpdateAsync(stale);
+
+            await using var verifyContext = CreateContext();
+            var stored = await verifyContext.Users.SingleAsync(user => user.Id == id);
+            Assert.Equal("rebased update", stored.Nickname);
+            Assert.Equal(1, stored.FailedLoginAttempts);
+        }
+        finally
+        {
+            await DeleteUserAsync(id);
+        }
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(0)]
+    public async Task Stale_user_update_conflicts_after_a_concurrent_security_change(int _)
+    {
+        var id = await SeedUserAsync();
+        try
+        {
+            await using var staleContext = CreateContext();
+            var stale = await staleContext.Users.SingleAsync(user => user.Id == id);
+
+            await using var concurrentContext = CreateContext();
+            var concurrent = await concurrentContext.Users.SingleAsync(user => user.Id == id);
+            concurrent.InvalidateTokens(DateTimeOffset.UtcNow);
+            await concurrentContext.SaveChangesAsync();
+
             stale.UpdateNickname("stale update");
             await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
                 new UserRepository(new TestUnitOfWork(staleContext)).UpdateAsync(stale));
@@ -138,6 +170,118 @@ public sealed class CredentialConcurrencyTests
         finally
         {
             await DeleteUserAsync(id);
+        }
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(0)]
+    public async Task Stale_user_counter_reset_conflicts_after_a_concurrent_login_failure(int _)
+    {
+        var id = await SeedUserAsync();
+        try
+        {
+            await using var concurrentContext = CreateContext();
+            var concurrentUsers = new UserRepository(new TestUnitOfWork(concurrentContext));
+            await concurrentUsers.RegisterFailedLoginAsync(id, 5, TimeSpan.FromMinutes(5), DateTimeOffset.UtcNow);
+
+            await using var staleContext = CreateContext();
+            var stale = await staleContext.Users.SingleAsync(user => user.Id == id);
+            await concurrentUsers.RegisterFailedLoginAsync(id, 5, TimeSpan.FromMinutes(5), DateTimeOffset.UtcNow);
+
+            // The stale snapshot itself writes the counter: that must not be rebased.
+            stale.RegisterSuccessfulLogin(DateTimeOffset.UtcNow);
+            await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
+                new UserRepository(new TestUnitOfWork(staleContext)).UpdateAsync(stale));
+        }
+        finally
+        {
+            await DeleteUserAsync(id);
+        }
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(0)]
+    public async Task Login_reset_succeeds_after_a_concurrent_non_locking_failure(int _)
+    {
+        var id = await SeedUserAsync();
+        try
+        {
+            await using var staleContext = CreateContext();
+            var stale = await staleContext.Users.SingleAsync(user => user.Id == id);
+
+            await using var concurrentContext = CreateContext();
+            await new UserRepository(new TestUnitOfWork(concurrentContext))
+                .RegisterFailedLoginAsync(id, 5, TimeSpan.FromMinutes(5), DateTimeOffset.UtcNow);
+
+            Assert.True(await new UserRepository(new TestUnitOfWork(staleContext))
+                .TryResetLoginFailuresAsync(id, stale.TokenInvalidBefore, DateTimeOffset.UtcNow));
+        }
+        finally
+        {
+            await DeleteUserAsync(id);
+        }
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(0)]
+    public async Task Login_reset_is_rejected_after_a_concurrent_security_epoch_change(int _)
+    {
+        var id = await SeedUserAsync();
+        try
+        {
+            await using var staleContext = CreateContext();
+            var stale = await staleContext.Users.SingleAsync(user => user.Id == id);
+
+            await using var concurrentContext = CreateContext();
+            var concurrent = await concurrentContext.Users.SingleAsync(user => user.Id == id);
+            concurrent.InvalidateTokens(DateTimeOffset.UtcNow);
+            await concurrentContext.SaveChangesAsync();
+
+            Assert.False(await new UserRepository(new TestUnitOfWork(staleContext))
+                .TryResetLoginFailuresAsync(id, stale.TokenInvalidBefore, DateTimeOffset.UtcNow));
+        }
+        finally
+        {
+            await DeleteUserAsync(id);
+        }
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData("scim")]
+    [InlineData("open-api")]
+    public async Task Revoke_succeeds_after_a_concurrent_record_use(string kind)
+    {
+        var id = await SeedAsync(kind);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            await using var context = CreateContext();
+            if (kind == "scim")
+            {
+                var repository = new ScimServicePrincipalCredentialRepository(new TestUnitOfWork(context));
+                _ = await context.ScimServicePrincipalCredentials.SingleAsync(value => value.Id == id);
+                await repository.RecordUseAsync(id, now);
+                Assert.True(await repository.RevokeAsync(id, now));
+            }
+            else
+            {
+                var repository = new OpenApiCredentialRepository(new TestUnitOfWork(context));
+                _ = await context.OpenApiCredentials.SingleAsync(value => value.Id == id);
+                await repository.RecordUseAsync(id, now);
+                Assert.True(await repository.RevokeAsync(id, now));
+            }
+
+            var stored = await ReadStateAsync(kind, id);
+            Assert.False(stored.IsActive);
+            Assert.NotNull(stored.RevokedAt);
+        }
+        finally
+        {
+            await DeleteAsync(kind, id);
         }
     }
 

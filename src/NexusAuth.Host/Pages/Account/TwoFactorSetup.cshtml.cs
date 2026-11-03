@@ -19,6 +19,7 @@ public sealed class TwoFactorSetupModel(IUserService users, ITotpService totp,
     public IReadOnlyList<string> RecoveryCodes { get; private set; } = [];
     public string? ErrorMessage { get; private set; }
     public string ContinueUrl { get; private set; } = "/account";
+    public bool SignedIn { get; private set; }
 
     public async Task<IActionResult> OnGetAsync(CancellationToken ct)
     {
@@ -41,20 +42,32 @@ public sealed class TwoFactorSetupModel(IUserService users, ITotpService totp,
         // Confirmation reloads the user; keep the original primary-factor
         // proof bound to the same security epoch after that reload as well.
         if (flow.TokenEpoch != (user.TokenInvalidBefore?.UtcTicks ?? 0))
-            return Restart();
+            return Restart(flow.ReturnUrl);
         try
         {
             await signIn.SignInAsync(HttpContext, user, flow.RememberMe,
                 DateTimeOffset.FromUnixTimeSeconds(flow.AuthenticatedAtUnixSeconds), flow.AuthenticationMethods + " otp", ct);
-            RecoveryCodes = await recovery.GenerateCodesAsync(user.Id, ct);
-            TotpEnrollmentFlow.Clear(HttpContext);
-            Enrollment = null;
-            return Page();
         }
         catch (InvalidOperationException)
         {
-            return Restart();
+            return Restart(flow.ReturnUrl);
         }
+
+        // The session now exists. A recovery-code failure (for example the
+        // account lock being briefly held) must not bounce a signed-in user
+        // back to the login page; they can generate codes later.
+        TotpEnrollmentFlow.Clear(HttpContext);
+        Enrollment = null;
+        SignedIn = true;
+        try
+        {
+            RecoveryCodes = await recovery.GenerateCodesAsync(user.Id, ct);
+        }
+        catch (InvalidOperationException)
+        {
+            ErrorMessage = "身份验证器已启用，但恢复码暂未生成。请稍后在“账户安全 → 身份验证器”中重新生成恢复码。";
+        }
+        return Page();
     }
 
     private async Task<(User User, PendingLoginFlowState Flow)?> LoadAsync(CancellationToken ct)
@@ -74,9 +87,11 @@ public sealed class TwoFactorSetupModel(IUserService users, ITotpService totp,
         return (user, flow);
     }
 
-    private IActionResult Restart()
+    private IActionResult Restart(string? returnUrl = null)
     {
         TotpEnrollmentFlow.Clear(HttpContext);
-        return Redirect("/account/login");
+        return !string.IsNullOrWhiteSpace(returnUrl) && Url.IsLocalUrl(returnUrl)
+            ? Redirect($"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}")
+            : Redirect("/account/login");
     }
 }

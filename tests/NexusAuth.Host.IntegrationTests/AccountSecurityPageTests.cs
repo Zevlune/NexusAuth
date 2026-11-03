@@ -87,8 +87,11 @@ public sealed class AccountSecurityPageTests
         var response = await PostAsync(client, "/account/login?handler=Totp", "/account/login",
             new() { ["FlowToken"] = flowToken, ["TotpCode"] = recovery ? "RECOVERY-CODE" : "123456" });
 
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Equal("/account/login", response.Headers.Location!.OriginalString);
+        // The user is returned to the first login step with an explanation
+        // instead of a bare redirect that drops the message and ReturnUrl.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("security settings changed during sign-in",
+            WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync()));
         Assert.Equal(recovery ? 0 : 1, harness.TotpValidations);
         Assert.Equal(recovery ? 1 : 0, harness.RecoveryRedemptions);
         Assert.Equal(0, harness.SignIns);

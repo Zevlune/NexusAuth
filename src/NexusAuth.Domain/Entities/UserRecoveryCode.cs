@@ -40,7 +40,7 @@ public sealed class UserRecoveryCode : EntityWithIdentity<Guid>
     public static string Hash(string code)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(code);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code.Trim())));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code.Trim().ToUpperInvariant())));
     }
 
     public void MarkUsed(DateTimeOffset now)

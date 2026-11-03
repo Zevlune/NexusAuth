@@ -282,10 +282,11 @@ public class LoginModel(
             return Page();
         }
 
-        var isRecoveryCode = TotpCode.Length != 6 || !TotpCode.All(char.IsAsciiDigit);
+        var secondFactorCode = SecondFactorCode.Normalize(TotpCode);
+        var isRecoveryCode = !SecondFactorCode.IsTotp(secondFactorCode);
         var factorValid = isRecoveryCode
-            ? await recoveryService.RedeemAsync(user.Id, TotpCode, HttpContext.RequestAborted)
-            : await totpService.ValidateAsync(user.Id, TotpCode, HttpContext.RequestAborted);
+            ? await recoveryService.RedeemAsync(user.Id, secondFactorCode, HttpContext.RequestAborted)
+            : await totpService.ValidateAsync(user.Id, secondFactorCode, HttpContext.RequestAborted);
         if (!factorValid)
         {
             await RecordLoginAsync(user.Id, false, "InvalidTotp");
@@ -298,7 +299,7 @@ public class LoginModel(
         // A reset between the initial flow check and that reload must not make
         // an old primary-factor proof valid against the new user version.
         if (flowState.TokenEpoch != (user.TokenInvalidBefore?.UtcTicks ?? 0))
-            return Redirect("/account/login");
+            return await RestartLoginAsync(SignInInterruptedMessage);
 
         var authenticatedAt = DateTimeOffset.FromUnixTimeSeconds(flowState.AuthenticatedAtUnixSeconds);
         return await CompleteLoginAsync(user, flowState.RememberMe, authenticatedAt,
@@ -351,6 +352,16 @@ public class LoginModel(
         if (user is null || !user.IsActive || !securityPolicyService.CheckUser(user).IsSuccess)
             return JsonUnauthorized("This passkey is unavailable.");
 
+        // A locked account cannot complete sign-in (WebSignInService refuses
+        // to clear an active lockout), so report it before the assertion
+        // instead of failing silently afterwards.
+        if (user.IsLoginLocked(DateTimeOffset.UtcNow))
+        {
+            Username = user.Username;
+            await RecordLoginAsync(user.Id, false, "UserLocked");
+            return JsonUnauthorized(LockedMessage);
+        }
+
         var options = JsonSerializer.Deserialize<AssertionOptions>(state.OptionsJson);
         if (options is null)
             return StatusCode(StatusCodes.Status500InternalServerError, new { error = "server_error" });
@@ -395,8 +406,9 @@ public class LoginModel(
         Username = user.Username;
         var resultRedirect = await CompleteLoginAsync(user, state.RememberMe, DateTimeOffset.UtcNow,
             options.UserVerification == UserVerificationRequirement.Required ? "webauthn uv" : "webauthn");
-        var redirectUrl = resultRedirect is RedirectResult redirect ? redirect.Url : "/account";
-        return new JsonResult(new { redirectUrl });
+        if (resultRedirect is not RedirectResult redirect)
+            return JsonUnauthorized(ErrorMessage ?? SignInInterruptedMessage);
+        return new JsonResult(new { redirectUrl = redirect.Url });
     }
 
     private async Task<IActionResult> CompleteLoginAsync(
@@ -414,7 +426,7 @@ public class LoginModel(
         catch (InvalidOperationException)
         {
             await RecordLoginAsync(user.Id, false, "AuthenticationStateChanged");
-            return Redirect("/account/login");
+            return await RestartLoginAsync(SignInInterruptedMessage);
         }
         await RecordLoginAsync(user.Id, true, null);
 
@@ -422,6 +434,26 @@ public class LoginModel(
             return Redirect(ReturnUrl);
 
         return Redirect("/account");
+    }
+
+    private const string LockedMessage = "Too many failed attempts. Try again later.";
+    private const string SignInInterruptedMessage =
+        "The account was locked or its security settings changed during sign-in. Sign in again.";
+
+    /// <summary>
+    /// Returns to the first login step with an explanation. The bound
+    /// ReturnUrl is kept so a pending OIDC authorization request survives.
+    /// </summary>
+    private async Task<IActionResult> RestartLoginAsync(string message)
+    {
+        RequiresTotp = false;
+        FlowToken = string.Empty;
+        TotpCode = string.Empty;
+        Password = string.Empty;
+        ErrorMessage = message;
+        await TryExtractClientNameAsync();
+        RefreshSliderCaptchaChallenge();
+        return Page();
     }
 
     private async Task TryExtractClientNameAsync()

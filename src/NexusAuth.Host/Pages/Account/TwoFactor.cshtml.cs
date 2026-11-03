@@ -176,7 +176,7 @@ public sealed class TwoFactorModel(
     private async Task<User?> VerifyIdentityAsync(Guid userId, CancellationToken ct)
     {
         var password = CurrentPassword;
-        var totpCode = CurrentTotpCode;
+        var totpCode = SecondFactorCode.Normalize(CurrentTotpCode);
         CurrentPassword = string.Empty;
         CurrentTotpCode = string.Empty;
         ModelState.Remove(nameof(CurrentPassword));
@@ -194,7 +194,7 @@ public sealed class TwoFactorModel(
 
         if (await totpService.IsEnabledAsync(userId, ct)
             && (string.IsNullOrWhiteSpace(totpCode)
-                || !(totpCode.Length == 6 && totpCode.All(char.IsAsciiDigit)
+                || !(SecondFactorCode.IsTotp(totpCode)
                     ? await totpService.ValidateAsync(userId, totpCode, ct)
                     : await recoveryService.RedeemAsync(userId, totpCode, ct))))
         {

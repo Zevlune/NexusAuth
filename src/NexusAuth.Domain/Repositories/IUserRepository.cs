@@ -54,9 +54,15 @@ public interface IUserRepository : IAggregateRootRepository<User, Guid>, IScoped
 
     Task ResetLoginFailuresAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default);
 
+    /// <summary>
+    /// Clears the failure counter after a completed sign-in, unless the account
+    /// is inactive, currently locked, or its security epoch
+    /// (<see cref="User.TokenInvalidBefore"/>) changed after the factors were
+    /// verified. Ordinary failure-counter updates do not reject the reset.
+    /// </summary>
     Task<bool> TryResetLoginFailuresAsync(
         Guid userId,
-        uint expectedVersion,
+        DateTimeOffset? expectedTokenInvalidBefore,
         DateTimeOffset now,
         CancellationToken ct = default);
 

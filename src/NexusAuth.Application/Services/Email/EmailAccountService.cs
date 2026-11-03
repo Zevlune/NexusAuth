@@ -146,11 +146,11 @@ public sealed class EmailAccountService(
 
     private Task<bool> ValidateSecondFactorAsync(Guid userId, string? code, CancellationToken ct)
     {
-        var normalized = code?.Trim();
+        var normalized = SecondFactorCode.Normalize(code);
         // Six-digit TOTP failures remain on the existing TOTP path. Recovery
         // codes have their own atomic consume and lockout accounting, so a
         // request must never validate against both stores.
-        if (normalized is { Length: 6 } && normalized.All(char.IsAsciiDigit))
+        if (SecondFactorCode.IsTotp(normalized))
             return totp.ValidateAsync(userId, normalized, ct);
 
         return recovery is null

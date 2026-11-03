@@ -39,9 +39,9 @@ public sealed class WebSignInService(
             throw new InvalidOperationException("A required second factor was not completed.");
 
         var issuedAt = DateTimeOffset.UtcNow;
-        var reset = await userRepository.TryResetLoginFailuresAsync(user.Id, user.Version, issuedAt, ct);
+        var reset = await userRepository.TryResetLoginFailuresAsync(user.Id, user.TokenInvalidBefore, issuedAt, ct);
         if (!reset)
-            throw new InvalidOperationException("The account state changed during sign-in. Please try again.");
+            throw new InvalidOperationException("The account is locked or its security state changed during sign-in.");
 
         var authenticationProperties = _flowOptions.CreateAuthenticationProperties(rememberMe, issuedAt);
         var sessionId = await sessionService.CreateAsync(

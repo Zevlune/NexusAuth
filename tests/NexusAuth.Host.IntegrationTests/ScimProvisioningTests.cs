@@ -298,7 +298,7 @@ public sealed class InMemoryScimUserRepository : IUserRepository
     public Task ResetLoginFailuresAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
-    public Task<bool> TryResetLoginFailuresAsync(Guid userId, uint expectedVersion, DateTimeOffset now, CancellationToken ct = default) =>
+    public Task<bool> TryResetLoginFailuresAsync(Guid userId, DateTimeOffset? expectedTokenInvalidBefore, DateTimeOffset now, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
     public User? Find(Guid primaryKey) => Snapshot().FirstOrDefault(user => user.Id == primaryKey);

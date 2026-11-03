@@ -61,7 +61,7 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
         {
             await connection.OpenAsync(ct);
             opened = true;
-            if (!await TryAcquireAuthenticationLockAsync(connection, userId, ct))
+            if (!await AcquireAuthenticationLockAsync(connection, userId, ct))
             {
                 await UserAuthenticationAttempt.ReleaseAsync(connection, userId);
                 return null;
@@ -166,7 +166,86 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
         // tracking the entity. Do not mark every column modified: a stale
         // snapshot must be rejected by the xmin concurrency token instead of
         // overwriting a newer security change.
-        await _unitOfWork.CommitAsync(ct);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await _unitOfWork.CommitAsync(ct);
+                return;
+            }
+            catch (DbUpdateConcurrencyException exception) when (attempt < MaxCounterRebaseAttempts)
+            {
+                // Retry only when the failure counter moved underneath us.
+                if (!await TryRebaseOnLoginCounterChangeAsync(exception, ct))
+                    throw;
+            }
+        }
+    }
+
+    private const int MaxCounterRebaseAttempts = 3;
+
+    // Columns written by RegisterFailedLoginAsync/ResetLoginFailures. A
+    // concurrent change limited to these does not make a password, email or
+    // token-epoch update stale, so the save is retried on the fresh xmin.
+    private static readonly HashSet<string> LoginCounterProperties =
+    [
+        nameof(User.FailedLoginAttempts),
+        nameof(User.LockedUntil),
+        nameof(User.UpdatedAt),
+    ];
+
+    private static async Task<bool> TryRebaseOnLoginCounterChangeAsync(
+        DbUpdateConcurrencyException exception,
+        CancellationToken ct)
+    {
+        foreach (var entry in exception.Entries)
+        {
+            if (entry.Entity is not User || entry.State != EntityState.Modified)
+                return false;
+
+            var databaseValues = await entry.GetDatabaseValuesAsync(ct);
+            if (databaseValues is null)
+                return false;
+
+            foreach (var property in entry.Properties)
+            {
+                var name = property.Metadata.Name;
+                var databaseValue = databaseValues[property.Metadata];
+                if (property.Metadata.IsConcurrencyToken || Equals(property.OriginalValue, databaseValue))
+                    continue;
+
+                // Any other column changed concurrently: keep rejecting the
+                // stale snapshot. Counter columns we modified ourselves are
+                // also a real conflict (UpdatedAt is just a timestamp).
+                if (!LoginCounterProperties.Contains(name)
+                    || (property.IsModified && name != nameof(User.UpdatedAt)))
+                    return false;
+            }
+
+            foreach (var property in entry.Properties)
+            {
+                var databaseValue = databaseValues[property.Metadata];
+                if (property.Metadata.IsConcurrencyToken)
+                {
+                    // The WHERE clause uses the original token value.
+                    property.OriginalValue = databaseValue;
+                }
+                else if (!property.IsModified)
+                {
+                    // Adopt the newer counter/lockout values without writing them.
+                    property.OriginalValue = databaseValue;
+                    property.CurrentValue = databaseValue;
+                    property.IsModified = false;
+                }
+                else
+                {
+                    property.OriginalValue = databaseValue;
+                    property.IsModified = true;
+                }
+            }
+        }
+
+        return true;
     }
 
     public async Task DeleteAsync(User user, CancellationToken ct = default)
@@ -234,16 +313,19 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
 
     public async Task<bool> TryResetLoginFailuresAsync(
         Guid userId,
-        uint expectedVersion,
+        DateTimeOffset? expectedTokenInvalidBefore,
         DateTimeOffset now,
         CancellationToken ct = default)
     {
         now = now.ToUniversalTime();
+        // Compare the security epoch rather than xmin: a concurrent failed
+        // guess bumps xmin too, and must not make a verified sign-in fail. A
+        // lockout set by that guess is still honoured by the LockedUntil check.
         var affected = await _dbContext.Set<User>()
             .Where(user => user.Id == userId
                 && user.IsActive
                 && (user.LockedUntil == null || user.LockedUntil <= now)
-                && user.Version == expectedVersion)
+                && user.TokenInvalidBefore == expectedTokenInvalidBefore)
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(user => user.FailedLoginAttempts, 0)
@@ -263,6 +345,28 @@ public class UserRepository : EfCoreAggregateRootRepository<User, Guid>, IUserRe
         }
 
         return await _dbContext.Set<User>().SingleOrDefaultAsync(user => user.Id == userId, ct);
+    }
+
+    // A short bounded wait lets a legitimate attempt that overlaps another
+    // attempt on the same account (a double submit, a concurrent guess)
+    // succeed instead of failing as "busy". Attempts stay serialized and the
+    // wait is bounded, so a burst cannot hold connections indefinitely.
+    private static readonly TimeSpan AuthenticationLockRetryDelay = TimeSpan.FromMilliseconds(100);
+    private const int AuthenticationLockAttempts = 10;
+
+    private static async Task<bool> AcquireAuthenticationLockAsync(
+        NpgsqlConnection connection,
+        Guid userId,
+        CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            if (await TryAcquireAuthenticationLockAsync(connection, userId, ct))
+                return true;
+            if (attempt >= AuthenticationLockAttempts)
+                return false;
+            await Task.Delay(AuthenticationLockRetryDelay, ct);
+        }
     }
 
     private static async Task<bool> TryAcquireAuthenticationLockAsync(

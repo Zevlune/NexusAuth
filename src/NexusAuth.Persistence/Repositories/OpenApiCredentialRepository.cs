@@ -36,4 +36,17 @@ public sealed class OpenApiCredentialRepository(IUnitOfWork unitOfWork)
                 setters => setters.SetProperty(credential => credential.LastUsedAt, (DateTimeOffset?)now),
                 ct);
     }
+
+    public async Task<bool> RevokeAsync(Guid id, DateTimeOffset now, CancellationToken ct = default)
+    {
+        DateTimeOffset? revokedAt = now.ToUniversalTime();
+        var affected = await dbContext.Set<OpenApiCredential>()
+            .Where(credential => credential.Id == id)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(credential => credential.IsActive, false)
+                    .SetProperty(credential => credential.RevokedAt, credential => credential.RevokedAt ?? revokedAt),
+                ct);
+        return affected == 1;
+    }
 }
