@@ -89,8 +89,12 @@ public sealed class SecondFactorRecoveryService(
     public async Task ResetAsync(Guid userId, Guid actorId, string reason, CancellationToken ct = default)
     {
         ArgumentOutOfRangeException.ThrowIfEqual(actorId, Guid.Empty);
-        _ = await userRepository.FindByIdAsync(userId, ct)
+        var target = await userRepository.FindByIdAsync(userId, ct)
             ?? throw new KeyNotFoundException("用户不存在。");
+        // Same protection as every other UserManagementService mutation: an
+        // administrator must not strip the bootstrap account's factors and sessions.
+        if (target.IsSystemAccount)
+            throw new InvalidOperationException("System account second factors cannot be reset.");
         await using var attempt = await userRepository.BeginAuthenticationAttemptAsync(userId, ct)
             ?? throw new InvalidOperationException("The account is busy with another authentication operation.");
         await recoveryRepository.ExecuteInTransactionAsync(async transactionCt =>

@@ -83,6 +83,24 @@ public sealed class SecondFactorRecoveryServiceTests
         Assert.False(harness.User.IsActive);
     }
 
+    [Fact]
+    public async Task Reset_rejects_system_accounts_without_touching_factors_or_sessions()
+    {
+        var harness = new Harness();
+        await harness.Service.GenerateCodesAsync(harness.User.Id);
+        harness.User.MarkAsSystemAccount();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Service.ResetAsync(harness.User.Id, Guid.NewGuid(), "attempt to strip the bootstrap admin"));
+
+        Assert.True(harness.Totp.IsEnabled);
+        Assert.Equal(10, harness.RecoveryCodes.Count);
+        Assert.Equal(0, harness.RefreshTokenRevocations);
+        Assert.Equal(0, harness.SessionRevocations);
+        Assert.Null(harness.User.TokenInvalidBefore);
+        Assert.Empty(harness.Audits);
+    }
+
     private sealed class Harness
     {
         private readonly List<UserRecoveryCode> recoveryCodes = [];

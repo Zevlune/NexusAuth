@@ -53,6 +53,22 @@ public sealed class CredentialLifecycleTests
         Assert.Equal(["scim:read", "scim:write"], (await service.CreateAsync("default", null, null)).Credential.Scopes);
     }
 
+    [Theory]
+    [InlineData("local-scim-integration-read", "nexusauth-local-scim-read-token-v1", "scim:read")]
+    [InlineData("local-scim-integration-read-write", "nexusauth-local-scim-read-write-token-v1", "scim:write")]
+    public async Task Publicly_known_legacy_scim_tokens_never_authenticate_even_when_still_active(
+        string name, string publicToken, string scope)
+    {
+        // Mirrors the rows the removed docker/postgres-init.sh left in older databases.
+        var legacy = ScimServicePrincipalCredential.CreateWithToken(name, publicToken, ["scim:read", "scim:write"], null);
+        Assert.Contains(legacy.TokenHash, ScimServicePrincipalCredential.PubliclyKnownTokenHashes);
+        Assert.True(legacy.IsActive);
+        var (service, _) = CreateScimService(legacy);
+
+        Assert.Equal(ScimCredentialValidationResult.InvalidToken, await service.AuthorizeAsync(publicToken, scope));
+        Assert.Null(legacy.LastUsedAt);
+    }
+
     [Fact]
     public async Task Expired_scim_credential_can_be_edited_when_the_expiry_is_unchanged()
     {

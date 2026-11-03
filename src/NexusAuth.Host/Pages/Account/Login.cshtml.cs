@@ -187,6 +187,22 @@ public class LoginModel(
                 StringComparison.OrdinalIgnoreCase);
             if (totpRequired && !totpEnabled)
             {
+                // An enabled passkey already satisfies the required second
+                // factor. Letting a primary factor alone enroll a fresh TOTP
+                // here would let anyone holding the password replace it.
+                var passkeys = await webAuthnService.GetEnabledCredentialsAsync(user.Id, HttpContext.RequestAborted);
+                if (passkeys.Count > 0)
+                {
+                    await RecordLoginAsync(user.Id, false, "PasskeyRequired");
+                    ErrorMessage = PasskeyEnabled
+                        ? "This account is protected by a passkey. Sign in with your passkey."
+                        : "This account is protected by a passkey, but passkey sign-in is disabled. Contact an administrator.";
+                    Password = string.Empty;
+                    await TryExtractClientNameAsync();
+                    RefreshSliderCaptchaChallenge();
+                    return Page();
+                }
+
                 return await TotpEnrollmentFlow.StartAsync(HttpContext, user, GetLocalReturnUrl(ReturnUrl),
                     _flowOptions.AllowRememberMe && RememberMe, EmailLogin ? "email" : "pwd",
                     _flowOptions, totpService, flowStateProtector, HttpContext.RequestAborted);
