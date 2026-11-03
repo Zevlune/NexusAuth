@@ -11,7 +11,8 @@
   },
   "Security": {
     "CookieSecurePolicy": "SameAsRequest",
-    "ForwardedHeadersEnabled": false
+    "ForwardedHeadersEnabled": true,
+    "KnownNetworks": "172.30.56.0/28"
   },
   "Swagger": {
     "Enabled": false

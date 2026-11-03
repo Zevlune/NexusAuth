@@ -11,9 +11,9 @@
   },
   "Security": {
     "CookieSecurePolicy": "Always",
-    "ForwardedHeadersEnabled": false,
+    "ForwardedHeadersEnabled": true,
     "KnownProxies": "",
-    "KnownNetworks": ""
+    "KnownNetworks": "172.30.56.0/28"
   },
   "Swagger": {
     "Enabled": false
