@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NexusAuth.Application;
@@ -37,9 +38,51 @@ public sealed class UsersControllerTests
             targetId, new ResetManagedUserPasswordRequest("NewPassw0rd!"), CancellationToken.None));
         Assert.IsType<NoContentResult>(await harness.Controller.Delete(targetId, CancellationToken.None));
         Assert.IsType<NoContentResult>(await harness.Controller.RevokeTokens(targetId, CancellationToken.None));
+        Assert.IsType<NoContentResult>(await harness.Controller.ResetSecondFactor(
+            targetId, new ResetSecondFactorRequest("Lost authenticator"), harness.Recovery, CancellationToken.None));
 
-        Assert.Equal(8, harness.ServiceCalls.Count);
+        Assert.Equal(9, harness.ServiceCalls.Count);
         Assert.Equal("no-store", harness.Controller.Response.Headers.CacheControl);
+    }
+
+    [Fact]
+    public async Task Reset_second_factor_uses_the_name_identifier_claim_not_a_body_actor()
+    {
+        var harness = new Harness();
+        var targetId = Guid.NewGuid();
+        var actorId = Guid.NewGuid();
+        var body = JsonSerializer.Deserialize<ResetSecondFactorRequest>(
+            $"{{\"reason\":\"Lost authenticator\",\"actorId\":\"{Guid.NewGuid()}\"}}",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        harness.Controller.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, actorId.ToString())], "test"));
+
+        var result = await harness.Controller.ResetSecondFactor(
+            targetId, body, harness.Recovery, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        var call = Assert.Single(harness.ServiceCalls, item => item.Source == "recovery");
+        Assert.Equal(nameof(ISecondFactorRecoveryService.ResetAsync), call.Method.Name);
+        Assert.Equal(targetId, call.Arguments![0]);
+        Assert.Equal(actorId, call.Arguments[1]);
+        Assert.Equal("Lost authenticator", call.Arguments[2]);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("invalid")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public async Task Reset_second_factor_forbids_requests_without_a_valid_name_identifier(string? subject)
+    {
+        var harness = new Harness();
+        harness.Controller.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            subject is null ? [] : [new Claim(ClaimTypes.NameIdentifier, subject)], "test"));
+
+        var result = await harness.Controller.ResetSecondFactor(
+            Guid.NewGuid(), new ResetSecondFactorRequest("Lost authenticator"), harness.Recovery, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+        Assert.DoesNotContain(harness.ServiceCalls, item => item.Source == "recovery");
     }
 
     [Fact]
@@ -122,6 +165,11 @@ public sealed class UsersControllerTests
                     _ => null,
                 };
             });
+            Recovery = RecordingDispatchProxy.Create<ISecondFactorRecoveryService>((method, args) =>
+            {
+                ServiceCalls.Add(new RecordedProxyCall("recovery", method, args));
+                return null;
+            });
             Dto = new ManagedUserDto(
                 Guid.NewGuid(), "managed", "Managed", "managed@example.com", "13800000000", true,
                 null, null, null, null, null, null, null, null, false, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
@@ -131,6 +179,8 @@ public sealed class UsersControllerTests
             {
                 ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
             };
+            Controller.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+                [new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString())], "test"));
         }
 
         public Dictionary<string, Exception?> Exceptions { get; } = [];
@@ -139,5 +189,6 @@ public sealed class UsersControllerTests
         public PagedResult<ManagedUserDto> Paged { get; }
         public ManagedUserDto? ById { get; set; }
         public UsersController Controller { get; }
+        public ISecondFactorRecoveryService Recovery { get; }
     }
 }

@@ -1,10 +1,13 @@
 using NexusAuth.Application;
+using NexusAuth.Application.Clients;
+using NexusAuth.Domain.AggregateRoots.OAuthClients;
 
 namespace NexusAuth.Application.Services.ApiResources;
 
 public class ApiResourceService(
     IApiResourceRepository apiResourceRepository,
-    IClientApiResourceRepository clientApiResourceRepository) : IApiResourceService
+    IClientApiResourceRepository clientApiResourceRepository,
+    IOAuthClientRepository clientRepository) : IApiResourceService
 {
     public async Task<List<ApiResourceDto>> GetAllAsync(string? keyword = null, bool? isActive = null, CancellationToken ct = default)
     {
@@ -45,6 +48,10 @@ public class ApiResourceService(
         if (existing is not null)
             throw new ApiResourceAlreadyExistsException(name);
 
+        var audienceOwner = await apiResourceRepository.FindByAudienceAsync(audience, ct);
+        if (audienceOwner is not null)
+            throw new ApiResourceAlreadyExistsException(audience);
+
         var resource = ApiResource.Create(name, displayName, audience, description);
         await apiResourceRepository.AddAsync(resource, ct);
 
@@ -67,6 +74,14 @@ public class ApiResourceService(
     {
         var resource = await apiResourceRepository.FindByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Api resource with id {id} not found.");
+        EnsureNotSystemManaged(resource);
+
+        if (request.Audience is not null
+            && !string.Equals(request.Audience, resource.Audience, StringComparison.Ordinal))
+        {
+            throw new WorkbenchBusinessConflictException(
+                $"API resource audience '{resource.Audience}' cannot be changed after creation.");
+        }
 
         resource.Update(
             request.DisplayName,
@@ -82,6 +97,7 @@ public class ApiResourceService(
     {
         var resource = await apiResourceRepository.FindByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Api resource with id {id} not found.");
+        EnsureNotSystemManaged(resource);
 
         resource.Update(isActive: isActive);
         await apiResourceRepository.UpdateAsync(resource, ct);
@@ -93,8 +109,8 @@ public class ApiResourceService(
         var resource = await apiResourceRepository.FindByIdAsync(id, ct);
         if (resource is null)
             throw new KeyNotFoundException($"Api resource with id {id} not found.");
+        EnsureNotSystemManaged(resource);
 
-        await clientApiResourceRepository.RemoveByApiResourceIdAsync(id, ct);
         await apiResourceRepository.DeleteAsync(resource, ct);
     }
 
@@ -105,6 +121,12 @@ public class ApiResourceService(
         Guid apiResourceId,
         CancellationToken ct = default)
     {
+        var (client, resource) = await EnsureAssociationCanChangeAsync(clientId, apiResourceId, ct);
+        var existing = await clientApiResourceRepository.GetResourcesByClientIdAsync(clientId, ct);
+        if (existing.Any(associatedResource => associatedResource.Id == apiResourceId)
+            && client.AllowedScopes.Contains(resource.Audience, StringComparer.Ordinal))
+            return;
+
         var association = ClientApiResource.Create(clientId, apiResourceId);
         await clientApiResourceRepository.AddAsync(association, ct);
     }
@@ -116,6 +138,12 @@ public class ApiResourceService(
         Guid apiResourceId,
         CancellationToken ct = default)
     {
+        var (client, resource) = await EnsureAssociationCanChangeAsync(clientId, apiResourceId, ct);
+        var existing = await clientApiResourceRepository.GetResourcesByClientIdAsync(clientId, ct);
+        if (!existing.Any(associatedResource => associatedResource.Id == apiResourceId)
+            && !client.AllowedScopes.Contains(resource.Audience, StringComparer.Ordinal))
+            return;
+
         await clientApiResourceRepository.RemoveAsync(clientId, apiResourceId, ct);
     }
 
@@ -145,7 +173,33 @@ public class ApiResourceService(
             resource.Audience,
             resource.Description,
             resource.IsActive,
-            resource.CreatedAt);
+            resource.CreatedAt,
+            resource.IsSystemManaged);
+    }
+
+    private async Task<(OAuthClient Client, ApiResource Resource)> EnsureAssociationCanChangeAsync(
+        Guid clientId,
+        Guid apiResourceId,
+        CancellationToken ct)
+    {
+        var resource = await apiResourceRepository.FindByIdAsync(apiResourceId, ct);
+        if (resource is null)
+            throw new KeyNotFoundException($"Api resource with id {apiResourceId} not found.");
+        EnsureNotSystemManaged(resource);
+
+        var client = await clientRepository.GetByIdAsync(clientId, ct);
+        if (client is null)
+            throw new KeyNotFoundException($"Client with id {clientId} not found.");
+        if (client.IsSystemManaged)
+            throw new WorkbenchBusinessConflictException($"Client '{client.ClientId}' is managed by Workbench configuration (由 Workbench 配置托管).");
+
+        return (client, resource);
+    }
+
+    private static void EnsureNotSystemManaged(ApiResource resource)
+    {
+        if (resource.IsSystemManaged)
+            throw new WorkbenchBusinessConflictException($"API resource '{resource.Name}' is managed by Workbench configuration (由 Workbench 配置托管).");
     }
 
     private static int NormalizePageSize(int pageSize)

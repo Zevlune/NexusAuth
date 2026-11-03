@@ -36,10 +36,21 @@ public class ApiResourceConfiguration : IEntityTypeConfiguration<ApiResource>
             .HasColumnName("is_active")
             .IsRequired();
 
+        builder.Property(r => r.IsSystemManaged)
+            .HasColumnName("is_system_managed")
+            .IsRequired();
+
         builder.Property(r => r.CreatedAt)
             .HasColumnName("created_at")
             .IsRequired();
 
+        // PostgreSQL's system xmin prevents a stale resource snapshot from
+        // restoring an old audience or IsSystemManaged value.
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .IsRowVersion();
+
         builder.HasIndex(r => r.Name).IsUnique();
+        builder.HasIndex(r => r.Audience).IsUnique();
     }
 }

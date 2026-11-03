@@ -16,7 +16,8 @@ public record ClientDto(
     bool RequirePkce,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    bool RequireConsent = false)
+    bool RequireConsent = false,
+    bool IsSystemManaged = false)
 {
     public List<Guid> ApiResourceIds { get; init; } = [];
 }

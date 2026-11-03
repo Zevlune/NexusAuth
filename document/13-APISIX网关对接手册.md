@@ -1,10 +1,10 @@
-# APISIX Dashboard 手工配置 NexusAuth OIDC 手册
+# APISIX Admin API 手工配置 NexusAuth OIDC 手册
 
 > 状态：历史参考。Workbench 已移除网关接入和 Bearer 认证模式，本文将网关令牌转发给 Workbench 的示例不适用于当前版本。当前 Workbench 使用 Cookie + OIDC BFF，部署见 [Workbench 使用手册](./Workbench使用手册.md)；独立认证服务见 [Host 使用手册](./NexusAuth.Host使用手册.md)。
 
-当前本地已有的网关 OIDC 路由为 `http://localhost:9180/auth/me`，回调为 `http://localhost:9180/auth/callback`，进入时会跳转到 `http://localhost:5100` 登录。下文 `/api/*` 是另建路由的手工示例，并非当前已部署路由。根 Compose 必须先运行；本地启动使用 `./docker/apisix/start-local.sh`。APISIX 的 9180 和 Dashboard 的 9000 都只绑定宿主机回环地址。
+当前本地已有的网关 OIDC 路由为 `http://localhost:9180/auth/me`，回调为 `http://localhost:9180/auth/callback`，进入时会跳转到 `http://localhost:5100` 登录。下文 `/api/*` 是另建路由的手工示例，并非当前已部署路由。根 Compose 必须先运行；本地启动使用 `./docker/apisix/start-local.sh`。APISIX 的数据面只绑定宿主机回环地址，Admin API 不映射到宿主机。
 
-本文只通过 APISIX Dashboard 配置网关，不使用 NexusAuth 启动初始化自动创建网关应用或路由。`docker-compose.apisix.yml` 只负责启动 APISIX、etcd 和 APISIX Dashboard。请先在 NexusAuth Dashboard 创建网关 OAuth 应用并生成密钥；Workbench API 重启不会修改已有网关应用。
+本文只通过 APISIX Admin API 配置网关，不使用 NexusAuth 启动初始化自动创建网关应用或路由。`docker-compose.apisix.yml` 只负责启动 APISIX 和 etcd。旧版 APISIX Dashboard 3.0 会直接把 JSON 写入 etcd，无法参与 APISIX 的字段加密流程，因此不再随 Compose 部署。请先在 Workbench Dashboard 创建网关 OAuth 应用并生成密钥；Workbench API 重启不会修改已有网关应用。
 
 ## 1. 最终访问关系
 
@@ -25,18 +25,21 @@
 | NexusAuth SSO | `http://localhost:5100` | 否，浏览器直接访问 |
 | Workbench Dashboard | `http://localhost:5560` | 否 |
 | APISIX Gateway | `http://localhost:9180` | 是，承载业务 API |
-| APISIX Dashboard | `http://127.0.0.1:9000` | 否，仅运维使用 |
 
 ## 2. 启动基础容器
 
-本地环境先启动根目录的 NexusAuth Compose，再启动 APISIX。启动脚本会生成并复用忽略提交的 `.env.apisix.local` 管理密钥，并自动创建 `localhost:5100` 的内部回源路由：
+本地环境先启动根目录的 NexusAuth Compose，再启动 APISIX。启动脚本会生成并复用忽略提交的 `.env.apisix.local` 管理密钥，并要求通过外部环境变量提供稳定的 16 位十六进制 `APISIX_DATA_ENCRYPTION_KEY`；它还会自动创建 `localhost:5100` 的内部回源路由：
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# 先从密钥管理系统加载并导出已保存的字段加密 key。
+: "${APISIX_DATA_ENCRYPTION_KEY:?请提供已持久保存的字段加密 key}"
 ./docker/apisix/start-local.sh
 ```
 
-APISIX 直接加入根 Compose 已创建的 `nexusauth_default` 网络，能通过 `sso:8080` 与 `admin-api:8080` 访问内部服务。无需手工创建 `nexusauth-gateway` 网络。如果要自行设置管理密钥，可在执行脚本前设置至少 32 字符的 `APISIX_ADMIN_KEY` 环境变量；不要把密钥提交到仓库。现有 `/auth/*` OIDC 路由的客户端密钥保存在 etcd 卷中，启动脚本不会创建或重置它；全新部署需先在 Workbench 创建 Client、密钥与路由。
+仅首次部署时可用 `openssl rand -hex 8` 生成字段加密 key，并立即保存到密钥管理系统。不要在每次启动命令中重新生成它；已有 etcd 数据必须使用原 key 解密。
+
+APISIX 同时加入根 Compose 的 `nexusauth_default` 网络和独立的内部 etcd 网络：前者只用于访问 `sso:8080` 与 `admin-api:8080`，后者只用于访问 etcd。etcd 不映射宿主机端口。执行脚本前可自行设置至少 32 字符的 `APISIX_ADMIN_KEY` 环境变量；不要把管理密钥或字段加密 key 提交到仓库。字段加密 key 必须在重启和迁移时保持不变。新写入的 `/auth/*` OIDC 路由敏感字段会由 APISIX 加密后保存；旧卷中由 Dashboard 或直接 etcd 写入的历史明文不会自动迁移，必须备份后通过 Admin API 重写敏感字段。启动脚本不会创建或重置已有路由；全新部署需先在 Workbench 创建 Client、密钥与路由。
 
 检查状态：
 
@@ -47,18 +50,13 @@ docker ps --filter name=nexusauth-apisix
 
 如果自行设置了环境变量而未生成 `.env.apisix.local`，检查状态时继续使用同一个变量。
 
-打开 APISIX Dashboard：`http://127.0.0.1:9000`
-
-- 用户名：`admin`
-- 密码：`admin`
-
-这是本地开发账号。生产环境必须修改 `docker/apisix/dashboard.yaml` 中的密码与 JWT secret，并限制管理端口访问来源。
+APISIX Admin API 只在容器内部监听。需要读取或修改路由、Plugin Config 时，在受信任的管理网络中调用 Admin API，并通过 `X-API-KEY: $APISIX_ADMIN_KEY` 认证；不要直接读写 etcd。`start-local.sh` 已用同一 API 写入回源路由。
 
 ## 3. NexusAuth Client 前置检查
 
 本地 HTTP 演示须显式使用 `docker-compose.local.yml`，以关闭 HTTPS metadata 要求并设置 `SameAsRequest` Cookie；生产部署保留 HTTPS 和 Secure Cookie 默认值。
 
-先打开 Workbench：`http://localhost:5560`，进入应用管理。若不存在 Client `nexusauth.apisix.gateway`，先在 Dashboard 创建一个 Confidential client、生成密钥并登记回调；不要依赖 Workbench API 启动初始化创建网关应用。已有网关应用不会因 API 重启而修改。
+先打开 Workbench：`http://localhost:5560`，进入应用管理。若不存在 Client `nexusauth.apisix.gateway`，先在 Workbench Dashboard 创建一个 Confidential client、生成密钥并登记回调；不要依赖 Workbench API 启动初始化创建网关应用。已有网关应用不会因 API 重启而修改。
 
 必须满足以下条件：
 
@@ -76,7 +74,7 @@ docker ps --filter name=nexusauth-apisix
 | API scope | `nexusauth.workbench.api`，或目标服务的 audience |
 | 状态 | Active |
 
-Client secret 只填写到 APISIX Dashboard 的 OIDC 配置中，不写入前端代码或文档。
+Client secret 只提交给受保护的 APISIX Admin API，不写入前端代码或文档。Admin API 会让 APISIX 按 `data_encryption.keyring` 配置加密后保存敏感字段；不要直接向 etcd 写 JSON。
 
 如果以后保护订单服务，应先在 NexusAuth 创建 audience 为 `orders-api` 的服务资源，并把该资源绑定到这个 Client。APISIX 中填写 scope 不会自动创建 NexusAuth 授权关系。
 
@@ -86,7 +84,7 @@ Client secret 只填写到 APISIX Dashboard 的 OIDC 配置中，不写入前端
 
 NexusAuth discovery 的 issuer 和端点是 `http://localhost:5100`。浏览器访问这个地址时直接进入 SSO 容器；但 APISIX 容器访问 `localhost:5100` 时，localhost 指向 APISIX 自己。因此 APISIX 配置为在容器内部监听 `5100`，需要一条仅匹配该端口的回源路由。
 
-`start-local.sh` 会自动写入这条路由，不需要手工创建。若需要在 APISIX Dashboard 检查，进入 **Routes**，应看到：
+`start-local.sh` 会自动通过 APISIX Admin API 写入这条路由，不需要手工创建。可通过 Admin API 查询路由，核心配置应为：
 
 | 字段 | 值 |
 | --- | --- |
@@ -160,16 +158,16 @@ NexusAuth discovery 的 issuer 和端点是 `http://localhost:5100`。浏览器�
 
 结论：如果只看 APISIX schema，必填是 `client_id`、`client_secret`、`discovery`；如果要让当前 NexusAuth 登录链路真正可用，请把表中“本方案必须”的字段全部填写。
 
-### 5.2 Dashboard 表单填写
+### 5.2 通过 Admin API 写入
 
-进入 **Plugin Configs -> Create**：
+向 APISIX Admin API 的 `/apisix/admin/plugin_configs/nexus-oidc-workbench` 发送带 `X-API-KEY` 的 `PUT` 请求。请求体使用下面的 JSON，敏感字段只在受控终端输入：
 
 | 字段 | 值 |
 | --- | --- |
 | ID | `nexus-oidc-workbench` |
 | Description | `NexusAuth OIDC for Workbench API` |
 
-添加并启用 `openid-connect` 插件，逐项填写：
+请求体中的 `openid-connect` 插件字段如下：
 
 | OIDC 字段 | 值 | 说明 |
 | --- | --- | --- |
@@ -189,13 +187,13 @@ NexusAuth discovery 的 issuer 和端点是 `http://localhost:5100`。浏览器�
 | `set_userinfo_header` | `true` | 需要时传递用户信息 |
 | `session.secret` | 独立的 32 字节以上随机值 | 不要与 Client secret 相同 |
 
-可用以下命令只生成 session secret，然后手工填入 Dashboard：
+可用以下命令只生成 session secret，然后放入 Admin API 请求体：
 
 ```bash
 openssl rand -base64 48
 ```
 
-APISIX Dashboard 3.0.1 的表单可能不显示所有高级字段。至少必须保存 `client_id`、`client_secret`、`discovery`、`redirect_uri`、`scope`、`use_pkce=true`、`bearer_only=false`、`session.secret`。如果 `unauth_action` 没有表单项，`bearer_only=false` 下默认行为即为浏览器认证跳转；保存后必须通过实际 302 验证。
+至少必须写入 `client_id`、`client_secret`、`discovery`、`redirect_uri`、`scope`、`use_pkce=true`、`bearer_only=false`、`session.secret`。保存后必须通过实际 302 验证。不要把请求体保存到仓库或日志。
 
 ### 5.3 完整 JSON 模板
 
@@ -230,13 +228,13 @@ APISIX Dashboard 3.0.1 的表单可能不显示所有高级字段。至少必须
 }
 ```
 
-Dashboard 以表单方式保存时，最终返回的 JSON 可能自动补充默认字段，这是正常现象。判断是否正确时，以 `client_id`、discovery、redirect URI、scope、PKCE、会话 secret 和未登录跳转行为为准。
+APISIX Admin API 返回的 JSON 可能自动补充默认字段，且敏感字段可能在响应中被解密，这是正常现象。判断是否正确时，以 `client_id`、discovery、redirect URI、scope、PKCE、会话 secret 和未登录跳转行为为准；不要使用 etcd 原始值作为验证接口。
 
-“插件系统”页面表示 APISIX 安装了哪些插件以及全局规则状态。创建 Plugin Config 不会把 `openid-connect` 标记为全局启用，这是正常状态；实际生效由 Route 引用该 Plugin Config 决定。
+APISIX 的插件清单和全局规则可通过 Admin API 查询。创建 Plugin Config 不会把 `openid-connect` 标记为全局启用，这是正常状态；实际生效由 Route 引用该 Plugin Config 决定。
 
 ## 6. 创建业务 API Route
 
-进入 **Routes -> Create**：
+向 APISIX Admin API 的 `/apisix/admin/routes/nexus-api-gateway` 发送带 `X-API-KEY` 的 `PUT` 请求：
 
 | 字段 | 值 |
 | --- | --- |
@@ -342,7 +340,7 @@ const api = axios.create({
 
 | 现象 | 原因与处理 |
 | --- | --- |
-| Dashboard 插件系统显示 OIDC“未启用” | 它没有作为 Global Rule 启用。检查 Plugin Config 是否存在、Route 是否引用它。 |
+| Admin API 返回 401 | 检查 `X-API-KEY` 是否与 `APISIX_ADMIN_KEY` 一致，以及请求是否来自受信任管理网络。 |
 | 请求返回 404 | 检查业务 Route URI、状态、Upstream；确认 backchannel Route 只匹配端口 5100。 |
 | 没有跳转登录页 | 检查 `bearer_only=false`、Plugin Config 已被 Route 引用，并清除旧 session Cookie。 |
 | 授权地址没有 `code_challenge` | `use_pkce` 未启用。 |
@@ -357,7 +355,7 @@ const api = axios.create({
 
 ```bash
 docker compose -f docker-compose.apisix.yml logs --tail=200 apisix
-docker compose -f docker-compose.apisix.yml logs --tail=200 apisix-dashboard
+docker compose -f docker-compose.apisix.yml logs --tail=200 apisix-etcd
 ```
 
 ## 11. 生产环境调整
@@ -365,6 +363,6 @@ docker compose -f docker-compose.apisix.yml logs --tail=200 apisix-dashboard
 - 使用真实 HTTPS 域名，不再使用本地 `5100` backchannel Route。
 - issuer、discovery 中的端点和 redirect URI 必须使用浏览器与 APISIX 都能访问的 HTTPS 地址。
 - `ssl_verify=true`，session Cookie 使用 Secure。
-- APISIX Dashboard 和 Admin API 不对公网开放。
+- APISIX Admin API 不对公网开放。
 - Client secret、session secret、Admin key 使用 Vault、Kubernetes Secret 或等价密钥管理服务。
-- 修改默认 Dashboard 账号密码，并限制管理网络来源。
+- APISIX 字段加密 key 使用 Vault、Kubernetes Secret 或等价密钥管理服务，并在轮换时保留旧 key 以解密已有数据。

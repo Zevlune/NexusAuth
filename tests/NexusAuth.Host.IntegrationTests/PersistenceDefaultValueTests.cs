@@ -58,6 +58,7 @@ public sealed class PersistenceDefaultValueTests
         Assert.Equal(false, values["require_pkce"]);
         Assert.Equal(false, values["require_consent"]);
         Assert.Equal(true, values["is_active"]);
+        Assert.Equal(false, values["is_system_managed"]);
     }
 
     private static AuthDbContext CreateContext(params IInterceptor[] interceptors) =>

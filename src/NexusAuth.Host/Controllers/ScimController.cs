@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using NexusAuth.Application.Services.Scim;
 using NexusAuth.Host.Filters;
 
@@ -79,6 +80,7 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
             return Scim(ToResponse(user), 201, user);
         }
         catch (ScimOperationException exception) { return ScimError(exception); }
+        catch (DbUpdateConcurrencyException) { return ScimError(412, null, "The resource changed before the operation completed."); }
         catch (ArgumentException exception) { return ScimError(400, "invalidValue", exception.Message); }
     }
 
@@ -94,6 +96,7 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
             return user is null ? UserNotFound() : ScimUser(user);
         }
         catch (ScimOperationException exception) { return ScimError(exception); }
+        catch (DbUpdateConcurrencyException) { return ScimError(412, null, "The resource changed before the operation completed."); }
         catch (ArgumentException exception) { return ScimError(400, "invalidValue", exception.Message); }
     }
 
@@ -109,6 +112,7 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
             return user is null ? UserNotFound() : ScimUser(user);
         }
         catch (ScimOperationException exception) { return ScimError(exception); }
+        catch (DbUpdateConcurrencyException) { return ScimError(412, null, "The resource changed before the operation completed."); }
         catch (ArgumentException exception) { return ScimError(400, "invalidValue", exception.Message); }
     }
 
@@ -121,6 +125,7 @@ public sealed class ScimController(IScimUserService scimUserService) : Controlle
             return await scimUserService.DeleteAsync(id, Request.Headers.IfMatch, ct) ? NoContent() : UserNotFound();
         }
         catch (ScimOperationException exception) { return ScimError(exception); }
+        catch (DbUpdateConcurrencyException) { return ScimError(412, null, "The resource changed before the operation completed."); }
     }
 
     private IActionResult ScimUser(ScimUser user) => Scim(ToResponse(user), 200, user);

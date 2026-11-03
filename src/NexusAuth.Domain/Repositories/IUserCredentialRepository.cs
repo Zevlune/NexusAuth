@@ -10,7 +10,8 @@ public interface IUserCredentialRepository : IEntityRepository<UserCredential, G
     Task<IReadOnlyList<UserCredential>> GetEnabledTotpAsync(Guid userId, CancellationToken ct = default);
     Task<IReadOnlyList<UserCredential>> GetTotpAsync(Guid userId, CancellationToken ct = default);
     Task<UserCredential?> FindPendingTotpAsync(Guid userId, string protectedSecret, CancellationToken ct = default);
-    Task<bool> TryConfirmTotpAsync(Guid credentialId, Guid userId, string expectedProtectedSecret, long counter, DateTimeOffset now, CancellationToken ct = default);
+    Task<bool> TryConfirmTotpAsync(Guid credentialId, Guid userId, string expectedProtectedSecret, long counter, DateTimeOffset now, uint expectedUserVersion, CancellationToken ct = default);
     Task<bool> TryUseTotpCounterAsync(Guid credentialId, Guid userId, long counter, DateTimeOffset now, CancellationToken ct = default);
     Task<bool> DisableAsync(Guid credentialId, Guid userId, DateTimeOffset now, CancellationToken ct = default);
+    Task<int> DisableAllTotpAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default);
 }

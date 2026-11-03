@@ -156,10 +156,6 @@ public sealed class ClientServiceHardeningTests
 
         Assert.Equal(
             [
-                "RevokeAllForClientAsync:doomed-client",
-                "InvalidateUnusedForClientAsync:doomed-client",
-                "DenyOutstandingForClientAsync:doomed-client",
-                $"RemoveByClientIdAsync:{client.Id}",
                 "DeleteAsync:doomed-client",
             ],
             harness.Calls);
@@ -381,7 +377,7 @@ public sealed class ClientServiceHardeningTests
                 switch (method.Name)
                 {
                     case nameof(IClientApiResourceRepository.GetResourcesByClientIdAsync):
-                        return (IReadOnlyList<ApiResource>)[];
+                        return (IReadOnlyList<ApiResource>)[.. Resources];
                     case nameof(IClientApiResourceRepository.RemoveByClientIdAsync):
                         Calls.Add($"RemoveByClientIdAsync:{args![0]}");
                         return null;
@@ -393,18 +389,6 @@ public sealed class ClientServiceHardeningTests
             {
                 if (method.Name == nameof(IRefreshTokenRepository.RevokeAllForClientAsync))
                     Calls.Add($"RevokeAllForClientAsync:{args![0]}");
-                return null;
-            });
-            var codes = HardeningProxy.Create<IAuthorizationCodeRepository>((method, args) =>
-            {
-                if (method.Name == nameof(IAuthorizationCodeRepository.InvalidateUnusedForClientAsync))
-                    Calls.Add($"InvalidateUnusedForClientAsync:{args![0]}");
-                return null;
-            });
-            var devices = HardeningProxy.Create<IDeviceAuthorizationRepository>((method, args) =>
-            {
-                if (method.Name == nameof(IDeviceAuthorizationRepository.DenyOutstandingForClientAsync))
-                    Calls.Add($"DenyOutstandingForClientAsync:{args![0]}");
                 return null;
             });
             var blacklist = HardeningProxy.Create<ITokenBlacklistRepository>((_, _) => null);
@@ -420,8 +404,6 @@ public sealed class ClientServiceHardeningTests
                 secrets,
                 associations,
                 refreshTokens,
-                codes,
-                devices,
                 _serviceProvider,
                 NullLogger<ClientService>.Instance);
         }

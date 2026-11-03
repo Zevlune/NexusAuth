@@ -141,10 +141,20 @@ public class InMemoryCredentialRepository : DispatchProxy
             "FindByTokenHashAsync" => Task.FromResult(store.FirstOrDefault(item => tokenHash(item) == (string)args[0]!)),
             "GetAllAsync" => Task.FromResult<IReadOnlyList<TEntity>>(store.ToArray()),
             "AddAsync" => AddAsync(store, (TEntity)args[0]!),
+            "RecordUseAsync" => Task.CompletedTask,
+            "RevokeAsync" => Task.FromResult(Revoke(store.FirstOrDefault(item => id(item) == (Guid)args[0]!))),
             "UpdateAsync" => Task.CompletedTask,
             _ => throw new NotSupportedException(method),
         };
         return proxy;
+    }
+
+    private static bool Revoke<TEntity>(TEntity? entity)
+    {
+        if (entity is null) return false;
+        var revoke = typeof(TEntity).GetMethod("Revoke")!;
+        revoke.Invoke(entity, revoke.GetParameters().Select(_ => (object?)null).ToArray());
+        return true;
     }
 
     private static Task AddAsync<TEntity>(List<TEntity> store, TEntity entity)

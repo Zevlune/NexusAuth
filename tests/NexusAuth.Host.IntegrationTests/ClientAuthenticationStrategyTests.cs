@@ -382,8 +382,6 @@ public class ClientAuthenticationStrategyTests
             null!,
             null!,
             null!,
-            null!,
-            null!,
             serviceProvider,
             NullLogger<ClientService>.Instance);
     }

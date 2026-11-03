@@ -17,10 +17,15 @@ public interface ITotpService : IScopedDependency
         string protectedSecret,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// Enables a pending authenticator. Anonymous onboarding must pass the
+    /// security epoch from its protected primary-factor proof.
+    /// </summary>
     Task<bool> ConfirmEnrollmentAsync(
         Guid userId,
         string protectedSecret,
         string code,
+        long? expectedTokenEpoch = null,
         CancellationToken ct = default);
 
     Task<bool> IsEnabledAsync(Guid userId, CancellationToken ct = default);

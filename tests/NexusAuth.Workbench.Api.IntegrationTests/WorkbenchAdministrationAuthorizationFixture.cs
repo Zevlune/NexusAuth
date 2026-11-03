@@ -145,6 +145,7 @@ public sealed class WorkbenchAdministrationAuthorizationFixture : IDisposable
                     method.Name == nameof(IUserManagementService.GetPagedAsync)
                         ? new PagedResult<ManagedUserDto>([], 0, 1, 10)
                         : null));
+                Replace(services, RecordingDispatchProxy.Create<ISecondFactorRecoveryService>((method, _) => null));
 
                 services.RemoveAll<INexusAuthTokenClient>();
                 services.AddScoped<INexusAuthTokenClient>(_ => tokenClient);

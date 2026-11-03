@@ -14,7 +14,7 @@ namespace NexusAuth.Application.Services.Email;
 public sealed class EmailAccountService(
     IUserRepository users, IUserService userService, IEmailVerificationCodeService codes,
     ISecurityPolicyService policy, ITotpService totp, ITokenService tokens, ISsoSessionService sessions,
-    ILogger<EmailAccountService> logger) : IEmailAccountService
+    ILogger<EmailAccountService> logger, ISecondFactorRecoveryService? recovery = null) : IEmailAccountService
 {
     /// <summary>
     /// 中文注释：找回密码的所有失败（账号不存在/不可用、邮箱验证码错误、动态码错误）统一返回这一条提示，
@@ -89,7 +89,7 @@ public sealed class EmailAccountService(
         var authenticated = await userService.ValidateCredentialsAsync(user.Username, password, ct);
         if (authenticated?.Id != id || !policy.CheckUser(user).IsSuccess)
             throw new InvalidOperationException("当前密码无效或账号不可用。");
-        if (await totp.IsEnabledAsync(id, ct) && !await totp.ValidateAsync(id, otp ?? "", ct))
+        if (await totp.IsEnabledAsync(id, ct) && !await ValidateSecondFactorAsync(id, otp, ct))
             throw new InvalidOperationException("动态验证码无效。");
         return user;
     }
@@ -130,7 +130,7 @@ public sealed class EmailAccountService(
         if (!Eligible(user) || string.IsNullOrWhiteSpace(code)
             || !codes.TryVerify(user!.Email!, "reset-password", Binding(user), code))
             throw new InvalidOperationException(ResetFailedMessage);
-        if (await totp.IsEnabledAsync(user.Id, ct) && !await totp.ValidateAsync(user.Id, otp ?? "", ct))
+        if (await totp.IsEnabledAsync(user.Id, ct) && !await ValidateSecondFactorAsync(user.Id, otp, ct))
             throw new InvalidOperationException(ResetFailedMessage);
         if (!codes.TryConsume(user.Email!, "reset-password", Binding(user), code))
             throw new InvalidOperationException(ResetFailedMessage);
@@ -143,4 +143,18 @@ public sealed class EmailAccountService(
 
     private bool Eligible(User? user) => user is { IsActive: true } && !string.IsNullOrWhiteSpace(user.Email)
         && !user.IsLoginLocked(DateTimeOffset.UtcNow) && policy.CheckUser(user).IsSuccess;
+
+    private Task<bool> ValidateSecondFactorAsync(Guid userId, string? code, CancellationToken ct)
+    {
+        var normalized = SecondFactorCode.Normalize(code);
+        // Six-digit TOTP failures remain on the existing TOTP path. Recovery
+        // codes have their own atomic consume and lockout accounting, so a
+        // request must never validate against both stores.
+        if (SecondFactorCode.IsTotp(normalized))
+            return totp.ValidateAsync(userId, normalized, ct);
+
+        return recovery is null
+            ? Task.FromResult(false)
+            : recovery.RedeemAsync(userId, normalized, ct);
+    }
 }

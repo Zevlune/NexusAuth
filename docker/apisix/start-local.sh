@@ -18,6 +18,22 @@ if [ "${#APISIX_ADMIN_KEY}" -lt 32 ]; then
 fi
 export APISIX_ADMIN_KEY
 
+if [ -z "${APISIX_DATA_ENCRYPTION_KEY:-}" ]; then
+    printf '%s\n' 'APISIX_DATA_ENCRYPTION_KEY must be provided externally.' >&2
+    exit 1
+fi
+if [ "${#APISIX_DATA_ENCRYPTION_KEY}" -ne 16 ]; then
+    printf '%s\n' 'APISIX_DATA_ENCRYPTION_KEY must contain exactly 16 hexadecimal characters.' >&2
+    exit 1
+fi
+case "$APISIX_DATA_ENCRYPTION_KEY" in
+    *[!0-9A-Fa-f]*)
+        printf '%s\n' 'APISIX_DATA_ENCRYPTION_KEY must contain exactly 16 hexadecimal characters.' >&2
+        exit 1
+        ;;
+esac
+export APISIX_DATA_ENCRYPTION_KEY
+
 docker compose -f docker-compose.apisix.yml up -d
 
 # The public discovery endpoints use localhost:5100. Inside APISIX that address
@@ -33,4 +49,4 @@ until docker compose -f docker-compose.apisix.yml exec -T apisix \
     sleep 2
 done
 
-printf '%s\n' 'APISIX: http://localhost:9180' 'APISIX Dashboard: http://127.0.0.1:9000'
+printf '%s\n' 'APISIX: http://localhost:9180' 'APISIX Admin API: internal-only on 127.0.0.1:9181'

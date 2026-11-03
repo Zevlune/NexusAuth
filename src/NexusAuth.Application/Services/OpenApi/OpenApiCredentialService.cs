@@ -10,10 +10,10 @@ public sealed class OpenApiCredentialService(IOpenApiCredentialRepository creden
     {
         if (string.IsNullOrWhiteSpace(rawToken)) return false;
         var normalizedTargetType = OpenApiCredential.NormalizeTargetType(targetType);
+        var now = DateTimeOffset.UtcNow;
         var credential = await credentialRepository.FindByTokenHashAsync(OpenApiCredential.Hash(rawToken), ct);
-        if (credential is null || !credential.CanAuthenticate(normalizedTargetType, OpenApiCredential.GetReadScope(normalizedTargetType))) return false;
-        credential.RecordUse();
-        await credentialRepository.UpdateAsync(credential, ct);
+        if (credential is null || !credential.CanAuthenticate(normalizedTargetType, OpenApiCredential.GetReadScope(normalizedTargetType), now)) return false;
+        await credentialRepository.RecordUseAsync(credential.Id, now, ct);
         return true;
     }
 
@@ -47,14 +47,8 @@ public sealed class OpenApiCredentialService(IOpenApiCredentialRepository creden
         await credentialRepository.UpdateAsync(credential, ct);
         return Map(credential);
     }
-    public async Task<bool> RevokeAsync(Guid id, CancellationToken ct = default)
-    {
-        var credential = await credentialRepository.FindByIdAsync(id, ct);
-        if (credential is null) return false;
-        credential.Revoke();
-        await credentialRepository.UpdateAsync(credential, ct);
-        return true;
-    }
+    public Task<bool> RevokeAsync(Guid id, CancellationToken ct = default) =>
+        credentialRepository.RevokeAsync(id, DateTimeOffset.UtcNow, ct);
     private static OpenApiCredentialSummary Map(OpenApiCredential item) => new(item.Id, item.Name, item.TargetType, item.Scopes, item.IsActive, item.ExpiresAt, item.LastUsedAt, item.CreatedAt, item.RevokedAt);
     private static DateTimeOffset? ToUtc(DateTimeOffset? value) => value?.ToUniversalTime();
     // The stored value has microsecond precision and the client may round-trip it with millisecond precision.

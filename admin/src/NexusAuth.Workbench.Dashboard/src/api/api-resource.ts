@@ -2,6 +2,7 @@ import request from './request';
 
 export type ApiResource = {
   id: string;
+  isSystemManaged: boolean;
   name: string;
   displayName: string;
   audience: string;

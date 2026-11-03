@@ -247,7 +247,7 @@ const ClientManagementPage = () => {
                   ]} />
 
                   <div className="management-card__footer client-management-card__footer">
-                    <Button size="small" variant="outline" icon={<EditIcon />} onClick={() => handleEdit(client)}>编辑</Button>
+                    <Button size="small" variant="outline" disabled={client.isSystemManaged} icon={<EditIcon />} onClick={() => handleEdit(client)}>{client.isSystemManaged ? '配置托管' : '编辑'}</Button>
                     <Button size="small" variant="outline" icon={<ViewListIcon />} onClick={() => void handleView(client)}>查看详情</Button>
                     <Popconfirm
                       theme="danger"
@@ -256,7 +256,7 @@ const ClientManagementPage = () => {
                       cancelBtn={{ content: '取消', size: 'small' }}
                       onConfirm={() => void handleDelete(client)}
                     >
-                      <Button size="small" variant="outline" theme="danger" icon={<DeleteIcon />}>删除</Button>
+                      <Button size="small" variant="outline" theme="danger" disabled={client.isSystemManaged} icon={<DeleteIcon />}>删除</Button>
                     </Popconfirm>
                   </div>
                 </Card>

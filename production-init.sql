@@ -172,6 +172,7 @@ CREATE TABLE nexusauth.oauth_clients (
     require_pkce                boolean         NOT NULL DEFAULT true,
     require_consent             boolean         NOT NULL DEFAULT false,
     is_active                   boolean         NOT NULL DEFAULT true,
+    is_system_managed           boolean         NOT NULL DEFAULT false,
     created_at                  timestamptz     NOT NULL,
     CONSTRAINT pk_oauth_clients PRIMARY KEY (id)
 );
@@ -193,7 +194,9 @@ CREATE TABLE nexusauth.oauth_client_secrets (
     description     text,
     is_active       boolean         NOT NULL DEFAULT true,
     created_at      timestamptz     NOT NULL,
-    CONSTRAINT pk_oauth_client_secrets PRIMARY KEY (id)
+    CONSTRAINT pk_oauth_client_secrets PRIMARY KEY (id),
+    CONSTRAINT fk_oauth_client_secrets_client
+        FOREIGN KEY (client_id) REFERENCES nexusauth.oauth_clients (id) ON DELETE CASCADE
 );
 
 CREATE INDEX ix_oauth_client_secrets_client_id ON nexusauth.oauth_client_secrets (client_id);
@@ -209,11 +212,13 @@ CREATE TABLE nexusauth.api_resources (
     audience        varchar(256)    NOT NULL,
     description     text,
     is_active       boolean         NOT NULL DEFAULT true,
+    is_system_managed boolean       NOT NULL DEFAULT false,
     created_at      timestamptz     NOT NULL,
     CONSTRAINT pk_api_resources PRIMARY KEY (id)
 );
 
 CREATE UNIQUE INDEX ix_api_resources_name ON nexusauth.api_resources (name);
+CREATE UNIQUE INDEX ix_api_resources_audience ON nexusauth.api_resources (audience);
 
 -- ============================================================
 -- client_api_resources
@@ -221,7 +226,11 @@ CREATE UNIQUE INDEX ix_api_resources_name ON nexusauth.api_resources (name);
 CREATE TABLE nexusauth.client_api_resources (
     client_id       uuid    NOT NULL,
     api_resource_id uuid    NOT NULL,
-    CONSTRAINT pk_client_api_resources PRIMARY KEY (client_id, api_resource_id)
+    CONSTRAINT pk_client_api_resources PRIMARY KEY (client_id, api_resource_id),
+    CONSTRAINT fk_client_api_resources_client
+        FOREIGN KEY (client_id) REFERENCES nexusauth.oauth_clients (id) ON DELETE CASCADE,
+    CONSTRAINT fk_client_api_resources_api_resource
+        FOREIGN KEY (api_resource_id) REFERENCES nexusauth.api_resources (id) ON DELETE CASCADE
 );
 
 CREATE INDEX ix_client_api_resources_client_id ON nexusauth.client_api_resources (client_id);
@@ -250,7 +259,9 @@ CREATE TABLE nexusauth.authorization_codes (
     created_at              timestamptz     NOT NULL,
     CONSTRAINT pk_authorization_codes PRIMARY KEY (id),
     CONSTRAINT ck_authorization_codes_code_hash_base64url
-        CHECK (code_hash ~ '^[A-Za-z0-9_-]{43}$')
+        CHECK (code_hash ~ '^[A-Za-z0-9_-]{43}$'),
+    CONSTRAINT fk_authorization_codes_client
+        FOREIGN KEY (client_id) REFERENCES nexusauth.oauth_clients (client_id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX ix_authorization_codes_code_hash ON nexusauth.authorization_codes (code_hash);
@@ -275,7 +286,9 @@ CREATE TABLE nexusauth.refresh_tokens (
     created_at  timestamptz     NOT NULL,
     CONSTRAINT pk_refresh_tokens PRIMARY KEY (id),
     CONSTRAINT ck_refresh_tokens_token_hash_base64url
-        CHECK (token_hash ~ '^[A-Za-z0-9_-]{43}$')
+        CHECK (token_hash ~ '^[A-Za-z0-9_-]{43}$'),
+    CONSTRAINT fk_refresh_tokens_client
+        FOREIGN KEY (client_id) REFERENCES nexusauth.oauth_clients (client_id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX ix_refresh_tokens_token_hash ON nexusauth.refresh_tokens (token_hash);
@@ -496,5 +509,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_consent_grants_identity
         (user_id, client_id, scope_normalized, claims_match_key);
 CREATE INDEX IF NOT EXISTS ix_consent_grants_user_client
     ON nexusauth.consent_grants (user_id, client_id);
+
+-- MFA recovery and administrator reset audit.
+
+CREATE TABLE IF NOT EXISTS nexusauth.user_recovery_codes (
+    id          uuid         NOT NULL,
+    user_id     uuid         NOT NULL REFERENCES nexusauth.users(id) ON DELETE CASCADE,
+    code_hash   varchar(64)  NOT NULL,
+    created_at  timestamptz  NOT NULL,
+    used_at     timestamptz,
+    CONSTRAINT pk_user_recovery_codes PRIMARY KEY (id),
+    CONSTRAINT ck_user_recovery_codes_hash_hex
+        CHECK (code_hash ~ '^[A-Fa-f0-9]{64}$')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_user_recovery_codes_user_hash
+    ON nexusauth.user_recovery_codes (user_id, code_hash);
+CREATE INDEX IF NOT EXISTS ix_user_recovery_codes_user_used
+    ON nexusauth.user_recovery_codes (user_id, used_at);
+
+CREATE TABLE IF NOT EXISTS nexusauth.second_factor_recovery_audits (
+    id          uuid         NOT NULL,
+    actor_id    uuid         NOT NULL,
+    user_id     uuid         NOT NULL,
+    reason      varchar(500) NOT NULL,
+    occurred_at timestamptz  NOT NULL,
+    CONSTRAINT pk_second_factor_recovery_audits PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_second_factor_recovery_audits_user_id
+    ON nexusauth.second_factor_recovery_audits (user_id);
+CREATE INDEX IF NOT EXISTS ix_second_factor_recovery_audits_occurred_at
+    ON nexusauth.second_factor_recovery_audits (occurred_at);
 
 COMMIT;
