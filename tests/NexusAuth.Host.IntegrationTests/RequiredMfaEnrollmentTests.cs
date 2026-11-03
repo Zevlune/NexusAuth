@@ -5,8 +5,10 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using NexusAuth.Application.Services.LoginAudits;
+using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
+using NexusAuth.Domain.Entities;
 using NexusAuth.Host.Authentication;
 using Xunit;
 using Proxy = NexusAuth.Host.IntegrationTests.PasskeyManagementTests.RecordingProxy;
@@ -95,6 +97,49 @@ public sealed class RequiredMfaEnrollmentTests
         Assert.Equal(0, harness.SignIns);
     }
 
+    [Fact]
+    public async Task Required_totp_does_not_let_a_password_enroll_over_an_existing_passkey()
+    {
+        using var harness = new Harness();
+        harness.AddPasskey();
+        using var client = harness.Factory.CreateClient(new() { AllowAutoRedirect = false });
+        var login = await client.GetStringAsync("/account/login");
+
+        var response = await client.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = Token(login), ["Username"] = "alice", ["Password"] = "Correct-password!42",
+        }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("protected by a passkey", await response.Content.ReadAsStringAsync());
+        Assert.False(response.Headers.TryGetValues("Set-Cookie", out var cookies)
+            && cookies.Any(cookie => cookie.StartsWith("NexusAuth.PendingTotp", StringComparison.Ordinal)));
+        Assert.Equal(0, harness.Enrollments);
+        Assert.Equal(0, harness.SignIns);
+    }
+
+    [Fact]
+    public async Task Pending_enrollment_is_rejected_once_the_account_has_a_passkey()
+    {
+        using var harness = new Harness { ConfirmSucceeds = true };
+        using var client = harness.Factory.CreateClient(new() { AllowAutoRedirect = false });
+        var login = await client.GetStringAsync("/account/login");
+        await client.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = Token(login), ["Username"] = "alice", ["Password"] = "Correct-password!42",
+        }));
+        var setup = await client.GetStringAsync("/account/two-factor-setup");
+        harness.AddPasskey();
+
+        Assert.Equal(HttpStatusCode.Redirect, (await client.GetAsync("/account/two-factor-setup")).StatusCode);
+        var response = await client.PostAsync("/account/two-factor-setup", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = Token(setup), ["Code"] = "123456",
+        }));
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal(0, harness.SignIns);
+    }
+
     private static string Token(string html) => WebUtility.HtmlDecode(
         Regex.Match(html, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value);
 
@@ -128,6 +173,7 @@ public sealed class RequiredMfaEnrollmentTests
         public bool InvalidateDuringConfirmation { get; set; }
         public User User => user;
         private bool enabled;
+        private readonly List<WebAuthnCredential> passkeys = [];
         public WebApplicationFactory<AppWebModule> Factory { get; }
 
         public Harness()
@@ -155,6 +201,11 @@ public sealed class RequiredMfaEnrollmentTests
                         nameof(ITotpService.ConfirmEnrollmentAsync) => Confirm(),
                         _ => throw new NotSupportedException(method.Name),
                     }));
+                    services.AddScoped(_ => Proxy.Create<IWebAuthnService>((method, _) => method.Name switch
+                    {
+                        nameof(IWebAuthnService.GetEnabledCredentialsAsync) => (IReadOnlyList<WebAuthnCredential>)passkeys.ToArray(),
+                        _ => throw new NotSupportedException(method.Name),
+                    }));
                     services.AddScoped(_ => Proxy.Create<IWebSignInService>((_, _) => { SignIns++; return null; }));
                     services.AddScoped(_ => Proxy.Create<ILoginAuditService>((_, _) => null));
                     services.AddScoped(_ => Proxy.Create<ISecondFactorRecoveryService>((method, _) => method.Name switch
@@ -164,6 +215,9 @@ public sealed class RequiredMfaEnrollmentTests
                     }));
                 }));
         }
+
+        public void AddPasskey() => passkeys.Add(WebAuthnCredential.Create(
+            user.Id, [1, 2, 3], [4, 5, 6], 0, Guid.NewGuid(), null, isBackupEligible: false, isBackedUp: false));
 
         private TotpEnrollment Begin() { Enrollments++; return Enrollment(); }
         private bool Confirm()

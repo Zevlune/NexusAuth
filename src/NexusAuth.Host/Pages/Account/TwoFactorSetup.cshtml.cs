@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using NexusAuth.Application.Services.Security;
+using NexusAuth.Application.Services.WebAuthn;
 using NexusAuth.Application.Users;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Host.Authentication;
@@ -12,7 +13,8 @@ namespace NexusAuth.Host.Pages.Account;
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class TwoFactorSetupModel(IUserService users, ITotpService totp,
     ILoginFlowStateProtector protector, IWebSignInService signIn,
-    ISecurityPolicyService policy, ISecondFactorRecoveryService recovery) : PageModel
+    ISecurityPolicyService policy, ISecondFactorRecoveryService recovery,
+    IWebAuthnService webAuthn) : PageModel
 {
     [BindProperty] public string Code { get; set; } = string.Empty;
     public TotpEnrollment? Enrollment { get; private set; }
@@ -82,6 +84,9 @@ public sealed class TwoFactorSetupModel(IUserService users, ITotpService totp,
             return null;
         Enrollment = await totp.FindPendingEnrollmentAsync(user.Id, flow.EnrollmentProtectedSecret, ct);
         if (Enrollment is null || await totp.IsEnabledAsync(user.Id, ct)) return null;
+        // First-time enrollment is only for accounts without any second factor.
+        // A passkey added after the flow started must not be bypassed either.
+        if ((await webAuthn.GetEnabledCredentialsAsync(user.Id, ct)).Count > 0) return null;
         ContinueUrl = !string.IsNullOrWhiteSpace(flow.ReturnUrl) && Url.IsLocalUrl(flow.ReturnUrl)
             ? flow.ReturnUrl : "/account";
         return (user, flow);
