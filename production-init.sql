@@ -128,6 +128,11 @@ CREATE TABLE nexusauth.sso_sessions (
 CREATE INDEX ix_sso_sessions_active_user_expiry
     ON nexusauth.sso_sessions (user_id, expires_at DESC)
     WHERE revoked_at IS NULL;
+-- Cleanup sweeps select expired or revoked sessions independently of the user.
+CREATE INDEX ix_sso_sessions_expires_at
+    ON nexusauth.sso_sessions (expires_at);
+CREATE INDEX ix_sso_sessions_revoked_at
+    ON nexusauth.sso_sessions (revoked_at);
 
 -- ============================================================
 -- login_audit_logs

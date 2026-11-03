@@ -1,3 +1,4 @@
+using NexusAuth.Application.Services.Tokens;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Shared.DependencyInjection;
@@ -65,7 +66,7 @@ public class DeviceCodeGrantStrategy(
             if (includeIdToken)
                 idToken = await tokenService.IssueIdTokenAsync(result.ClientId!, result.UserId, null, accessTokenResult.AccessToken, ct: ct);
         }
-        catch (InvalidOperationException)
+        catch (TokenIssuanceException)
         {
             return TokenIssuanceFailed();
         }

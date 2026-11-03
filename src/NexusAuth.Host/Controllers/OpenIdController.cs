@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Mvc;
@@ -526,11 +527,29 @@ public class OpenIdController(
         return [.. new[] { GetTokenEndpointUrl(), issuer, issuer + endpointPath }.Distinct(StringComparer.Ordinal)];
     }
 
+    /// <summary>
+    /// 中文注释：claims_json 来自已签发的 access token，签发时已按当时的规则校验过。
+    /// 升级后解析器更严格，旧令牌里的写法可能不再被接受；此时退回只按 scope 返回，
+    /// 不让仍在有效期内的令牌在 userinfo 上得到 500。claims 参数只会在 scope 范围内
+    /// 追加或约束 claim，忽略它不会扩大返回范围。
+    /// </summary>
+    private static OidcRequestedClaims ParseIssuedClaimsRequest(string? claimsJson)
+    {
+        try
+        {
+            return OidcRequestedClaims.Parse(claimsJson);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or JsonException)
+        {
+            return OidcRequestedClaims.Empty;
+        }
+    }
+
     private static OidcRequestedClaims ResolveRequestedClaims(string? scope, string? claimsJson)
     {
         // 中文注释：先按已授予的 scope 得到基础 claim，再合并 claims 参数显式请求的 userinfo claim。
         // 本项目保守策略要求显式 claim 也受 scope 限制；只读取 userinfo section，并保留 value / values 约束。
-        var requestedClaims = OidcRequestedClaims.Parse(claimsJson);
+        var requestedClaims = ParseIssuedClaimsRequest(claimsJson);
         var grantedScopes = OidcClaimEmissionPolicy.ParseScopes(scope);
         var userInfoClaims = BaseUserInfoClaims
             .Where(claim => OidcClaimEmissionPolicy.IsClaimAllowedByScopes(claim, grantedScopes))

@@ -79,6 +79,13 @@ public class AuthorizeController(
         [FromQuery(Name = "code_challenge_method")] string? codeChallengeMethod = null,
         CancellationToken ct = default)
     {
+        // RFC 6749 §3.1: parameters MUST NOT be repeated. Binding keeps only the
+        // first value, while the consent page renders every value, so a repeated
+        // client_id or scope could show one thing and authorize another.
+        var repeatedParameter = Request.Query.FirstOrDefault(parameter => parameter.Value.Count > 1).Key;
+        if (repeatedParameter is "client_id" or "redirect_uri")
+            return AuthorizationError("invalid_request", $"{repeatedParameter} must not be included more than once.");
+
         if (string.IsNullOrWhiteSpace(clientId))
             return AuthorizationError("invalid_request", "client_id is required.");
 
@@ -114,6 +121,16 @@ public class AuthorizeController(
                 normalizedResponseMode,
                 Request.Query.ContainsKey("request_uri") ? "request_uri_not_supported" : "request_not_supported",
                 "Request objects and request_uri are not supported.",
+                state);
+        }
+
+        if (repeatedParameter is not null)
+        {
+            return AuthorizationError(
+                redirectUri,
+                normalizedResponseMode,
+                "invalid_request",
+                $"{repeatedParameter} must not be included more than once.",
                 state);
         }
 

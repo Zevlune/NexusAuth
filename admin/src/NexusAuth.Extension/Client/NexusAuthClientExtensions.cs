@@ -166,6 +166,9 @@ public static class NexusAuthClientExtensions
         options.RequireHttpsMetadata = settings.RequireHttpsMetadata;
         if (Uri.TryCreate(settings.RedirectUri, UriKind.Absolute, out var redirectUri))
             options.CallbackPath = redirectUri.AbsolutePath; // 中间件拦截的回调路径。
+        // 不提供前端通道登出端点：会话 Principal 不保留 sid/iss，框架无法校验来源，
+        // 任意跨站 GET /signout-oidc 都能清除管理员会话。登出只走本 SDK 的 POST 接口。
+        options.RemoteSignOutPath = PathString.Empty;
 
         // 授权码 + PKCE(S256)：由中间件生成 code_verifier 并随 Data Protection 加密的 state 往返，
         // 兑换 code 并校验 ID Token。集群部署时所有实例必须共享密钥环才能解开 state。
