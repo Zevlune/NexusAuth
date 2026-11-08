@@ -2,6 +2,7 @@ using Luck.Framework.UnitOfWorks;
 using Microsoft.EntityFrameworkCore;
 using NexusAuth.Application.Services.OpenApi;
 using NexusAuth.Application.Services.Scim;
+using NexusAuth.Application.Services.Sessions;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
@@ -132,9 +133,10 @@ public sealed class PostgreSqlTimestampTests
         var sessions = new SsoSessionRepository(unitOfWork);
         var devices = new DeviceAuthorizationRepository(unitOfWork);
         var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(offsetHours));
-        var session = SsoSession.Create(Guid.NewGuid(), TimeSpan.FromHours(1));
+        var user = User.Create($"session-{Guid.NewGuid():N}", "Test-password-only-123!", "Session test");
+        var session = SsoSession.Create(user.Id, TimeSpan.FromHours(1));
         var device = DeviceAuthorization.Create("test-device-client", OidcScopes.OpenId).Entity;
-        context.AddRange(session, device);
+        context.AddRange(user, session, device);
         await context.SaveChangesAsync();
 
         Assert.NotNull(await sessions.FindActiveAsync(session.Id, session.UserId, now));
@@ -151,6 +153,54 @@ public sealed class PostgreSqlTimestampTests
         Assert.False(await devices.TryRegisterPollAsync(device.Id, previous, now.AddSeconds(10), 5));
         context.ChangeTracker.Clear();
         AssertUtcInstant(now, (await context.SsoSessions.SingleAsync(value => value.Id == session.Id)).RevokedAt);
+    }
+
+    [PostgreSqlTheory]
+    [Trait("Category", "PostgreSql")]
+    [InlineData(true)]
+    public async Task Session_inserted_after_password_change_keeps_stale_epoch_and_is_inactive(bool _)
+    {
+        await using var context = CreateContext();
+        await using var transaction = await context.Database.BeginTransactionAsync();
+        var unitOfWork = new TestUnitOfWork(context);
+        var sessions = new SsoSessionRepository(unitOfWork);
+        var sessionService = new SsoSessionService(sessions);
+        var user = User.Create($"epoch-{Guid.NewGuid():N}", "Test-password-only-123!", "Epoch test");
+        context.Add(user);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var storedUser = await context.Users.SingleAsync(value => value.Id == user.Id);
+        storedUser.InvalidateTokens(DateTimeOffset.UtcNow.AddSeconds(-2));
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        storedUser = await context.Users.SingleAsync(value => value.Id == user.Id);
+        var staleEpoch = storedUser.TokenInvalidBefore;
+        Assert.NotNull(staleEpoch);
+
+        storedUser.InvalidateTokens(DateTimeOffset.UtcNow);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        storedUser = await context.Users.SingleAsync(value => value.Id == user.Id);
+        var currentEpoch = storedUser.TokenInvalidBefore;
+        Assert.NotNull(currentEpoch);
+        Assert.NotEqual(staleEpoch, currentEpoch);
+
+        var staleSessionId = await sessionService.CreateAsync(
+            user.Id,
+            TimeSpan.FromHours(1),
+            staleEpoch);
+        var currentSessionId = await sessionService.CreateAsync(
+            user.Id,
+            TimeSpan.FromHours(1),
+            currentEpoch);
+        context.ChangeTracker.Clear();
+
+        var now = DateTimeOffset.UtcNow;
+        Assert.Null(await sessions.FindActiveAsync(staleSessionId, user.Id, now));
+        Assert.NotNull(await sessions.FindActiveAsync(currentSessionId, user.Id, now));
     }
 
     [PostgreSqlTheory]
