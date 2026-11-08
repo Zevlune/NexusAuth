@@ -2,6 +2,7 @@ using Luck.EntityFrameworkCore.DbContexts;
 using Luck.EntityFrameworkCore.Repositories;
 using Luck.Framework.UnitOfWorks;
 using Microsoft.EntityFrameworkCore;
+using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 
@@ -22,11 +23,23 @@ public sealed class SsoSessionRepository(IUnitOfWork unitOfWork)
 
     public Task<SsoSession?> FindActiveAsync(Guid sessionId, Guid userId, DateTimeOffset now, CancellationToken ct = default)
     {
-        return FindAll(session => session.Id == sessionId
+        return dbContext.Set<SsoSession>()
+            .AsNoTracking()
+            .Where(session => session.Id == sessionId
                 && session.UserId == userId
                 && session.RevokedAt == null
                 && session.ExpiresAt > now)
-            .AsNoTracking()
+            .Join(
+                dbContext.Set<User>().AsNoTracking(),
+                session => session.UserId,
+                user => user.Id,
+                (session, user) => new { Session = session, User = user })
+            .Where(pair =>
+                (pair.Session.TokenInvalidBefore == null && pair.User.TokenInvalidBefore == null)
+                || (pair.Session.TokenInvalidBefore != null
+                    && pair.User.TokenInvalidBefore != null
+                    && pair.Session.TokenInvalidBefore == pair.User.TokenInvalidBefore))
+            .Select(pair => pair.Session)
             .FirstOrDefaultAsync(ct);
     }
 

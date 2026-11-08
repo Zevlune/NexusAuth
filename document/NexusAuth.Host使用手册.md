@@ -125,6 +125,17 @@ docker compose exec -T db \
   < refresh-token-claims-upgrade.sql
 ```
 
+#### SSO session 认证 epoch 升级
+
+本版本要求 `nexusauth.sso_sessions` 包含 nullable `token_invalid_before timestamptz` 列。全新数据库由当前 `production-init.sql` 直接包含该列；已有数据库必须在启动升级后的 Host 前执行根目录的 [`sso-session-epoch-upgrade.sql`](../sso-session-epoch-upgrade.sql)：
+
+```bash
+docker compose exec -T db \
+  psql --username nexusauth --dbname nexusauth \
+  --set ON_ERROR_STOP=1 \
+  < sso-session-epoch-upgrade.sql
+```
+
 执行前应备份数据库。执行后可核对列是否存在且允许 `NULL`：
 
 ```bash
@@ -1165,7 +1176,7 @@ Host 在 [`src/NexusAuth.Host/AppWebModule.cs`](../src/NexusAuth.Host/AppWebModu
 5. 持久化并备份 Data Protection key ring；多副本共享同一 key ring。
 6. 配置真实的 SMTP；不要把授权码写入镜像、仓库或普通配置文件。
 7. 覆盖 `BootstrapAdmin` 的用户名和密码；已有管理员密码不会被配置自动重置。
-8. 使用独立数据库账号、强密码和受控网络，并预先执行当前 schema；已有数据库升级时先执行 `refresh-token-claims-upgrade.sql`。Host 不代替迁移工具。
+8. 使用独立数据库账号、强密码和受控网络，并预先执行当前 schema；已有数据库升级时先执行 `refresh-token-claims-upgrade.sql` 和 `sso-session-epoch-upgrade.sql`。Host 不代替迁移工具。
 9. 在反向代理后只信任明确的代理 IP 或 CIDR，代理入口覆盖客户端转发头。
 10. 使用 HTTPS、受控日志目录、日志轮转和集中日志采集。
 11. 为 SCIM 和 Open API 分别使用最小权限凭证，定期轮换和撤销。
@@ -1181,7 +1192,7 @@ Host 在 [`src/NexusAuth.Host/AppWebModule.cs`](../src/NexusAuth.Host/AppWebModu
 - Host 开发配置：[`src/NexusAuth.Host/appsettings.Development.json`](../src/NexusAuth.Host/appsettings.Development.json)
 - 启动 profile：[`src/NexusAuth.Host/Properties/launchSettings.json`](../src/NexusAuth.Host/Properties/launchSettings.json)
 - Compose：[`docker-compose.yml`](../docker-compose.yml)
-- 数据库初始化和升级：[`docker/postgres-init.sh`](../docker/postgres-init.sh)、[`production-init.sql`](../production-init.sql)、[`refresh-token-claims-upgrade.sql`](../refresh-token-claims-upgrade.sql)
+- 数据库初始化和升级：[`docker/postgres-init.sh`](../docker/postgres-init.sh)、[`production-init.sql`](../production-init.sql)、[`refresh-token-claims-upgrade.sql`](../refresh-token-claims-upgrade.sql)、[`sso-session-epoch-upgrade.sql`](../sso-session-epoch-upgrade.sql)
 - 管理员初始化：[`src/NexusAuth.Host/BootstrapAdminHostedService.cs`](../src/NexusAuth.Host/BootstrapAdminHostedService.cs)
 - 邮箱实现：[`src/NexusAuth.Application/Services/Email/EmailAccountService.cs`](../src/NexusAuth.Application/Services/Email/EmailAccountService.cs)、[`EmailVerificationCodeService.cs`](../src/NexusAuth.Application/Services/Email/EmailVerificationCodeService.cs)
 - SMTP 选项和校验：[`src/NexusAuth.Shared/Email/SmtpOptions.cs`](../src/NexusAuth.Shared/Email/SmtpOptions.cs)

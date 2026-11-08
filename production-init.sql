@@ -120,6 +120,7 @@ CREATE TABLE nexusauth.sso_sessions (
     created_at      timestamptz     NOT NULL,
     expires_at      timestamptz     NOT NULL,
     revoked_at      timestamptz,
+    token_invalid_before timestamptz,
     CONSTRAINT pk_sso_sessions PRIMARY KEY (id),
     CONSTRAINT ck_sso_sessions_expiry_after_creation
         CHECK (expires_at > created_at)

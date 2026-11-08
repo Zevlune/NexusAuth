@@ -6,6 +6,13 @@ public interface ISsoSessionService : IScopedDependency
 {
     Task<Guid> CreateAsync(Guid userId, TimeSpan lifetime, CancellationToken ct = default);
 
+    Task<Guid> CreateAsync(
+        Guid userId,
+        TimeSpan lifetime,
+        DateTimeOffset? tokenInvalidBefore,
+        CancellationToken ct = default) =>
+        CreateAsync(userId, lifetime, ct);
+
     Task<bool> IsActiveAsync(Guid sessionId, Guid userId, CancellationToken ct = default);
 
     Task RevokeAsync(Guid sessionId, Guid userId, CancellationToken ct = default);

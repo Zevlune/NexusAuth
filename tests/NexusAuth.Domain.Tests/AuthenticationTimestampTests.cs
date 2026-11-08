@@ -265,6 +265,17 @@ public sealed class AuthenticationTimestampTests
         Assert.True(session.IsActive(session.ExpiresAt.AddTicks(-1)));
         Assert.False(session.IsActive(session.ExpiresAt));
         Assert.Null(session.RevokedAt);
+        Assert.Null(session.TokenInvalidBefore);
+    }
+
+    [Fact]
+    public void SsoSession_preserves_the_authentication_token_epoch_as_utc()
+    {
+        var tokenInvalidBefore = new DateTimeOffset(2026, 5, 6, 7, 8, 9, TimeSpan.FromHours(8));
+
+        var session = SsoSession.Create(Guid.NewGuid(), TimeSpan.FromMinutes(30), tokenInvalidBefore);
+
+        AssertUtcInstant(tokenInvalidBefore, session.TokenInvalidBefore);
     }
 
     [Theory]

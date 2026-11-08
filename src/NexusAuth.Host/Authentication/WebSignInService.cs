@@ -39,6 +39,7 @@ public sealed class WebSignInService(
         var sessionId = await sessionService.CreateAsync(
             user.Id,
             authenticationProperties.ExpiresUtc!.Value - issuedAt,
+            user.TokenInvalidBefore,
             ct);
 
         // amr 表示实际认证方式；acr 提供给 OIDC 客户端判断认证强度。

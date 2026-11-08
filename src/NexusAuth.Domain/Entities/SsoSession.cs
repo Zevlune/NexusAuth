@@ -15,11 +15,19 @@ public sealed class SsoSession : EntityWithIdentity<Guid>
 
     public DateTimeOffset? RevokedAt { get; private set; }
 
+    public DateTimeOffset? TokenInvalidBefore { get; private set; }
+
     private SsoSession(Guid id) : base(id)
     {
     }
 
-    public static SsoSession Create(Guid userId, TimeSpan lifetime)
+    public static SsoSession Create(Guid userId, TimeSpan lifetime) =>
+        Create(userId, lifetime, tokenInvalidBefore: null);
+
+    public static SsoSession Create(
+        Guid userId,
+        TimeSpan lifetime,
+        DateTimeOffset? tokenInvalidBefore)
     {
         if (lifetime <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(lifetime));
@@ -30,6 +38,7 @@ public sealed class SsoSession : EntityWithIdentity<Guid>
             UserId = userId,
             CreatedAt = now,
             ExpiresAt = now.Add(lifetime),
+            TokenInvalidBefore = tokenInvalidBefore?.ToUniversalTime(),
         };
     }
 
