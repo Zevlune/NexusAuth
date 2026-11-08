@@ -83,6 +83,7 @@ public sealed class WorkbenchClientCredentialHostedService(
                 grantTypes,
                 requirePkce: true,
                 tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretBasic);
+            client.MarkAsSystemManaged();
             await clientRepository.AddAsync(client, cancellationToken);
             logger.LogInformation("Created Workbench OAuth client {ClientId} from configuration.", clientId);
         }
@@ -100,6 +101,7 @@ public sealed class WorkbenchClientCredentialHostedService(
                 tokenEndpointAuthMethod: OAuthClientAuthenticationMethods.ClientSecretBasic,
                 jwks: string.Empty,
                 jwksUri: string.Empty);
+            client.MarkAsSystemManaged();
             await clientRepository.UpdateAsync(client, cancellationToken);
             logger.LogInformation("Updated Workbench OAuth client {ClientId} from configuration.", clientId);
         }
@@ -141,11 +143,13 @@ public sealed class WorkbenchClientCredentialHostedService(
         if (resource is null)
         {
             resource = ApiResource.Create(name, normalizedDisplayName, audience, description);
+            resource.MarkAsSystemManaged();
             await repository.AddAsync(resource, cancellationToken);
             return resource;
         }
 
         resource.Update(normalizedDisplayName, audience, description, isActive: true);
+        resource.MarkAsSystemManaged();
         await repository.UpdateAsync(resource, cancellationToken);
         return resource;
     }

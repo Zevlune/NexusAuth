@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using NexusAuth.Domain.AggregateRoots.ApiResources;
+using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 
 namespace NexusAuth.Persistence.Configurations;
@@ -19,5 +21,15 @@ public class ClientApiResourceConfiguration : IEntityTypeConfiguration<ClientApi
         builder.Property(x => x.ApiResourceId)
             .HasColumnName("api_resource_id")
             .IsRequired();
+
+        builder.HasOne<OAuthClient>()
+            .WithMany()
+            .HasForeignKey(x => x.ClientId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne<ApiResource>()
+            .WithMany()
+            .HasForeignKey(x => x.ApiResourceId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

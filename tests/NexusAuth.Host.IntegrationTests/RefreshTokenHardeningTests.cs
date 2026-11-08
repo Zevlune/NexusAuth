@@ -85,7 +85,8 @@ public sealed class RefreshTokenHardeningTests : IClassFixture<RefreshTokenHarde
         harness.AddResource(ApiResource.Create("orders", "Orders", "orders.api"));
         harness.AddResource(ApiResource.Create("billing", "Billing", "billing.api"));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Still an InvalidOperationException, typed so token endpoints can tell it from server faults.
+        await Assert.ThrowsAsync<NexusAuth.Application.Services.Tokens.TokenIssuanceException>(() =>
             harness.Service.IssueAccessTokenAsync("machine", "orders.api billing.api"));
     }
 

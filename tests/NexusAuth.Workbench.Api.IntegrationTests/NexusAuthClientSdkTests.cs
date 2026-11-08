@@ -45,6 +45,7 @@ public sealed class NexusAuthClientSdkTests
         Assert.True(oidc.UsePkce);
         Assert.Equal(OpenIdConnectResponseType.Code, oidc.ResponseType);
         Assert.Equal("/signin-oidc", oidc.CallbackPath.Value);
+        Assert.False(oidc.RemoteSignOutPath.HasValue);
         Assert.Equal("NexusAuth.Cookie", oidc.SignInScheme);
         Assert.Equal(typeof(NexusAuthOpenIdConnectEvents), oidc.EventsType);
         Assert.Contains("api.test", oidc.Scope);

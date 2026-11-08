@@ -96,8 +96,6 @@ public sealed class ScopeSyntaxSecurityTests
                 HardeningProxy.Create<IOAuthClientSecretRepository>((_, _) => null),
                 HardeningProxy.Create<IClientApiResourceRepository>((_, _) => null),
                 HardeningProxy.Create<IRefreshTokenRepository>((_, _) => null),
-                HardeningProxy.Create<IAuthorizationCodeRepository>((_, _) => null),
-                HardeningProxy.Create<IDeviceAuthorizationRepository>((_, _) => null),
                 serviceProvider,
                 NullLogger<ClientService>.Instance);
         }

@@ -6,6 +6,7 @@ services:
     environment:
       TZ: Asia/Shanghai
       APISIX_ADMIN_KEY: ${APISIX_ADMIN_KEY:?Set APISIX_ADMIN_KEY to a long random value.}
+      APISIX_DATA_ENCRYPTION_KEY: ${APISIX_DATA_ENCRYPTION_KEY:?Set APISIX_DATA_ENCRYPTION_KEY to exactly 16 hexadecimal characters.}
     volumes:
       - ./docker/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
       - ./docker/apisix/backchannel-route.json:/usr/local/apisix/conf/backchannel-route.json:ro
@@ -18,6 +19,9 @@ services:
       - "127.0.0.1:9180:9180"
     networks:
       nexusauth-gateway:
+        aliases:
+          - apisix
+      apisix-internal:
         aliases:
           - apisix
     restart: unless-stopped
@@ -38,22 +42,9 @@ services:
       timeout: 5s
       retries: 20
     networks:
-      nexusauth-gateway:
+      apisix-internal:
         aliases:
           - apisix-etcd
-    restart: unless-stopped
-
-  apisix-dashboard:
-    image: apache/apisix-dashboard:3.0.1-alpine
-    volumes:
-      - ./docker/apisix/dashboard.yaml:/usr/local/apisix-dashboard/conf/conf.yaml:ro
-    depends_on:
-      apisix-etcd:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:9000:9000"
-    networks:
-      nexusauth-gateway:
     restart: unless-stopped
 
 volumes:
@@ -64,3 +55,5 @@ networks:
   nexusauth-gateway:
     name: nexusauth_default
     external: true
+  apisix-internal:
+    internal: true

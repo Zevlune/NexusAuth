@@ -88,6 +88,43 @@ class DeploymentDefaultsTests(unittest.TestCase):
             r"NEXUSAUTH_WORKBENCH_(?:AUTH|BOOTSTRAP|CONNECTION_STRINGS|SECURITY|SWAGGER)",
         )
 
+    def test_workbench_api_trusts_only_the_dedicated_dashboard_proxy_network(self) -> None:
+        subnet = "${NEXUSAUTH_WORKBENCH_PROXY_SUBNET:-172.30.56.0/28}"
+        for compose_file, settings_files in (
+            (
+                "docker-compose.yml",
+                ("docker/workbench.appsettings.json", "docker/workbench.local.appsettings.json"),
+            ),
+            ("deploy/direct/compose.yml", ("deploy/direct/workbench.appsettings.example.json",)),
+        ):
+            with self.subTest(compose_file=compose_file):
+                compose = read(compose_file)
+                self.assertIn(f"- subnet: {subnet}", compose)
+                self.assertRegex(compose, r"workbench-proxy:\s+internal: true")
+                admin_api = compose_service(compose, "admin-api")
+                dashboard = compose_service(compose, "dashboard")
+                self.assertIn("- workbench-proxy", admin_api)
+                self.assertNotIn("- workbench-edge", admin_api)
+                self.assertNotIn("ports:", admin_api)
+                self.assertIn("- workbench-proxy", dashboard)
+                self.assertIn("- workbench-edge", dashboard)
+                self.assertNotIn("- default", dashboard)
+            for settings_file in settings_files:
+                with self.subTest(settings_file=settings_file):
+                    security = read_json(settings_file)["Security"]
+                    self.assertIs(security["ForwardedHeadersEnabled"], True)
+                    self.assertEqual(security["KnownNetworks"], "172.30.56.0/28")
+                    self.assertFalse(security.get("KnownProxies"))
+
+    def test_production_init_contains_every_cleanup_index(self) -> None:
+        init = read("production-init.sql")
+        cleanup = read("authentication-data-cleanup-production-init.sql")
+        indexes = re.findall(r"CREATE INDEX IF NOT EXISTS (\w+)", cleanup)
+        self.assertTrue(indexes)
+        for index in indexes:
+            with self.subTest(index=index):
+                self.assertRegex(init, rf"CREATE (?:UNIQUE )?INDEX (?:IF NOT EXISTS )?{index}\b")
+
     def test_local_compose_selects_local_http_configuration(self) -> None:
         settings = read_json("docker/workbench.local.appsettings.json")
 

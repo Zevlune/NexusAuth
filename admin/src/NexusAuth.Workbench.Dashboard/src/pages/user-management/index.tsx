@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
 import { Alert, Avatar, Button, Card, Descriptions, Dialog, Drawer, Dropdown, Empty, Form, Input, Loading, MessagePlugin, Pagination, Select, Space, Statistic, Table, Tag, Textarea, Typography, type FormInstanceFunctions, type TableProps } from 'tdesign-react';
 import { BrowseIcon, DeleteIcon, EditIcon, EllipsisIcon, KeyIcon, PoweroffIcon, RefreshIcon, SearchIcon, UserAddIcon, UserIcon, UsergroupIcon } from 'tdesign-icons-react';
-import { createUser, deleteUser, getUser, getUserPasskeys, getUsers, resetUserPassword, revokeUserPasskey, revokeUserTokens, updateUser, updateUserStatus, type CreateManagedUserRequest, type ManagedUser, type ResetManagedUserPasswordRequest, type UpdateManagedUserRequest, type WebAuthnCredentialSummary } from '../../api/user';
+import { createUser, deleteUser, getUser, getUserPasskeys, getUsers, resetUserPassword, resetUserSecondFactor, revokeUserPasskey, revokeUserTokens, updateUser, updateUserStatus, type CreateManagedUserRequest, type ManagedUser, type ResetManagedUserPasswordRequest, type UpdateManagedUserRequest, type WebAuthnCredentialSummary } from '../../api/user';
 import PageActions from '../../components/page-actions';
 import UserForm, { type UserFormHandle, type UserProfileData, type CreateUserData } from './form';
 import { normalizePhoneNumber } from './validation';
@@ -166,6 +166,9 @@ const UserManagementPage = () => {
   const [revokeTarget, setRevokeTarget] = useState<WebAuthnCredentialSummary | null>(null);
   const [revokeReason, setRevokeReason] = useState('');
   const [revoking, setRevoking] = useState(false);
+  const [factorResetTarget, setFactorResetTarget] = useState<ManagedUser | null>(null);
+  const [factorResetReason, setFactorResetReason] = useState('');
+  const [factorResetting, setFactorResetting] = useState(false);
   const detailRequestId = useRef(0);
 
   const fetchData = useCallback(async () => {
@@ -545,12 +548,13 @@ const UserManagementPage = () => {
       colKey: 'operation', title: '操作', width: 280, fixed: compactTable ? undefined : 'right',
       cell: ({ row }) => <div className="user-management-row-actions">
         <Button variant="text" theme="primary" icon={<BrowseIcon />} onClick={() => void handleShowDetails(row)}>查看</Button>
-        {row.isSystemAccount ? <Tag theme="default" variant="light-outline">系统账号受保护</Tag> : <>
+        {row.isSystemAccount ? <Button variant="text" onClick={() => { setFactorResetReason(''); setFactorResetTarget(row); }}>重置第二因子</Button> : <>
           <Button variant="text" theme="primary" icon={<EditIcon />} onClick={() => handleEdit(row)}>编辑</Button>
           <Button variant="text" theme="danger" icon={<DeleteIcon />} onClick={() => handleShowDelete(row)}>删除</Button>
           <Dropdown trigger="click" placement="bottom-right" minColumnWidth={150} options={[
             { content: row.isActive ? '停用账号' : '启用账号', value: 'status', prefixIcon: <PoweroffIcon />, disabled: togglingId === row.id, onClick: () => void handleToggleStatus(row) },
             { content: '重置密码', value: 'password', prefixIcon: <KeyIcon />, onClick: () => handleShowResetPassword(row) },
+            { content: '重置第二因子', value: 'second-factor', prefixIcon: <KeyIcon />, onClick: () => { setFactorResetReason(''); setFactorResetTarget(row); } },
             { content: '撤销全部令牌', value: 'tokens', theme: 'error', prefixIcon: <PoweroffIcon />, onClick: () => handleShowRevokeTokens(row) },
           ]}><Button variant="text" theme="default" aria-label={`更多操作：${row.username}`} icon={<EllipsisIcon />} /></Dropdown>
         </>}
@@ -560,6 +564,21 @@ const UserManagementPage = () => {
 
   return (
     <div className="user-management-page">
+      <Dialog visible={factorResetTarget !== null} header="重置第二因子" confirmBtn={{ content: '确认重置', theme: 'danger', loading: factorResetting, disabled: !factorResetReason.trim() }}
+        closeOnOverlayClick={false} onClose={() => { if (!factorResetting) setFactorResetTarget(null); }}
+        onConfirm={async () => {
+          if (!factorResetTarget || !factorResetReason.trim() || factorResetting) return;
+          setFactorResetting(true);
+          try {
+            await resetUserSecondFactor(factorResetTarget.id, factorResetReason.trim());
+            setFactorResetTarget(null);
+            MessagePlugin.success('第二因子已重置，用户需重新登录并绑定');
+          } catch (error) { MessagePlugin.error(getRequestErrorMessage(error, '重置第二因子失败')); }
+          finally { setFactorResetting(false); }
+        }}>
+        <Alert theme="warning" message={`将撤销 ${factorResetTarget?.username ?? ''} 的身份验证器、通行密钥、恢复码及全部会话。请先核实用户身份。`} />
+        <Textarea value={factorResetReason} onChange={setFactorResetReason} maxlength={500} placeholder="填写重置原因，操作将记录审计日志" aria-label="第二因子重置原因" />
+      </Dialog>
       <PageActions><Button theme="primary" icon={<UserAddIcon />} onClick={handleShowCreate}>新增用户</Button></PageActions>
       <header className="user-management-page__header"><Typography.Title level="h1">用户管理</Typography.Title><Typography.Paragraph className="user-management-page__description">维护组织成员、登录权限与联系信息</Typography.Paragraph></header>
       <div className="user-management-stats" aria-label="用户统计">

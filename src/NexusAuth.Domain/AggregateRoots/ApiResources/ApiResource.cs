@@ -1,4 +1,5 @@
 using Luck.DDD.Domain.Domain.AggregateRoots;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Domain.AggregateRoots.ApiResources;
 
@@ -14,6 +15,8 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
 
     public bool IsActive { get; private set; }
 
+    public bool IsSystemManaged { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     /// <summary>
@@ -27,7 +30,7 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        ValidateAudience(audience);
 
         return new ApiResource(Guid.NewGuid())
         {
@@ -40,12 +43,20 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
         };
     }
 
+    public void MarkAsSystemManaged()
+    {
+        IsSystemManaged = true;
+    }
+
     public void Update(
         string? displayName = null,
         string? audience = null,
         string? description = null,
         bool? isActive = null)
     {
+        if (!string.IsNullOrWhiteSpace(audience))
+            ValidateAudience(audience);
+
         if (!string.IsNullOrWhiteSpace(displayName))
             DisplayName = displayName;
 
@@ -57,5 +68,12 @@ public class ApiResource : AggregateRootWithIdentity<Guid>
 
         if (isActive is { } nextIsActive)
             IsActive = nextIsActive;
+    }
+
+    private static void ValidateAudience(string audience)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        if (OidcScopes.IsStandard(audience))
+            throw new ArgumentException($"Audience '{audience}' is reserved for a standard OIDC scope.", nameof(audience));
     }
 }

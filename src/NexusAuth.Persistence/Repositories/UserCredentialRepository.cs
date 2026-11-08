@@ -40,7 +40,7 @@ public sealed class UserCredentialRepository(IUnitOfWork unitOfWork)
                 && credential.PendingSecretProtected == protectedSecret)
             .FirstOrDefaultAsync(ct);
 
-    public async Task<bool> TryConfirmTotpAsync(Guid credentialId, Guid userId, string expectedProtectedSecret, long counter, DateTimeOffset now, CancellationToken ct = default)
+    public async Task<bool> TryConfirmTotpAsync(Guid credentialId, Guid userId, string expectedProtectedSecret, long counter, DateTimeOffset now, uint expectedUserVersion, CancellationToken ct = default)
     {
         now = now.ToUniversalTime();
         var affected = await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
@@ -49,7 +49,10 @@ public sealed class UserCredentialRepository(IUnitOfWork unitOfWork)
                 pending_expires_at = NULL, is_enabled = true, last_used_counter = {counter}, updated_at = {now}
             WHERE id = {credentialId} AND user_id = {userId} AND type = 'totp' AND is_enabled = false
               AND pending_secret_protected = {expectedProtectedSecret}
-              AND pending_expires_at IS NOT NULL AND pending_expires_at > {now};
+              AND pending_expires_at IS NOT NULL AND pending_expires_at > {now}
+              AND EXISTS (
+                  SELECT 1 FROM nexusauth.users u
+                  WHERE u.id = {userId} AND u.xmin::text = {expectedUserVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)});
             """, ct);
         return affected == 1;
     }
@@ -78,5 +81,21 @@ public sealed class UserCredentialRepository(IUnitOfWork unitOfWork)
                 .SetProperty(credential => credential.DisabledAt, now)
                 .SetProperty(credential => credential.UpdatedAt, now), ct);
         return affected == 1;
+    }
+
+    public Task<int> DisableAllTotpAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default)
+    {
+        now = now.ToUniversalTime();
+        return dbContext.Set<UserCredential>()
+            .Where(credential => credential.UserId == userId && credential.Type == UserCredential.TotpType
+                && (credential.IsEnabled || credential.PendingSecretProtected != null))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(credential => credential.IsEnabled, false)
+                .SetProperty(credential => credential.SecretProtected, (string?)null)
+                .SetProperty(credential => credential.PendingSecretProtected, (string?)null)
+                .SetProperty(credential => credential.PendingExpiresAt, (DateTimeOffset?)null)
+                .SetProperty(credential => credential.LastUsedCounter, (long?)null)
+                .SetProperty(credential => credential.DisabledAt, now)
+                .SetProperty(credential => credential.UpdatedAt, now), ct);
     }
 }

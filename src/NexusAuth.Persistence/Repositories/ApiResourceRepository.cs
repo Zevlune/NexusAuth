@@ -1,8 +1,11 @@
+using Luck.EntityFrameworkCore.DbContexts;
 using Luck.EntityFrameworkCore.Repositories;
 using Luck.Framework.UnitOfWorks;
 using Microsoft.EntityFrameworkCore;
 using NexusAuth.Domain.AggregateRoots.ApiResources;
+using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
+using NexusAuth.Shared.OAuth;
 
 namespace NexusAuth.Persistence.Repositories;
 
@@ -131,7 +134,47 @@ public class ApiResourceRepository : EfCoreAggregateRootRepository<ApiResource, 
 
     public async Task DeleteAsync(ApiResource resource, CancellationToken ct = default)
     {
-        Remove(resource);
-        await _unitOfWork.CommitAsync(ct);
+        ArgumentNullException.ThrowIfNull(resource);
+
+        var dbContext = _unitOfWork.GetLuckDbContext() as LuckDbContextBase
+            ?? throw new InvalidOperationException("Failed to resolve LuckDbContext.");
+        var transaction = dbContext.Database.CurrentTransaction;
+        var ownsTransaction = transaction is null;
+        if (ownsTransaction)
+            transaction = await dbContext.Database.BeginTransactionAsync(ct);
+
+        try
+        {
+            // Legacy resources may collide with identity scopes. Deleting their
+            // associations must never revoke the clients' OIDC permissions.
+            if (!OidcScopes.IsStandard(resource.Audience))
+            {
+                // Also clear legacy clients whose audience has no join row.
+                await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+                    UPDATE nexusauth.oauth_clients
+                    SET allowed_scopes = allowed_scopes - {resource.Audience}
+                    WHERE allowed_scopes ? {resource.Audience};
+                    """, ct);
+            }
+
+            await dbContext.Set<ClientApiResource>()
+                .Where(value => value.ApiResourceId == resource.Id)
+                .ExecuteDeleteAsync(ct);
+            Remove(resource);
+            await _unitOfWork.CommitAsync(ct);
+            if (ownsTransaction)
+                await transaction!.CommitAsync(ct);
+        }
+        catch
+        {
+            if (ownsTransaction)
+                await transaction!.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        finally
+        {
+            if (ownsTransaction)
+                await transaction!.DisposeAsync();
+        }
     }
 }

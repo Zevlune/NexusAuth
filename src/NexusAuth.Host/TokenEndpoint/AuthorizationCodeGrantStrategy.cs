@@ -1,3 +1,4 @@
+using NexusAuth.Application.Services.Tokens;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using NexusAuth.Shared.DependencyInjection;
@@ -73,7 +74,7 @@ public class AuthorizationCodeGrantStrategy(
                     ct);
             }
         }
-        catch (InvalidOperationException)
+        catch (TokenIssuanceException)
         {
             // 中文注释：授权码已经被消费，签发失败时返回 OAuth 错误 JSON 而不是框架 500。
             return TokenIssuanceFailed();

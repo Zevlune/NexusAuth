@@ -136,7 +136,7 @@ public class TokenGrantStrategyTests
                 : null));
         services.AddSingleton(Stub<ITokenService>((method, _) =>
             method.Name == nameof(ITokenService.IssueAccessTokenAsync)
-                ? throw new InvalidOperationException("Requested scopes span multiple audiences.")
+                ? throw new TokenIssuanceException("Requested scopes span multiple audiences.")
                 : null));
 
         using var provider = services.BuildServiceProvider();
@@ -148,6 +148,50 @@ public class TokenGrantStrategyTests
 
         var error = AssertError(result, 400, "invalid_scope");
         Assert.Equal("Requested scopes span multiple audiences.", error.GetProperty("error_description").GetString());
+
+        static ScopeValidationResult ValidateClientCredentialsScope(object?[]? args)
+        {
+            Assert.Equal("client", args![0]);
+            Assert.Equal("orders.api", args[1]);
+            Assert.Equal(false, args[2]);
+            return ScopeValidationResult.Success((string)args[1]!);
+        }
+    }
+
+    [Fact]
+    public async Task Client_credentials_server_faults_are_not_reported_as_invalid_scope()
+    {
+        var client = OAuthClient.Create(
+            "client",
+            "Client",
+            allowedScopes: ["orders.api"],
+            allowedGrantTypes: [OAuthGrantTypes.ClientCredentials]);
+        var services = Services();
+        services.AddSingleton(Stub<IClientService>((method, args) => method.Name switch
+        {
+            nameof(IClientService.AuthenticateClientAsync) =>
+                Task.FromResult(ClientAuthenticationResult.Success(client)),
+            nameof(IClientService.ValidateScopesAsync) =>
+                Task.FromResult(ValidateClientCredentialsScope(args)),
+            _ => null,
+        }));
+        services.AddSingleton(Stub<ISecurityPolicyService>((method, _) =>
+            method.Name == nameof(ISecurityPolicyService.CheckClient)
+                ? PolicyCheckResult.Success()
+                : null));
+        services.AddSingleton(Stub<ITokenService>((method, _) =>
+            method.Name == nameof(ITokenService.IssueAccessTokenAsync)
+                ? throw new InvalidOperationException("connection pool exhausted")
+                : null));
+
+        using var provider = services.BuildServiceProvider();
+        // Internal faults propagate to the framework (500 + log) instead of leaking as invalid_scope.
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => ExecuteAsync(provider, Context(new TokenRequest(
+            OAuthGrantTypes.ClientCredentials,
+            "client",
+            "secret",
+            Scope: "orders.api"))));
+        Assert.Equal("connection pool exhausted", exception.Message);
 
         static ScopeValidationResult ValidateClientCredentialsScope(object?[]? args)
         {
@@ -209,7 +253,7 @@ public class TokenGrantStrategyTests
                 : null));
         services.AddSingleton(Stub<ITokenService>((method, _) =>
             method.Name == nameof(ITokenService.IssueAccessTokenWithMetadataAsync)
-                ? throw new InvalidOperationException("Requested scopes span multiple audiences.")
+                ? throw new TokenIssuanceException("Requested scopes span multiple audiences.")
                 : null));
 
         using var provider = services.BuildServiceProvider();
@@ -219,6 +263,33 @@ public class TokenGrantStrategyTests
             DeviceCode: "device-code")));
 
         AssertError(result, 400, "invalid_grant");
+    }
+
+    [Fact]
+    public async Task Device_code_server_faults_are_not_reported_as_invalid_grant()
+    {
+        var user = User.Create("device-user", "test-password", "Device User");
+        var services = Services();
+        services.AddSingleton(Stub<IUserService>((method, args) =>
+            method.Name == nameof(IUserService.FindByIdAsync) && (Guid)args![0]! == user.Id
+                ? Task.FromResult<User?>(user)
+                : null));
+        services.AddSingleton(Stub<ISecurityPolicyService>((method, _) =>
+            method.Name == nameof(ISecurityPolicyService.CheckUser) ? PolicyCheckResult.Success() : null));
+        services.AddSingleton(Stub<IDeviceAuthorizationService>((method, _) =>
+            method.Name == nameof(IDeviceAuthorizationService.PollAsync)
+                ? Task.FromResult(DeviceAuthorizationPollResult.Success(user.Id, "client", OidcScopes.OpenId))
+                : null));
+        services.AddSingleton(Stub<ITokenService>((method, _) =>
+            method.Name == nameof(ITokenService.IssueAccessTokenWithMetadataAsync)
+                ? throw new InvalidOperationException("connection pool exhausted")
+                : null));
+
+        using var provider = services.BuildServiceProvider();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ExecuteAsync(provider, Context(new TokenRequest(
+            OAuthGrantTypes.DeviceCode,
+            "client",
+            DeviceCode: "device-code"))));
     }
 
     [Fact]
@@ -250,7 +321,7 @@ public class TokenGrantStrategyTests
                 : null));
         services.AddSingleton(Stub<ITokenService>((method, _) =>
             method.Name == nameof(ITokenService.IssueAccessTokenWithMetadataAsync)
-                ? throw new InvalidOperationException("Requested scopes span multiple audiences.")
+                ? throw new TokenIssuanceException("Requested scopes span multiple audiences.")
                 : null));
 
         using var provider = services.BuildServiceProvider();

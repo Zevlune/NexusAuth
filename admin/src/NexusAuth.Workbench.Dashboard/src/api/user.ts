@@ -122,3 +122,7 @@ export const revokeUserTokens = (id: string): Promise<void> => {
 export const resetUserPassword = (id: string, data: ResetManagedUserPasswordRequest): Promise<void> => {
   return request.post<void>(`/users/${id}/reset-password`, data);
 };
+
+export const resetUserSecondFactor = (id: string, reason: string): Promise<void> => {
+  return request.post<void>(`/users/${id}/reset-second-factor`, { reason });
+};

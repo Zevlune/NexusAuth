@@ -161,6 +161,46 @@ public sealed class WorkbenchAdministrationAuthorizationTests(
         Assert.Equal(HttpStatusCode.OK, (await administrator.GetAsync(path)).StatusCode);
     }
 
+    [Fact]
+    public async Task Reset_second_factor_endpoint_uses_the_management_fallback_policy()
+    {
+        var path = $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}/reset-second-factor";
+        using var anonymous = fixture.CreateAnonymousClient();
+        using var ordinary = fixture.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.OrdinaryUserId);
+        using var administrator = fixture.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await anonymous.PostAsJsonAsync(path, new { reason = "Lost authenticator" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await ordinary.PostAsJsonAsync(path, new { reason = "Lost authenticator" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await administrator.PostAsJsonAsync(path, new { reason = "Lost authenticator" })).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task Reset_second_factor_requires_a_reason(string? reason)
+    {
+        var path = $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}/reset-second-factor";
+        using var administrator = fixture.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+
+        using var response = await administrator.PostAsJsonAsync(path, new { reason });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reset_second_factor_rejects_a_reason_longer_than_500_characters()
+    {
+        var path = $"/api/users/{WorkbenchAdministrationAuthorizationFixture.TargetUserId}/reset-second-factor";
+        using var administrator = fixture.CreateBearerClient(WorkbenchAdministrationAuthorizationFixture.AdministratorId);
+
+        using var response = await administrator.PostAsJsonAsync(path, new { reason = new string('x', 501) });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     [Theory]
     [InlineData("nexusauth.workbench", true)]
     [InlineData("additional-bearer-client", true)]

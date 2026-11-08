@@ -210,7 +210,7 @@ public sealed class TokenEndpointHardeningTests : IClassFixture<TokenEndpointHar
     {
         var tokenService = HardeningProxy.Create<ITokenService>((method, _) =>
             method.Name == nameof(ITokenService.IssueAccessTokenWithMetadataAsync)
-                ? throw new InvalidOperationException("Requested scopes span multiple audiences.")
+                ? throw new TokenIssuanceException("Requested scopes span multiple audiences.")
                 : null);
         using var services = TokenControllerServices(ConfidentialClient(), tokenService, CodeExchange());
         var controller = CreateTokenController(services);

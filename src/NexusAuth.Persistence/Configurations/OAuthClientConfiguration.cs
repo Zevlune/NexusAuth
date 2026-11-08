@@ -87,9 +87,19 @@ public class OAuthClientConfiguration : IEntityTypeConfiguration<OAuthClient>
             .HasColumnName("is_active")
             .IsRequired();
 
+        builder.Property(c => c.IsSystemManaged)
+            .HasColumnName("is_system_managed")
+            .IsRequired();
+
         builder.Property(c => c.CreatedAt)
             .HasColumnName("created_at")
             .IsRequired();
+
+        // PostgreSQL's system xmin prevents a stale client snapshot from
+        // restoring an old AllowedScopes or IsSystemManaged value.
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .IsRowVersion();
 
         builder.HasMany(c => c.ClientSecrets)
             .WithOne()

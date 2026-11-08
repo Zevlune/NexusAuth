@@ -14,6 +14,10 @@ public class DbContext(DbContextOptions options) : LuckDbContextBase(options)
 
     public DbSet<UserCredential> UserCredentials => Set<UserCredential>();
 
+    public DbSet<UserRecoveryCode> UserRecoveryCodes => Set<UserRecoveryCode>();
+
+    public DbSet<SecondFactorRecoveryAudit> SecondFactorRecoveryAudits => Set<SecondFactorRecoveryAudit>();
+
     public DbSet<UserExternalIdentity> UserExternalIdentities => Set<UserExternalIdentity>();
 
     public DbSet<WebAuthnCredential> WebAuthnCredentials => Set<WebAuthnCredential>();

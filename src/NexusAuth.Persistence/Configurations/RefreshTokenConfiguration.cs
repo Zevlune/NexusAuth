@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.Entities;
 
 namespace NexusAuth.Persistence.Configurations;
@@ -56,6 +57,12 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
             .HasDatabaseName("ix_refresh_tokens_rotate");
         builder.HasIndex(r => r.ExpiresAt)
             .HasDatabaseName("ix_refresh_tokens_expires_at");
+
+        builder.HasOne<OAuthClient>()
+            .WithMany()
+            .HasPrincipalKey(client => client.ClientId)
+            .HasForeignKey(token => token.ClientId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.ToTable(table => table.HasCheckConstraint(
             "ck_refresh_tokens_token_hash_base64url",
