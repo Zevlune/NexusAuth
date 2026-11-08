@@ -2,6 +2,7 @@ using Luck.Framework.UnitOfWorks;
 using Microsoft.EntityFrameworkCore;
 using NexusAuth.Application.Services.OpenApi;
 using NexusAuth.Application.Services.Scim;
+using NexusAuth.Application.Services.Sessions;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
 using NexusAuth.Domain.AggregateRoots.Users;
 using NexusAuth.Domain.Entities;
