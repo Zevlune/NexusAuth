@@ -18,6 +18,19 @@ public class ScimServicePrincipalCredential : EntityWithIdentity<Guid>
     /// </summary>
     public static IReadOnlyList<string> SupportedScopes { get; } = [ScopeRead, ScopeWrite];
 
+    /// <summary>
+    /// Token hashes whose raw tokens are public. The local integration-test
+    /// credentials once seeded by docker/postgres-init.sh (removed in #70) have
+    /// their plaintext in git history, and databases initialized before that
+    /// still hold them as active, non-expiring rows. They never authenticate,
+    /// whatever the stored state; database/migrations/20261103_01 also revokes them.
+    /// </summary>
+    public static IReadOnlySet<string> PubliclyKnownTokenHashes { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "UJ7alomHnmklWLdv_dk8nAMaTC3HdDPXYlaRzvt4Dvk", // local-scim-integration-read
+        "J0P-nM9qLuo6idK3Rpd_H7cCmbPU6pV5bOB0QQP-FPE", // local-scim-integration-read-write
+    };
+
     public string Name { get; private set; } = default!;
 
     public string TokenHash { get; private set; } = default!;
@@ -91,7 +104,8 @@ public class ScimServicePrincipalCredential : EntityWithIdentity<Guid>
     {
         return IsActive
             && RevokedAt is null
-            && (!ExpiresAt.HasValue || ExpiresAt.Value > now);
+            && (!ExpiresAt.HasValue || ExpiresAt.Value > now)
+            && !PubliclyKnownTokenHashes.Contains(TokenHash);
     }
 
     public bool CanAuthenticate() => CanAuthenticate(DateTimeOffset.UtcNow);

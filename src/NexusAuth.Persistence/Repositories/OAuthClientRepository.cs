@@ -2,6 +2,7 @@ using Luck.EntityFrameworkCore.Repositories;
 using Luck.Framework.UnitOfWorks;
 using Microsoft.EntityFrameworkCore;
 using NexusAuth.Domain.AggregateRoots.OAuthClients;
+using NexusAuth.Domain.Entities;
 using NexusAuth.Domain.Repositories;
 
 namespace NexusAuth.Persistence.Repositories;
@@ -58,11 +59,47 @@ public class OAuthClientRepository : EfCoreAggregateRootRepository<OAuthClient, 
     {
         var dbContext = _unitOfWork.GetLuckDbContext() as LuckDbContextBase
             ?? throw new InvalidOperationException("Failed to resolve LuckDbContext.");
-        await dbContext.Set<ConsentGrant>()
-            .Where(grant => grant.ClientId == client.ClientId)
-            .ExecuteDeleteAsync(ct);
-        Remove(client);
-        await _unitOfWork.CommitAsync(ct);
+        var transaction = dbContext.Database.CurrentTransaction;
+        var ownsTransaction = transaction is null;
+        if (ownsTransaction)
+            transaction = await dbContext.Database.BeginTransactionAsync(ct);
+
+        try
+        {
+            await dbContext.Set<AuthorizationCode>()
+                .Where(code => code.ClientId == client.ClientId && !code.IsUsed)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(code => code.IsUsed, true), ct);
+            await dbContext.Set<RefreshToken>()
+                .Where(token => token.ClientId == client.ClientId && !token.IsRevoked)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(token => token.IsRevoked, true), ct);
+            await dbContext.Set<DeviceAuthorization>()
+                .Where(device => device.ClientId == client.ClientId
+                    && (device.Status == DeviceAuthorizationStatus.Pending
+                        || device.Status == DeviceAuthorizationStatus.Approved))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(device => device.Status, DeviceAuthorizationStatus.Denied), ct);
+            await dbContext.Set<ConsentGrant>()
+                .Where(grant => grant.ClientId == client.ClientId)
+                .ExecuteDeleteAsync(ct);
+            await dbContext.Set<ClientApiResource>()
+                .Where(association => association.ClientId == client.Id)
+                .ExecuteDeleteAsync(ct);
+
+            Remove(client);
+            await _unitOfWork.CommitAsync(ct);
+            if (ownsTransaction)
+                await transaction!.CommitAsync(ct);
+        }
+        catch
+        {
+            if (ownsTransaction)
+                await transaction!.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        finally
+        {
+            if (ownsTransaction)
+                await transaction!.DisposeAsync();
+        }
     }
 
     public async Task<(List<OAuthClient> Items, int Total)> GetPagedAsync(

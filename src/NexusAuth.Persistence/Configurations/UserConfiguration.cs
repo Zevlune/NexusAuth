@@ -90,6 +90,12 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .HasColumnName("updated_at")
             .IsRequired();
 
+        // PostgreSQL's system xmin column lets authentication completion and
+        // administrative/SCIM updates reject stale user snapshots.
+        builder.Property(u => u.Version)
+            .HasColumnName("xmin")
+            .IsRowVersion();
+
         builder.HasIndex(u => u.Username).IsUnique();
         builder.HasIndex(u => u.ExternalId).IsUnique().HasFilter("external_id IS NOT NULL");
         builder.HasIndex(u => u.Email).IsUnique().HasFilter("email IS NOT NULL");

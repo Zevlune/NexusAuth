@@ -1,10 +1,13 @@
 apisix:
   node_listen: [9180, 5100]
   enable_admin: true
-  # Local development only: Dashboard 3.0 writes directly to etcd and does
-  # not encrypt plugin fields such as openid-connect.client_secret.
+  # APISIX Admin API is the only supported writer for encrypted plugin fields.
+  # APISIX Dashboard 3.0 is intentionally not deployed because it writes JSON
+  # directly to etcd and cannot use this encryption pipeline.
   data_encryption:
-    enable_encrypt_fields: false
+    enable_encrypt_fields: true
+    keyring:
+      - "${{APISIX_DATA_ENCRYPTION_KEY}}"
 
 deployment:
   role: traditional

@@ -28,17 +28,7 @@ try
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-        options.AddPolicy("workbench-login", httpContext =>
-            RateLimitPartition.GetFixedWindowLimiter(
-                httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                _ => new FixedWindowRateLimiterOptions
-                {
-                    AutoReplenishment = true,
-                    PermitLimit = 20,
-                    QueueLimit = 0,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                    Window = TimeSpan.FromMinutes(1),
-                }));
+        options.AddPolicy(WorkbenchLoginRateLimit.PolicyName, WorkbenchLoginRateLimit.GetPartition);
     });
 
     builder.Services.AddEndpointsApiExplorer();
@@ -79,7 +69,7 @@ try
     // 登录、登出与配置接口由 SDK 提供；/api/auth/me 保留 Workbench 自身的管理员判定。
     app.MapNexusAuthEndpoints(configure: options =>
     {
-        options.LoginRateLimitPolicy = "workbench-login";
+        options.LoginRateLimitPolicy = WorkbenchLoginRateLimit.PolicyName;
         options.MapCurrentUser = false;
     });
 

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.Extensions.Options;
 using NexusAuth.Domain.AggregateRoots.Users;
+using NexusAuth.Application.Users;
 using NexusAuth.Host.Authentication;
 
 namespace NexusAuth.Host.Pages.Account;
@@ -20,7 +21,10 @@ public sealed class RegisterModel(
     ISliderCaptchaChallengeProtector sliderCaptchaChallengeProtector,
     IOptions<SliderCaptchaOptions> sliderCaptchaOptions,
     IOptions<SelfRegistrationOptions> selfRegistrationOptions,
-    IOptions<WebAuthnOptions> webAuthnOptions) : PageModel
+    IOptions<WebAuthnOptions> webAuthnOptions,
+    IOptions<LoginFlowOptions> flowOptions,
+    ITotpService totpService,
+    ILoginFlowStateProtector flowProtector) : PageModel
 {
     private readonly SelfRegistrationOptions selfRegistration = selfRegistrationOptions.Value;
     private readonly WebAuthnOptions webAuthn = webAuthnOptions.Value;
@@ -141,6 +145,11 @@ public sealed class RegisterModel(
 
             var user = await userService.FindByIdAsync(userId, ct)
                 ?? throw new InvalidOperationException("The registered account could not be loaded.");
+
+            if (string.Equals(flowOptions.Value.FindStep(LoginFlowStepTypes.Totp)?.Requirement,
+                    LoginFlowRequirements.Required, StringComparison.OrdinalIgnoreCase))
+                return await TotpEnrollmentFlow.StartAsync(HttpContext, user, ReturnUrl, false, "pwd",
+                    flowOptions.Value, totpService, flowProtector, ct);
 
             // 注册表单已经验证了用户设置的密码，因此直接建立登录会话，无需再次输入密码。
             await webSignInService.SignInAsync(

@@ -69,6 +69,53 @@ public sealed class AccountSecurityPageTests
         Assert.Equal(1, harness.SignIns);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Bound_totp_flow_is_rejected_when_factor_reload_changes_the_token_epoch(bool recovery)
+    {
+        using var harness = new Harness(authenticated: false)
+        {
+            TotpEnabled = true,
+            TotpValid = true,
+            RecoveryValid = true,
+            RefreshTokenEpochDuringFactorValidation = true,
+        };
+        using var client = harness.CreateClient();
+        var flowToken = await StartPasswordLoginAsync(client);
+
+        var response = await PostAsync(client, "/account/login?handler=Totp", "/account/login",
+            new() { ["FlowToken"] = flowToken, ["TotpCode"] = recovery ? "RECOVERY-CODE" : "123456" });
+
+        // The user is returned to the first login step with an explanation
+        // instead of a bare redirect that drops the message and ReturnUrl.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("security settings changed during sign-in",
+            WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync()));
+        Assert.Equal(recovery ? 0 : 1, harness.TotpValidations);
+        Assert.Equal(recovery ? 1 : 0, harness.RecoveryRedemptions);
+        Assert.Equal(0, harness.SignIns);
+    }
+
+    [Fact]
+    public async Task Recovery_code_completes_a_bound_totp_login()
+    {
+        using var harness = new Harness(authenticated: false)
+        {
+            TotpEnabled = true,
+            RecoveryValid = true,
+        };
+        using var client = harness.CreateClient();
+        var flowToken = await StartPasswordLoginAsync(client);
+
+        var response = await PostAsync(client, "/account/login?handler=Totp", "/account/login",
+            new() { ["FlowToken"] = flowToken, ["TotpCode"] = "RECOVERY-CODE" });
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal(1, harness.RecoveryRedemptions);
+        Assert.Equal(1, harness.SignIns);
+    }
+
     [Fact]
     public async Task Login_email_code_handler_with_empty_address_returns_a_validation_message()
     {
@@ -417,6 +464,8 @@ public sealed class AccountSecurityPageTests
                                 return TotpEnabled;
                             case nameof(ITotpService.ValidateAsync):
                                 TotpValidations++;
+                                if (TotpValid && RefreshTokenEpochDuringFactorValidation)
+                                    User.InvalidateTokens(DateTimeOffset.UtcNow);
                                 return TotpValid;
                             case nameof(ITotpService.GetCredentialsAsync):
                                 return (IReadOnlyList<TotpCredentialSummary>)(TotpEnabled
@@ -434,6 +483,21 @@ public sealed class AccountSecurityPageTests
                             case nameof(ITotpService.DisableAsync):
                                 Disables++;
                                 return true;
+                            default:
+                                throw new NotSupportedException(method.Name);
+                        }
+                    }));
+                    services.AddScoped(_ => Proxy.Create<ISecondFactorRecoveryService>((method, args) =>
+                    {
+                        switch (method.Name)
+                        {
+                            case nameof(ISecondFactorRecoveryService.GenerateCodesAsync):
+                                return (IReadOnlyList<string>)[];
+                            case nameof(ISecondFactorRecoveryService.RedeemAsync):
+                                RecoveryRedemptions++;
+                                if (RecoveryValid && RefreshTokenEpochDuringFactorValidation)
+                                    User.InvalidateTokens(DateTimeOffset.UtcNow);
+                                return RecoveryValid;
                             default:
                                 throw new NotSupportedException(method.Name);
                         }
@@ -474,7 +538,10 @@ public sealed class AccountSecurityPageTests
         public Guid CredentialId { get; } = Guid.NewGuid();
         public bool TotpEnabled { get; set; }
         public bool TotpValid { get; set; }
+        public bool RecoveryValid { get; set; }
+        public bool RefreshTokenEpochDuringFactorValidation { get; set; }
         public int TotpValidations { get; private set; }
+        public int RecoveryRedemptions { get; private set; }
         public int Enrollments { get; private set; }
         public int Disables { get; private set; }
         public int PasswordChanges { get; private set; }

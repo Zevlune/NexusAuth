@@ -19,6 +19,8 @@ Host 的应用配置从 `appsettings.json` 和 `appsettings.{环境}.json` 读�
 
 ## 安全默认值与本地运行
 
+已有部署升级资源完整性、MFA 恢复和并发保护时，请先阅读 [安全修复升级说明](document/2026-11-01-安全修复升级说明.md)，按顺序执行数据库升级脚本再启动服务。
+
 - Workbench 基础配置中的 `Auth:Authority` 为空，`Auth:RequireHttpsMetadata=true`；仓库的 Development 配置为本机开发显式覆盖为 `http://localhost:5100` 和 `false`。配置层允许任何环境显式设为 `false`，但规范上仅限隔离本地开发显式关闭。
 - Workbench 固定使用 `ClientSecretBasic` 客户端认证；登录流程状态默认保存在当前进程内。多实例部署应开启 Redis 流程存储、Redis 刷新协调并共享 Data Protection key ring，见 [Extension README](./admin/src/NexusAuth.Extension/README.md#集群部署)。
 - Cookie 的基础 `Security:CookieSecurePolicy=Always`；Development 显式覆盖为 `SameAsRequest`。部署时不要在 HTTP 环境静默降低生产默认值。

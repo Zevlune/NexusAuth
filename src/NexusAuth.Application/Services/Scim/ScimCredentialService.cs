@@ -10,11 +10,11 @@ public class ScimCredentialService(IScimServicePrincipalCredentialRepository cre
     public async Task<ScimCredentialValidationResult> AuthorizeAsync(string rawToken, string requiredScope, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(rawToken)) return ScimCredentialValidationResult.InvalidToken;
+        var now = DateTimeOffset.UtcNow;
         var credential = await credentialRepository.FindByTokenHashAsync(ScimServicePrincipalCredential.Hash(rawToken), ct);
-        if (credential is null || !credential.CanAuthenticate()) return ScimCredentialValidationResult.InvalidToken;
+        if (credential is null || !credential.CanAuthenticate(now)) return ScimCredentialValidationResult.InvalidToken;
         if (!credential.Scopes.Contains(requiredScope, StringComparer.Ordinal)) return ScimCredentialValidationResult.InsufficientScope;
-        credential.RecordUse();
-        await credentialRepository.UpdateAsync(credential, ct);
+        await credentialRepository.RecordUseAsync(credential.Id, now, ct);
         return ScimCredentialValidationResult.Granted;
     }
 
@@ -55,14 +55,8 @@ public class ScimCredentialService(IScimServicePrincipalCredentialRepository cre
         return Map(credential);
     }
 
-    public async Task<bool> RevokeAsync(Guid id, CancellationToken ct = default)
-    {
-        var credential = await credentialRepository.FindByIdAsync(id, ct);
-        if (credential is null) return false;
-        credential.Revoke();
-        await credentialRepository.UpdateAsync(credential, ct);
-        return true;
-    }
+    public Task<bool> RevokeAsync(Guid id, CancellationToken ct = default) =>
+        credentialRepository.RevokeAsync(id, DateTimeOffset.UtcNow, ct);
 
     private static void EnsureScopesNotEmpty(IReadOnlyCollection<string>? scopes)
     {

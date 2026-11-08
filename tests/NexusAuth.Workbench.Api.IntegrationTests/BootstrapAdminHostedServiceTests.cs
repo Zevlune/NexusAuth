@@ -228,6 +228,9 @@ public sealed class BootstrapAdminHostedServiceTests
             return Task.FromResult<User?>(users.FirstOrDefault(user => user.Id == id));
         }
 
+        public Task<IUserAuthenticationAttempt?> BeginAuthenticationAttemptAsync(Guid userId, CancellationToken ct = default) =>
+            Task.FromResult<IUserAuthenticationAttempt?>(null);
+
         public Task<(IReadOnlyList<User> Items, int Total)> GetScimPagedAsync(
             string? userName,
             string? externalId,
@@ -280,6 +283,11 @@ public sealed class BootstrapAdminHostedServiceTests
         }
 
         public Task ResetLoginFailuresAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<bool> TryResetLoginFailuresAsync(Guid userId, DateTimeOffset? expectedTokenInvalidBefore, DateTimeOffset now, CancellationToken ct = default)
         {
             throw new NotSupportedException();
         }

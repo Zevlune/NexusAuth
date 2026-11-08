@@ -170,7 +170,7 @@
                 {
                     <form class="login-form" method="post" asp-page-handler="Totp">
                         <input type="hidden" asp-for="FlowToken" />
-                        <div class="form-field"><div class="field-label-row"><label asp-for="TotpCode">身份验证器代码</label><span class="field-meta">第二步</span></div><input class="login-input totp-input" asp-for="TotpCode" autocomplete="one-time-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required autofocus /><p class="totp-help">输入身份验证器应用当前显示的六位代码。</p></div>
+                        <div class="form-field"><div class="field-label-row"><label asp-for="TotpCode">动态验证码或恢复码</label><span class="field-meta">第二步</span></div><input class="login-input totp-input" asp-for="TotpCode" autocomplete="one-time-code" maxlength="80" placeholder="动态验证码或单次恢复码" required autofocus /><p class="totp-help">无法使用身份验证器时，可输入已保存的恢复码，或联系管理员重置第二因子。</p></div>
                         <button class="login-submit" type="submit">验证并登录</button>
                         <a class="restart-link" asp-page="/Account/Login" asp-route-returnUrl="@Model.ReturnUrl">重新开始</a>
                     </form>

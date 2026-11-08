@@ -62,6 +62,10 @@ public class ScimServicePrincipalCredentialConfiguration
         builder.Property(credential => credential.RevokedAt)
             .HasColumnName("revoked_at");
 
+        // PostgreSQL's system xmin column detects a management update racing
+        // with a revoke or another edit without adding a regular schema column.
+        builder.Property<uint>("xmin").IsRowVersion();
+
         builder.HasIndex(credential => credential.Name)
             .HasDatabaseName("ix_scim_service_principal_credentials_name")
             .IsUnique();

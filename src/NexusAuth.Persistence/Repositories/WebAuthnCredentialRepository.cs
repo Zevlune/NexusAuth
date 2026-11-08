@@ -55,4 +55,9 @@ public sealed class WebAuthnCredentialRepository(IUnitOfWork unitOfWork)
     public async Task<bool> DisableAsync(Guid userId, Guid id, DateTimeOffset now, CancellationToken ct = default) =>
         await FindAll(credential => credential.UserId == userId && credential.Id == id && credential.DisabledAt == null)
             .ExecuteUpdateAsync(update => update.SetProperty(credential => credential.DisabledAt, now), ct) == 1;
+
+    public Task<int> DisableAllForUserAsync(Guid userId, DateTimeOffset now, CancellationToken ct = default) =>
+        _dbContext.Set<WebAuthnCredential>()
+            .Where(credential => credential.UserId == userId && credential.DisabledAt == null)
+            .ExecuteUpdateAsync(update => update.SetProperty(credential => credential.DisabledAt, now), ct);
 }

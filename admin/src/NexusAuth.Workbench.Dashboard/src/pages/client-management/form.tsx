@@ -185,6 +185,7 @@ const ClientFormPage = ({ mode }: ClientFormPageProps) => {
       label: resource.displayName ? `${resource.displayName} (${resource.audience})` : resource.audience,
       value: resource.id,
       description: resource.description,
+      disabled: resource.isSystemManaged,
     }));
     const missingOptions = formData.apiResourceIds
       .filter((resourceId) => !apiResources.some((resource) => resource.id === resourceId))

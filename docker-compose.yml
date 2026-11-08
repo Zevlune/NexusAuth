@@ -61,6 +61,9 @@ services:
       - ${NEXUSAUTH_WORKBENCH_APPSETTINGS_FILE:-./docker/workbench.appsettings.json}:/app/appsettings.${ASPNETCORE_ENVIRONMENT:-Production}.json:ro
       - nexusauth-admin-keys:/root/.aspnet/DataProtection-Keys
       - ./logs/workbench:/app/logs
+    networks:
+      - default
+      - workbench-proxy
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
       interval: 5s
@@ -82,6 +85,9 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:5560:80"
+    networks:
+      - workbench-edge
+      - workbench-proxy
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1/ || exit 1"]
       interval: 5s
@@ -89,6 +95,20 @@ services:
       retries: 12
       start_period: 10s
     restart: unless-stopped
+
+networks:
+  default:
+  # The Dashboard nginx is the only workload on this network besides the
+  # Workbench API, which trusts X-Forwarded-For only from this subnet. Keep it
+  # equal to Security:KnownNetworks in the mounted Workbench appsettings.
+  workbench-proxy:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${NEXUSAUTH_WORKBENCH_PROXY_SUBNET:-172.30.56.0/28}
+  # Publishes the Dashboard port; the API is not attached to it, so nginx can
+  # reach the API only over workbench-proxy.
+  workbench-edge:
 
 volumes:
   nexusauth-db-data:

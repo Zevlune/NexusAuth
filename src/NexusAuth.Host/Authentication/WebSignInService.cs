@@ -33,8 +33,16 @@ public sealed class WebSignInService(
         ArgumentNullException.ThrowIfNull(user);
         ArgumentException.ThrowIfNullOrWhiteSpace(authenticationMethods);
 
+        var requiredTotp = _flowOptions.FindStep(LoginFlowStepTypes.Totp)?.Requirement
+            .Equals(LoginFlowRequirements.Required, StringComparison.OrdinalIgnoreCase) == true;
+        if (requiredTotp && !HasRequiredSecondFactor(authenticationMethods))
+            throw new InvalidOperationException("A required second factor was not completed.");
+
         var issuedAt = DateTimeOffset.UtcNow;
-        await userRepository.ResetLoginFailuresAsync(user.Id, issuedAt, ct);
+        var reset = await userRepository.TryResetLoginFailuresAsync(user.Id, user.TokenInvalidBefore, issuedAt, ct);
+        if (!reset)
+            throw new InvalidOperationException("The account is locked or its security state changed during sign-in.");
+
         var authenticationProperties = _flowOptions.CreateAuthenticationProperties(rememberMe, issuedAt);
         var sessionId = await sessionService.CreateAsync(
             user.Id,
@@ -60,10 +68,19 @@ public sealed class WebSignInService(
             authenticationProperties);
     }
 
-    private static string ResolveAuthenticationContext(string authenticationMethods) =>
-        authenticationMethods.Contains("webauthn", StringComparison.Ordinal)
-            ? "urn:nexusauth:acr:webauthn-uv"
-            : authenticationMethods.Contains("otp", StringComparison.Ordinal)
-                ? "urn:nexusauth:acr:mfa"
-                : "urn:nexusauth:acr:pwd";
+    private static string ResolveAuthenticationContext(string authenticationMethods)
+    {
+        var methods = authenticationMethods.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (methods.Contains("webauthn", StringComparer.Ordinal))
+            return methods.Contains("uv", StringComparer.Ordinal) ? "urn:nexusauth:acr:webauthn-uv" : "urn:nexusauth:acr:webauthn";
+        return methods.Contains("otp", StringComparer.Ordinal) ? "urn:nexusauth:acr:mfa" : "urn:nexusauth:acr:pwd";
+    }
+
+    private static bool HasRequiredSecondFactor(string authenticationMethods)
+    {
+        var methods = authenticationMethods.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return methods.Contains("otp", StringComparer.OrdinalIgnoreCase)
+            || (methods.Contains("webauthn", StringComparer.OrdinalIgnoreCase)
+                && methods.Contains("uv", StringComparer.OrdinalIgnoreCase));
+    }
 }

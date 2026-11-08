@@ -65,6 +65,7 @@ export type ClientMutationResult = {
 
 export type Client = {
   id: string;
+  isSystemManaged: boolean;
   clientId: string;
   clientName: string;
   description?: string;

@@ -87,6 +87,30 @@ public sealed class OidcClaimsScopeTests : IClassFixture<OidcClaimsScopeTests.Sh
         Assert.False(payload.TryGetProperty("ethnicity", out _));
     }
 
+    [Theory]
+    [InlineData("""{"userinfo":{"email":{"essential":"yes"}}}""")]
+    [InlineData("""{"userinfo":{"email":{"values":[]}}}""")]
+    [InlineData("""{"userinfo":{},"userinfo":{}}""")]
+    [InlineData("not json")]
+    public async Task Userinfo_falls_back_to_scope_claims_for_claims_requests_the_current_parser_rejects(string claimsJson)
+    {
+        // Tokens issued before the stricter parser can still carry such claims_json.
+        using var harness = new InMemoryTokenServiceHarness();
+        harness.Add(user);
+        var accessToken = await harness.Service.IssueAccessTokenAsync(
+            "legacy-client",
+            EmailScope,
+            null,
+            user.Id,
+            claimsJson);
+
+        var payload = await CallUserInfoAsync(harness, accessToken);
+
+        Assert.Equal("alice@example.com", payload.GetProperty("email").GetString());
+        Assert.False(payload.TryGetProperty("phone_number", out _));
+        Assert.False(payload.TryGetProperty("preferred_username", out _));
+    }
+
     [Fact]
     public async Task Userinfo_preserves_value_and_values_request_constraints()
     {
